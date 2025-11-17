@@ -1,0 +1,39 @@
+JR AutoRAG – 5 Minute Onboarding Checklist
+=========================================
+
+1. Clone & install
+   - `git clone <repo>`
+   - `bun install`
+   - `cd api && python3 -m pip install -r requirements.txt`
+   - Install system OCR deps:
+     - macOS: `brew install tesseract poppler`
+     - Ubuntu/Debian: `sudo apt-get install tesseract-ocr poppler-utils`
+     - Fedora: `sudo dnf install tesseract poppler-utils`
+
+2. Start services
+   - Backend: `cd api && PYTHONPATH=. uvicorn app.main:app --reload --port 8000`
+   - Frontend: `bun dev` (http://localhost:3000)
+
+3. Verify connectivity
+   - In the UI header, hit **Test** next to API Base URL – expect “API reachable”.
+   - Optional: `curl http://localhost:8000/healthz`.
+
+4. Configure providers
+   - Start Ollama (`ollama serve`) or LM Studio.
+   - In **Detected Local Providers**, click **Use Ollama** (or LM Studio) to auto-fill planner/gatherer/generator models.
+   - Hit **Save Configuration**.
+
+5. Ingest documents
+   - Drag a PDF/DOCX/Markdown/TXT file into the drop zone (scanned PDFs auto-OCR).
+   - Use the **Ingest Text** form for quick snippets.
+   - Confirm the new document card shows filename, upload time, and size.
+
+6. Run a query
+   - Enter “What is JR AutoRAG?” and click **Run Query**.
+   - Review the answer + evidence list; check the **Evaluation & Monitoring** card for trace metrics.
+
+7. Clean up / iterate
+   - Use **Remove** on any document card to rebuild the index.
+   - Save provider profiles (local vs cloud) for fast switching.
+
+Ready for demos!
