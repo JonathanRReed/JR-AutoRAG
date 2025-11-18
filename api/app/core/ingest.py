@@ -122,7 +122,8 @@ class IngestPipeline:
             reader = PdfReader(io.BytesIO(content))  # type: ignore[name-defined]
             pages = [page.extract_text() or "" for page in reader.pages]
             return "\n".join(pages)
-        except Exception:
+        except Exception as exc:
+            print(f"Error extracting PDF text: {exc}")
             return ""
 
     def _ocr_pdf(self, content: bytes) -> str:
@@ -130,7 +131,8 @@ class IngestPipeline:
             return ""
         try:
             images = convert_from_bytes(content)  # type: ignore[name-defined]
-        except Exception:
+        except Exception as exc:
+            print(f"Error converting PDF to images for OCR: {exc}")
             return ""
         text_chunks: List[str] = []
         for image in images:
@@ -138,6 +140,8 @@ class IngestPipeline:
                 text = pytesseract.image_to_string(image)  # type: ignore[attr-defined]
                 if text:
                     text_chunks.append(text)
+            except Exception as exc:
+                print(f"Error OCRing image page: {exc}")
             finally:
                 image.close()
         return "\n".join(text_chunks)
