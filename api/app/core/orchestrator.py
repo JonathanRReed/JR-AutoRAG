@@ -36,11 +36,23 @@ class Orchestrator:
 
     async def answer(self, query: str) -> dict:
         plan = self._planner.plan(query)
-        evidence = None
+        all_chunks = []
         for step in plan.steps:
-            evidence = self._gatherer.gather(step.query, top_k=step.dense_k)
-        evidence = evidence or self._gatherer.gather(query, top_k=3)
-        chunks = evidence.chunks
+            step_evidence = self._gatherer.gather(step.query, top_k=step.dense_k)
+            all_chunks.extend(step_evidence.chunks)
+        
+        # Deduplicate chunks by ID
+        seen = set()
+        unique_chunks = []
+        for chunk in all_chunks:
+            if chunk.id not in seen:
+                seen.add(chunk.id)
+                unique_chunks.append(chunk)
+        
+        chunks = unique_chunks
+        if not chunks:
+             evidence = self._gatherer.gather(query, top_k=3)
+             chunks = evidence.chunks
         provider = self._provider
         if provider is None:
             summary = "\n\n".join(chunk.snippet for chunk in chunks)
@@ -58,19 +70,27 @@ class Orchestrator:
                 answer = await provider.chat(messages)
             except ProviderError as exc:
                 answer = f"Provider error: {exc}"
+        
+        # Calculate metrics from chunks
+        total_tokens = sum(len(chunk.snippet.split()) for chunk in chunks)
+        # Rough coverage estimate: ratio of chunks found to dense_k of first step (simplified)
+        coverage = 0.0
+        if plan.steps:
+             coverage = min(1.0, len(chunks) / plan.steps[0].dense_k)
+        
         trace = self._telemetry.record(
             prompt=query,
             answer=answer,
             metrics={
                 "chunks": len(chunks),
-                "coverage": evidence.coverage if evidence else 0.0,
-                "tokens": evidence.token_estimate if evidence else 0,
+                "coverage": coverage,
+                "tokens": total_tokens,
             },
         )
         metrics = {
             "chunks": len(chunks),
-            "coverage": evidence.coverage,
-            "tokens": evidence.token_estimate,
+            "coverage": coverage,
+            "tokens": total_tokens,
         }
         return {
             "answer": answer,

@@ -33,7 +33,7 @@ class Gatherer:
             EvidenceChunk(
                 id=result.document.id,
                 title=result.document.title,
-                snippet=result.document.text[:500],
+                snippet=result.document.text,
                 score=result.score,
             )
             for result in results
