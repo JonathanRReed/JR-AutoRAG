@@ -47,11 +47,19 @@ export type ChunkOut = {
     score: number;
 };
 
+export type PipelineStep = {
+    name: string;
+    duration_ms: number;
+    details: Record<string, unknown>;
+    status: string;
+};
+
 export type QueryResponse = {
     answer: string;
     chunks: ChunkOut[];
     trace_id: string;
     metrics: Record<string, number>;
+    steps: PipelineStep[];
 };
 
 export type TraceOut = {
@@ -59,6 +67,7 @@ export type TraceOut = {
     prompt: string;
     answer: string;
     metrics: Record<string, number>;
+    steps: PipelineStep[];
 };
 
 export type ProviderKind = "ollama" | "lmstudio" | "openai";

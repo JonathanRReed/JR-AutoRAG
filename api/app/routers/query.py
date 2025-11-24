@@ -21,4 +21,16 @@ async def ask(payload: QueryRequest, container: ServiceContainer = Depends(get_c
 @router.get("/traces", response_model=list[TraceOut])
 def list_traces(container: ServiceContainer = Depends(get_container)):
     traces = container.telemetry.list()
-    return [TraceOut(id=trace.id, prompt=trace.prompt, answer=trace.answer, metrics=trace.metrics) for trace in traces]
+    return [
+        TraceOut(
+            id=trace.id,
+            prompt=trace.prompt,
+            answer=trace.answer,
+            metrics=trace.metrics,
+            steps=[
+                {"name": s.name, "duration_ms": s.duration_ms, "details": s.details, "status": s.status}
+                for s in trace.steps
+            ],
+        )
+        for trace in traces
+    ]

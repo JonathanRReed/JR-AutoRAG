@@ -2,13 +2,24 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from datetime import datetime
 from pathlib import Path
 from threading import RLock
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 import json
 import uuid
+
+
+@dataclass
+class PipelineStep:
+    """A single step in the RAG pipeline with timing and details."""
+    name: str
+    started_at: datetime
+    completed_at: datetime
+    duration_ms: float
+    details: Dict[str, Any] = field(default_factory=dict)
+    status: str = "completed"
 
 
 @dataclass
@@ -19,6 +30,7 @@ class Trace:
     prompt: str
     answer: str
     metrics: Dict[str, float]
+    steps: List[PipelineStep] = field(default_factory=list)
 
 
 class TelemetryStore:
@@ -31,7 +43,18 @@ class TelemetryStore:
             raw = json.loads(self._path.read_text(encoding="utf-8"))
             self._traces = [self._decode(item) for item in raw]
 
-    def _decode(self, payload: Dict[str, str]) -> Trace:
+    def _decode_step(self, data: Dict[str, Any]) -> PipelineStep:
+        return PipelineStep(
+            name=data["name"],
+            started_at=datetime.fromisoformat(data["started_at"]),
+            completed_at=datetime.fromisoformat(data["completed_at"]),
+            duration_ms=data.get("duration_ms", 0.0),
+            details=data.get("details", {}),
+            status=data.get("status", "completed"),
+        )
+
+    def _decode(self, payload: Dict[str, Any]) -> Trace:
+        steps = [self._decode_step(s) for s in payload.get("steps", [])]
         return Trace(
             id=payload["id"],
             started_at=datetime.fromisoformat(payload["started_at"]),
@@ -39,6 +62,7 @@ class TelemetryStore:
             prompt=payload["prompt"],
             answer=payload["answer"],
             metrics=payload.get("metrics", {}),
+            steps=steps,
         )
 
     def _persist(self) -> None:
@@ -47,18 +71,34 @@ class TelemetryStore:
             data = asdict(trace)
             data["started_at"] = trace.started_at.isoformat()
             data["completed_at"] = trace.completed_at.isoformat()
+            # Serialize steps with ISO timestamps
+            data["steps"] = []
+            for step in trace.steps:
+                step_data = asdict(step)
+                step_data["started_at"] = step.started_at.isoformat()
+                step_data["completed_at"] = step.completed_at.isoformat()
+                data["steps"].append(step_data)
             payload.append(data)
         self._path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
-    def record(self, prompt: str, answer: str, metrics: Optional[Dict[str, float]] = None) -> Trace:
+    def record(
+        self,
+        prompt: str,
+        answer: str,
+        metrics: Optional[Dict[str, float]] = None,
+        steps: Optional[List[PipelineStep]] = None,
+        started_at: Optional[datetime] = None,
+    ) -> Trace:
         with self._lock:
+            now = datetime.utcnow()
             trace = Trace(
                 id=str(uuid.uuid4()),
-                started_at=datetime.utcnow(),
-                completed_at=datetime.utcnow(),
+                started_at=started_at or now,
+                completed_at=now,
                 prompt=prompt,
                 answer=answer,
                 metrics=metrics or {},
+                steps=steps or [],
             )
             self._traces.append(trace)
             self._persist()

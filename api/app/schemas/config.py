@@ -19,17 +19,46 @@ class ProviderProfile(BaseModel):
 
 
 class RetrievalDefaults(BaseModel):
-    hybrid: bool = True
-    dense_k: int = 40
-    sparse_k: int = 80
-    rerank_pool: int = 50
-    top_n: int = 12
-    compression: bool = True
-    target_tokens: int = 1600
-    raptor: str = "hierarchical"  # off|simple|hierarchical
-    graph: bool = False
-    coverage_target: float = 0.7
-    max_context_tokens: int = 4096
+    """Retrieval configuration optimized for local TF-IDF based retrieval.
+    
+    Presets:
+    - Fast: dense_k=3, target_tokens=800, coverage_target=0.5
+    - Balanced (default): dense_k=5, target_tokens=1600, coverage_target=0.7
+    - Thorough: dense_k=10, target_tokens=3000, coverage_target=0.9
+    """
+    hybrid: bool = False  # TF-IDF only for local, no dense embeddings
+    dense_k: int = 5  # Top chunks to retrieve (was 40, too aggressive for TF-IDF)
+    sparse_k: int = 10  # Not used in current TF-IDF impl, kept for future hybrid
+    rerank_pool: int = 10  # Not used in current impl, kept for future reranking
+    top_n: int = 5  # Final chunks to use in context
+    compression: bool = False  # No compression for local (requires LLM)
+    target_tokens: int = 1600  # Reasonable for local LLMs (Llama, Mistral)
+    raptor: str = "off"  # Hierarchical indexing disabled for simplicity
+    graph: bool = False  # Graph retrieval disabled
+    coverage_target: float = 0.7  # Target 70% coverage
+    max_context_tokens: int = 4096  # Safe default for most local models
+
+
+# Retrieval presets for different use cases
+RETRIEVAL_PRESETS = {
+    "fast": RetrievalDefaults(
+        dense_k=3,
+        sparse_k=5,
+        top_n=3,
+        target_tokens=800,
+        coverage_target=0.5,
+        max_context_tokens=2048,
+    ),
+    "balanced": RetrievalDefaults(),  # Uses defaults above
+    "thorough": RetrievalDefaults(
+        dense_k=10,
+        sparse_k=20,
+        top_n=8,
+        target_tokens=3000,
+        coverage_target=0.9,
+        max_context_tokens=8192,
+    ),
+}
 
 
 class AppConfig(BaseModel):
