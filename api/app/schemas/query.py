@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, List
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
@@ -18,11 +18,28 @@ class ChunkOut(BaseModel):
     score: float
 
 
+class PipelineStepOut(BaseModel):
+    """A single step in the RAG pipeline with timing and details."""
+    name: str
+    duration_ms: float
+    details: Dict[str, Any] = {}
+    status: str = "completed"
+
+
 class QueryResponse(BaseModel):
     answer: str
     chunks: List[ChunkOut]
     trace_id: str
     metrics: Dict[str, float]
+    steps: List[PipelineStepOut] = []
+
+
+class TraceStepOut(BaseModel):
+    """Step info for trace display."""
+    name: str
+    duration_ms: float
+    details: Dict[str, Any] = {}
+    status: str = "completed"
 
 
 class TraceOut(BaseModel):
@@ -30,3 +47,4 @@ class TraceOut(BaseModel):
     prompt: str
     answer: str
     metrics: Dict[str, float]
+    steps: List[TraceStepOut] = []

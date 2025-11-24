@@ -354,16 +354,22 @@ export function App() {
       const title = file.name.replace(/\.[^.]+$/, "");
       formData.append("title", title || file.name);
       formData.append("file", file);
-      await fetch(buildUrl("/documents/upload"), {
+      const resp = await fetch(buildUrl("/documents/upload"), {
         method: "POST",
         body: formData,
       });
-      setStatus(`Uploaded ${file.name}`);
-      setIngestTitle(title || file.name);
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+        throw new Error(err.detail || "Upload failed");
+      }
+      const result = await resp.json();
+      setStatus(`Uploaded ${file.name} (${result.chunk_count} chunks)`);
+      setIngestTitle("");
       setIngestText("");
       refreshAll();
     } catch (error) {
       setStatus(`Upload failed: ${toMessage(error)}`);
+      throw error; // Re-throw so IngestPanel can mark as error
     } finally {
       setIsUploadingFile(false);
       if (fileInputRef.current) {

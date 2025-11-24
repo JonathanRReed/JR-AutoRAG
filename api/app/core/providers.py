@@ -115,7 +115,7 @@ class CloudProvider(_HTTPProvider):
         return choices[0].get("text", "") if choices else ""
 
 
-@dataclass(slots=True)
+@dataclass
 class ProviderFactory:
     """Build provider clients based on `ProviderConfig`."""
 

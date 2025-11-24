@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
 from ..schemas.documents import DocumentOut, IngestTextRequest, IngestResponse
 from ..services import ServiceContainer, get_container
@@ -35,8 +35,8 @@ def delete_document(document_id: str, container: ServiceContainer = Depends(get_
 
 @router.post("/upload", response_model=IngestResponse)
 async def ingest_file(
-    title: str,
     file: UploadFile = File(...),
+    title: str = Form(...),
     container: ServiceContainer = Depends(get_container),
 ):
     try:

@@ -1,12 +1,13 @@
 # JR AutoRAG
 
-JR AutoRAG is a local-first Retrieval Augmented Generation (RAG) workbench. A FastAPI backend orchestrates ingestion, retrieval, and provider calls, while a Bun + React admin console provides a single pane of glass for:
+JR AutoRAG is a **100% local** Retrieval Augmented Generation (RAG) workbench. No cloud services required - everything runs on your machine. A FastAPI backend orchestrates ingestion, retrieval, and provider calls, while a admin console provides a single pane of glass for:
 
-- Auto-detecting Ollama/LM Studio runtimes and switching providers instantly
-- Configuring planner/gatherer/generator models and retrieval defaults
-- Drag-and-drop ingestion for PDF, DOC/DOCX, Markdown, TXT (with OCR fallback for scanned PDFs)
-- Running queries/evaluations and inspecting traces
-- Managing documents (metadata, deletion, upload timestamps)
+- **Auto-detecting local LLMs** - Ollama/LM Studio runtimes detected and switchable instantly
+- **Full pipeline transparency** - See exactly what the AI does at each step (planning, retrieval, generation)
+- **Batch file upload** - Drag-and-drop multiple PDFs, DOC/DOCX, TXT files with progress tracking
+- **Retrieval presets** - Fast, Balanced, or Thorough modes for different use cases
+- **Running queries/evaluations** and inspecting detailed traces
+- **Managing documents** (metadata, deletion, upload timestamps)
 
 ## Architecture
 
@@ -76,6 +77,32 @@ The admin console surfaces upload metadata (filename, content type, file size, t
 1. Start Ollama (`ollama serve`) or LM Studio before launching the UI so the Quick Setup card can auto-detect local providers.
 2. Large PDFs with OCR may take a few seconds—watch the status banner for progress.
 3. Use the profiles dropdown to save favorite provider configurations (local vs. cloud).
+
+## Retrieval Presets
+
+JR AutoRAG includes three retrieval presets optimized for different use cases:
+
+| Preset | Top-K | Target Tokens | Coverage | Best For |
+|--------|-------|---------------|----------|----------|
+| **Fast** | 3 | 800 | 50% | Quick answers, low latency |
+| **Balanced** | 5 | 1600 | 70% | General use (default) |
+| **Thorough** | 10 | 3000 | 90% | Research, comprehensive answers |
+
+Apply a preset via API:
+
+```bash
+curl -X POST http://localhost:8000/config/presets/balanced
+```
+
+## Pipeline Transparency
+
+Every query shows exactly what the AI is doing:
+
+1. **Planning** - Search queries generated, target tokens, coverage goals
+2. **Retrieval** - Chunks found per sub-query, timing, unique sources
+3. **Generation** - Provider used, model, context tokens, errors if any
+
+This helps you understand why the AI gave a particular answer and debug retrieval issues.
 
 ## Testing & quality checks
 

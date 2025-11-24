@@ -2,42 +2,107 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.11"
+  BUN_VERSION: "1.1.30"
 
 jobs:
-  build-and-test:
+  # ─────────────────────────────────────────────────────────────
+  # Python API: lint, type-check, test with coverage
+  # ─────────────────────────────────────────────────────────────
+  api:
+    name: API (Python)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: api
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: api/requirements.txt
 
-      - name: Install API dependencies
-        working-directory: api
+      - name: Install dependencies
         run: |
-          python -m venv .venv
-          source .venv/bin/activate
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
+          pip install ruff pytest-cov
 
-      - name: Run API tests
-        working-directory: api
-        run: |
-          source .venv/bin/activate
-          pytest
+      - name: Lint with Ruff
+        run: ruff check . --output-format=github
 
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v1
+      - name: Type check with Pyright
+        uses: jakebailey/pyright-action@v2
         with:
-          bun-version: '1.1.30'
+          working-directory: api
 
-      - name: Install web dependencies
+      - name: Run tests with coverage
+        run: pytest --cov=app --cov-report=term-missing --cov-fail-under=50
+
+  # ─────────────────────────────────────────────────────────────
+  # Web frontend: type-check, test, build
+  # ─────────────────────────────────────────────────────────────
+  web:
+    name: Web (Bun/React)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Bun ${{ env.BUN_VERSION }}
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Build web app
+      - name: Type check
+        run: bun run --bun tsc --noEmit
+
+      - name: Run tests
+        run: bun test
+
+      - name: Build
         run: bun run build
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: dist/
+          retention-days: 7
+
+  # ─────────────────────────────────────────────────────────────
+  # Final gate: ensures all checks pass before merge
+  # ─────────────────────────────────────────────────────────────
+  ci-ok:
+    name: CI Passed
+    needs: [api, web]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Check job results
+        run: |
+          if [[ "${{ needs.api.result }}" != "success" || "${{ needs.web.result }}" != "success" ]]; then
+            echo "One or more jobs failed"
+            exit 1
+          fi
+          echo "All checks passed"

@@ -1,6 +1,8 @@
+from typing import Dict, List, Optional
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from ..schemas.config import AppConfig, ProviderConfig, ProviderProfile
+from ..schemas.config import AppConfig, ProviderConfig, ProviderProfile, RetrievalDefaults, RETRIEVAL_PRESETS
 from ..services import get_container, ServiceContainer
 from ..core.providers import discover_models, ProviderError
 
@@ -16,7 +18,7 @@ def read_config(container: ServiceContainer = Depends(get_container)):
 def update_config(
     cfg: AppConfig,
     container: ServiceContainer = Depends(get_container),
-    active_profile: str | None = Query(default=None, description="Optional provider profile to activate"),
+    active_profile: Optional[str] = Query(default=None, description="Optional provider profile to activate"),
 ):
     try:
         if active_profile and cfg.provider_profiles:
@@ -38,3 +40,29 @@ async def list_models(payload: ProviderConfig):
         return models
     except ProviderError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
+
+
+@router.get("/presets", response_model=Dict[str, RetrievalDefaults])
+def list_presets():
+    """List available retrieval presets (fast, balanced, thorough)."""
+    return RETRIEVAL_PRESETS
+
+
+@router.post("/presets/{preset_name}", response_model=AppConfig)
+def apply_preset(
+    preset_name: str,
+    container: ServiceContainer = Depends(get_container),
+):
+    """Apply a retrieval preset to the current configuration."""
+    preset_name_lower = preset_name.lower()
+    if preset_name_lower not in RETRIEVAL_PRESETS:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Preset '{preset_name}' not found. Available: {list(RETRIEVAL_PRESETS.keys())}"
+        )
+    
+    cfg = container.config_store.read()
+    cfg.retrieval = RETRIEVAL_PRESETS[preset_name_lower].model_copy()
+    stored = container.config_store.write(cfg)
+    container.orchestrator.rebuild(stored)
+    return stored
