@@ -2,12 +2,12 @@
 
 from .config_store import ConfigStore
 from .documents import DocumentStore
+from .gatherer import Gatherer
+from .ingest import IngestPipeline
+from .orchestrator import Orchestrator
 from .planner import Planner
 from .providers import ProviderFactory
 from .retrieval import RetrievalEngine
-from .ingest import IngestPipeline
-from .gatherer import Gatherer
-from .orchestrator import Orchestrator
 from .telemetry import TelemetryStore
 
 __all__ = [

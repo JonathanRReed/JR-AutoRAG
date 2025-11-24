@@ -4,24 +4,31 @@ node_modules
 # output
 out
 dist
+build
 *.tgz
 
 # python bytecode & caches
 __pycache__/
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 *.py[cod]
+*.egg-info/
 
 # virtual environments
 .venv
+venv
 api/.venv
 
 # code coverage
 coverage
 *.lcov
+.coverage
+htmlcov/
 
 # logs
 logs
-_.log
+*.log
 report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # dotenv environment variable files
@@ -30,6 +37,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .env.test.local
 .env.production.local
 .env.local
+.env*.local
 
 # caches
 .eslintcache
@@ -39,8 +47,16 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # IntelliJ based IDEs
 .idea
 
+# VS Code (optional - uncomment if you don't want to share settings)
+# .vscode/
+
 # Finder (MacOS) folder config
 .DS_Store
+
+# editor swap/backup files
+*.swp
+*.swo
+*~
 
 # app data (runtime configs, documents, traces)
 data/
