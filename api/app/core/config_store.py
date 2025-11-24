@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from threading import RLock
-from typing import Optional
-import json
 
 from ..schemas.config import AppConfig
 
@@ -17,7 +16,7 @@ class ConfigStore:
     read/write settings without restarting the FastAPI process.
     """
 
-    def __init__(self, path: Optional[Path] = None) -> None:
+    def __init__(self, path: Path | None = None) -> None:
         self._path = Path(path or Path.cwd() / "data" / "config.json")
         self._lock = RLock()
         self._path.parent.mkdir(parents=True, exist_ok=True)
