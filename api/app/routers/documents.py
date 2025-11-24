@@ -41,10 +41,11 @@ async def ingest_file(
 ):
     try:
         content = await file.read()
+        filename = file.filename or "untitled"
         result = container.ingest.ingest_file(
-            title=title or file.filename,
+            title=title or filename,
             content=content,
-            metadata={"filename": file.filename},
+            metadata={"filename": filename},
         )
         return IngestResponse(document_id=result.document_id, title=result.title, chunk_count=result.chunk_count)
     except Exception as exc:

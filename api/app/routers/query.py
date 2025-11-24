@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from ..schemas.query import QueryRequest, QueryResponse, TraceOut
+from ..schemas.query import QueryRequest, QueryResponse, TraceOut, TraceStepOut
 from ..services import ServiceContainer, get_container
 
 router = APIRouter(prefix="/query", tags=["query"])
@@ -28,7 +28,7 @@ def list_traces(container: ServiceContainer = Depends(get_container)):
             answer=trace.answer,
             metrics=trace.metrics,
             steps=[
-                {"name": s.name, "duration_ms": s.duration_ms, "details": s.details, "status": s.status}
+                TraceStepOut(name=s.name, duration_ms=s.duration_ms, details=s.details, status=s.status)
                 for s in trace.steps
             ],
         )
