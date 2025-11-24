@@ -7,7 +7,6 @@ from fastapi import APIRouter, HTTPException
 from ..core.providers import discover_local_providers
 from ..schemas.config import LocalProviderInfo
 
-
 router = APIRouter(prefix="/providers", tags=["providers"])
 
 

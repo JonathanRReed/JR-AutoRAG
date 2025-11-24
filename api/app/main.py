@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .routers import health, config, documents, query, evaluation, monitoring, providers
+from .routers import config, documents, evaluation, health, monitoring, providers, query
 
 app = FastAPI(title="JR AutoRAG API", version="0.1.0")
 

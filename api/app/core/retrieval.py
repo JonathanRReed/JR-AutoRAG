@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Tuple
-import numpy as np
+
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-from .documents import DocumentStore, Document
+from .documents import Document, DocumentStore
 
 
 @dataclass
@@ -25,9 +24,9 @@ class RetrievalEngine:
         self._vectorizer = TfidfVectorizer(stop_words="english")
         self._matrix = None
         # Map row_idx -> (doc_id, chunk_text)
-        self._chunk_map: List[Tuple[str, str]] = []
+        self._chunk_map: list[tuple[str, str]] = []
 
-    def _chunk_text(self, text: str, chunk_size: int = 800) -> List[str]:
+    def _chunk_text(self, text: str, chunk_size: int = 800) -> list[str]:
         # Simple paragraph-based chunking
         paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
         chunks = []
@@ -47,33 +46,33 @@ class RetrievalEngine:
     def build(self) -> None:
         corpus = []
         self._chunk_map = []
-        
+
         for doc in self._docs.list():
             chunks = self._chunk_text(doc.text)
             for chunk in chunks:
                 corpus.append(chunk)
                 self._chunk_map.append((doc.id, chunk))
-                
+
         if corpus:
             self._matrix = self._vectorizer.fit_transform(corpus)
         else:
             self._matrix = None
 
-    def query(self, text: str, top_k: int = 5) -> List[RetrievalResult]:
+    def query(self, text: str, top_k: int = 5) -> list[RetrievalResult]:
         if self._matrix is None:
             self.build()
         if self._matrix is None or not text.strip():
             return []
-            
+
         query_vec = self._vectorizer.transform([text])
         scores = cosine_similarity(query_vec, self._matrix).flatten()
-        
+
         # Get top indices
         top_indices = scores.argsort()[::-1][:top_k]
-        
-        results: List[RetrievalResult] = []
+
+        results: list[RetrievalResult] = []
         id_to_doc = {doc.id: doc for doc in self._docs.list()}
-        
+
         for idx in top_indices:
             score = float(scores[idx])
             if score > 0 and idx < len(self._chunk_map):
@@ -89,5 +88,5 @@ class RetrievalEngine:
                         metadata=doc.metadata
                     )
                     results.append(RetrievalResult(document=chunk_doc, score=score))
-                    
+
         return results

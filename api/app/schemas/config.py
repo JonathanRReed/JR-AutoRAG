@@ -1,5 +1,4 @@
 from enum import Enum
-from typing import List, Optional
 
 from pydantic import AnyHttpUrl, BaseModel
 
@@ -7,10 +6,10 @@ from pydantic import AnyHttpUrl, BaseModel
 class ProviderConfig(BaseModel):
     name: str
     base_url: AnyHttpUrl
-    planner_model: Optional[str] = None
-    gatherer_model: Optional[str] = None
-    generator_model: Optional[str] = None
-    api_key: Optional[str] = None
+    planner_model: str | None = None
+    gatherer_model: str | None = None
+    generator_model: str | None = None
+    api_key: str | None = None
 
 
 class ProviderProfile(BaseModel):
@@ -20,7 +19,7 @@ class ProviderProfile(BaseModel):
 
 class RetrievalDefaults(BaseModel):
     """Retrieval configuration optimized for local TF-IDF based retrieval.
-    
+
     Presets:
     - Fast: dense_k=3, target_tokens=800, coverage_target=0.5
     - Balanced (default): dense_k=5, target_tokens=1600, coverage_target=0.7
@@ -63,8 +62,8 @@ RETRIEVAL_PRESETS = {
 
 class AppConfig(BaseModel):
     profile: str = "Default"
-    provider: Optional[ProviderConfig] = None
-    provider_profiles: List[ProviderProfile] = []
+    provider: ProviderConfig | None = None
+    provider_profiles: list[ProviderProfile] = []
     retrieval: RetrievalDefaults = RetrievalDefaults()
 
 
@@ -78,8 +77,8 @@ class LocalProviderInfo(BaseModel):
     kind: ProviderKind
     name: str
     base_url: AnyHttpUrl
-    models: List[str] = []
-    running: List[str] = []
-    version: Optional[str] = None
+    models: list[str] = []
+    running: list[str] = []
+    version: str | None = None
     status: str = "ok"
-    error_message: Optional[str] = None
+    error_message: str | None = None

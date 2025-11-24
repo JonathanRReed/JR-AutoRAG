@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
-from ..schemas.documents import DocumentOut, IngestTextRequest, IngestResponse
+from ..schemas.documents import DocumentOut, IngestResponse, IngestTextRequest
 from ..services import ServiceContainer, get_container
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -22,7 +22,7 @@ def ingest_text(payload: IngestTextRequest, container: ServiceContainer = Depend
         result = container.ingest.ingest_text(title=payload.title, text=payload.text, metadata=payload.metadata)
         return IngestResponse(document_id=result.document_id, title=result.title, chunk_count=result.chunk_count)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.delete("/{document_id}", status_code=204)
@@ -48,4 +48,4 @@ async def ingest_file(
         )
         return IngestResponse(document_id=result.document_id, title=result.title, chunk_count=result.chunk_count)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc

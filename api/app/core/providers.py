@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any
 
 import httpx
 
@@ -19,11 +19,11 @@ class ProviderError(RuntimeError):
 class LLMProvider:
     """Minimal interface for chat/complete operations."""
 
-    def __init__(self, base_url: str, default_model: Optional[str] = None) -> None:
+    def __init__(self, base_url: str, default_model: str | None = None) -> None:
         self.base_url = str(base_url).rstrip("/")
         self.default_model = default_model
 
-    async def chat(self, messages: Iterable[Dict[str, Any]], **kwargs: Any) -> str:
+    async def chat(self, messages: Iterable[dict[str, Any]], **kwargs: Any) -> str:
         raise NotImplementedError
 
     async def complete(self, prompt: str, **kwargs: Any) -> str:
@@ -35,7 +35,7 @@ class _HTTPProvider(LLMProvider):
 
     endpoint: str = ""
 
-    async def _post(self, path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         url = f"{self.base_url}{path}"
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -49,7 +49,7 @@ class _HTTPProvider(LLMProvider):
 
 
 class OllamaProvider(_HTTPProvider):
-    async def chat(self, messages: Iterable[Dict[str, Any]], **kwargs: Any) -> str:
+    async def chat(self, messages: Iterable[dict[str, Any]], **kwargs: Any) -> str:
         model = kwargs.get("model") or self.default_model or "llama3"
         payload = {
             "model": model,
@@ -67,7 +67,7 @@ class OllamaProvider(_HTTPProvider):
 
 
 class LMStudioProvider(_HTTPProvider):
-    async def chat(self, messages: Iterable[Dict[str, Any]], **kwargs: Any) -> str:
+    async def chat(self, messages: Iterable[dict[str, Any]], **kwargs: Any) -> str:
         model = kwargs.get("model") or self.default_model or "gpt-3.5-turbo"
         payload = {"model": model, "messages": list(messages)}
         data = await self._post("/v1/chat/completions", payload)
@@ -83,11 +83,11 @@ class LMStudioProvider(_HTTPProvider):
 
 
 class CloudProvider(_HTTPProvider):
-    def __init__(self, base_url: str, default_model: Optional[str] = None, api_key: Optional[str] = None) -> None:
+    def __init__(self, base_url: str, default_model: str | None = None, api_key: str | None = None) -> None:
         super().__init__(base_url, default_model)
         self.api_key = api_key
 
-    async def _post(self, path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         url = f"{self.base_url}{path}"
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else None
         try:
@@ -100,7 +100,7 @@ class CloudProvider(_HTTPProvider):
         except httpx.HTTPError as exc:
             raise ProviderError(f"Cloud provider request failed: {exc}") from exc
 
-    async def chat(self, messages: Iterable[Dict[str, Any]], **kwargs: Any) -> str:
+    async def chat(self, messages: Iterable[dict[str, Any]], **kwargs: Any) -> str:
         model = kwargs.get("model") or self.default_model or "gpt-4o-mini"
         payload = {"model": model, "messages": list(messages)}
         data = await self._post("/v1/chat/completions", payload)
@@ -119,7 +119,7 @@ class CloudProvider(_HTTPProvider):
 class ProviderFactory:
     """Build provider clients based on `ProviderConfig`."""
 
-    api_key: Optional[str] = None
+    api_key: str | None = None
 
     def build(self, cfg: ProviderConfig) -> LLMProvider:
         name = (cfg.name or "").lower()
@@ -130,7 +130,7 @@ class ProviderFactory:
         return CloudProvider(str(cfg.base_url), cfg.generator_model, api_key=cfg.api_key or self.api_key)
 
 
-async def discover_models(cfg: ProviderConfig) -> List[str]:
+async def discover_models(cfg: ProviderConfig) -> list[str]:
     """Fetch available model names for a provider."""
 
     base = str(cfg.base_url).rstrip("/")
@@ -173,7 +173,7 @@ async def _probe_ollama(base_url: str) -> LocalProviderInfo:
 
         models = [model.get("name", "") for model in data.get("models", []) if model.get("name")]
 
-        running: List[str] = []
+        running: list[str] = []
         try:
             ps_resp = await client.get(f"{base}/api/ps")
             ps_resp.raise_for_status()
@@ -181,7 +181,7 @@ async def _probe_ollama(base_url: str) -> LocalProviderInfo:
         except (httpx.HTTPError, httpx.RequestError):
             running = []
 
-        version: Optional[str] = None
+        version: str | None = None
         try:
             version_resp = await client.get(f"{base}/api/version")
             version_resp.raise_for_status()
@@ -213,7 +213,7 @@ async def _probe_lmstudio(base_url: str) -> LocalProviderInfo:
         models = [entry.get("id", "") for entry in entries if entry.get("id")]
         running = [entry.get("id", "") for entry in entries if entry.get("state") == "loaded" and entry.get("id")]
 
-        version: Optional[str] = None
+        version: str | None = None
         try:
             version_resp = await client.get(f"{base}/api/v0/version")
             version_resp.raise_for_status()
@@ -231,13 +231,13 @@ async def _probe_lmstudio(base_url: str) -> LocalProviderInfo:
     )
 
 
-async def discover_local_providers() -> List[LocalProviderInfo]:
+async def discover_local_providers() -> list[LocalProviderInfo]:
     probes = [
         (ProviderKind.OLLAMA, "Ollama", _DEFAULT_OLLAMA_URL, _probe_ollama),
         (ProviderKind.LM_STUDIO, "LM Studio", _DEFAULT_LMSTUDIO_URL, _probe_lmstudio),
     ]
 
-    providers: List[LocalProviderInfo] = []
+    providers: list[LocalProviderInfo] = []
     for kind, name, base, func in probes:
         if not base:
             continue

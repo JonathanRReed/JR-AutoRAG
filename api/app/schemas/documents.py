@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Dict, Optional
-
 from pydantic import BaseModel, Field
 
 
@@ -11,13 +9,13 @@ class DocumentOut(BaseModel):
     id: str
     title: str
     text: str
-    metadata: Dict[str, str] = Field(default_factory=dict)
+    metadata: dict[str, str] = Field(default_factory=dict)
 
 
 class IngestTextRequest(BaseModel):
     title: str
     text: str
-    metadata: Optional[Dict[str, str]] = None
+    metadata: dict[str, str] | None = None
 
 
 class IngestResponse(BaseModel):

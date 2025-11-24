@@ -7,9 +7,8 @@ import mimetypes
 import os
 import tempfile
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Dict, List, Optional
 
 try:  # pragma: no cover - optional dependency
     from pypdf import PdfReader  # type: ignore
@@ -49,7 +48,7 @@ class IngestPipeline:
         self._store = store
         self._retrieval = retrieval
 
-    def ingest_text(self, title: str, text: str, metadata: Optional[Dict[str, str]] = None) -> IngestResult:
+    def ingest_text(self, title: str, text: str, metadata: dict[str, str] | None = None) -> IngestResult:
         meta = self._prepare_metadata(metadata)
         chunks = self._chunk(text)
         combined = "\n\n".join(chunks)
@@ -57,7 +56,7 @@ class IngestPipeline:
         self._retrieval.build()
         return IngestResult(document_id=doc.id, title=doc.title, chunk_count=len(chunks))
 
-    def ingest_file(self, title: str, content: bytes, metadata: Optional[Dict[str, str]] = None) -> IngestResult:
+    def ingest_file(self, title: str, content: bytes, metadata: dict[str, str] | None = None) -> IngestResult:
         meta = {**(metadata or {})}
         meta.setdefault("filename", title)
         meta.setdefault("original_filename", meta["filename"])
@@ -66,12 +65,12 @@ class IngestPipeline:
         text = self._extract_text(content, meta)
         return self.ingest_text(title=title, text=text, metadata=meta)
 
-    def _prepare_metadata(self, metadata: Optional[Dict[str, str]]) -> Dict[str, str]:
+    def _prepare_metadata(self, metadata: dict[str, str] | None) -> dict[str, str]:
         meta = {**(metadata or {})}
-        meta.setdefault("uploaded_at", datetime.now(timezone.utc).isoformat())
+        meta.setdefault("uploaded_at", datetime.now(UTC).isoformat())
         return meta
 
-    def _infer_extension(self, metadata: Optional[Dict[str, str]]) -> str:
+    def _infer_extension(self, metadata: dict[str, str] | None) -> str:
         if metadata:
             filename = metadata.get("filename")
             if filename:
@@ -81,7 +80,7 @@ class IngestPipeline:
                 return (mimetypes.guess_extension(content_type) or "").lower()
         return ""
 
-    def _extract_text(self, content: bytes, metadata: Optional[Dict[str, str]] = None) -> str:
+    def _extract_text(self, content: bytes, metadata: dict[str, str] | None = None) -> str:
         ext = self._infer_extension(metadata)
         if ext in {".md", ".markdown"}:
             return self._extract_markdown(content)
@@ -134,7 +133,7 @@ class IngestPipeline:
         except Exception as exc:
             print(f"Error converting PDF to images for OCR: {exc}")
             return ""
-        text_chunks: List[str] = []
+        text_chunks: list[str] = []
         for image in images:
             try:
                 text = pytesseract.image_to_string(image)  # type: ignore[attr-defined]
@@ -146,11 +145,11 @@ class IngestPipeline:
                 image.close()
         return "\n".join(text_chunks)
 
-    def _chunk(self, text: str, target: int = 800) -> List[str]:
+    def _chunk(self, text: str, target: int = 800) -> list[str]:
         clean = text.replace("\r", "")
         paragraphs = [p.strip() for p in clean.split("\n\n") if p.strip()]
-        chunks: List[str] = []
-        current: List[str] = []
+        chunks: list[str] = []
+        current: list[str] = []
         current_len = 0
         for para in paragraphs:
             if current_len + len(para) > target and current:
