@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import time
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any
 
-from .planner import Planner
-from .retrieval import RetrievalEngine
-from .providers import ProviderFactory, LLMProvider, ProviderError
-from .telemetry import TelemetryStore, PipelineStep
-from .gatherer import Gatherer
 from ..schemas.config import AppConfig
+from .gatherer import Gatherer
+from .planner import Planner
+from .providers import LLMProvider, ProviderError, ProviderFactory
+from .retrieval import RetrievalEngine
+from .telemetry import PipelineStep, TelemetryStore
 
 
 class Orchestrator:
@@ -37,7 +37,7 @@ class Orchestrator:
         self._retrieval.build()
 
     def _make_step(
-        self, name: str, start: float, details: Dict[str, Any], status: str = "completed"
+        self, name: str, start: float, details: dict[str, Any], status: str = "completed"
     ) -> PipelineStep:
         """Helper to create a PipelineStep with timing."""
         end = time.perf_counter()
@@ -53,7 +53,7 @@ class Orchestrator:
 
     async def answer(self, query: str) -> dict:
         pipeline_start = datetime.utcnow()
-        pipeline_steps: List[PipelineStep] = []
+        pipeline_steps: list[PipelineStep] = []
 
         # Step 1: Planning
         plan_start = time.perf_counter()
@@ -72,7 +72,7 @@ class Orchestrator:
         # Step 2: Retrieval
         retrieval_start = time.perf_counter()
         all_chunks = []
-        retrieval_details: Dict[str, Any] = {"sub_queries": []}
+        retrieval_details: dict[str, Any] = {"sub_queries": []}
         for step in plan.steps:
             sub_start = time.perf_counter()
             step_evidence = self._gatherer.gather(step.query, top_k=step.dense_k)
@@ -104,7 +104,7 @@ class Orchestrator:
         # Step 3: Generation
         gen_start = time.perf_counter()
         provider = self._provider
-        gen_details: Dict[str, Any] = {"provider": None, "model": None}
+        gen_details: dict[str, Any] = {"provider": None, "model": None}
 
         if provider is None:
             summary = "\n\n".join(chunk.snippet for chunk in chunks)

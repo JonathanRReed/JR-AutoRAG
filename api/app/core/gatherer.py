@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List
 
 from .retrieval import RetrievalEngine, RetrievalResult
 
@@ -18,7 +17,7 @@ class EvidenceChunk:
 
 @dataclass
 class EvidenceBundle:
-    chunks: List[EvidenceChunk]
+    chunks: list[EvidenceChunk]
     coverage: float
     token_estimate: int
 
@@ -28,7 +27,7 @@ class Gatherer:
         self._retrieval = retrieval
 
     def gather(self, query: str, top_k: int) -> EvidenceBundle:
-        results: List[RetrievalResult] = self._retrieval.query(query, top_k=top_k)
+        results: list[RetrievalResult] = self._retrieval.query(query, top_k=top_k)
         chunks = [
             EvidenceChunk(
                 id=result.document.id,

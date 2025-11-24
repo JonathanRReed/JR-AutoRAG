@@ -1,10 +1,9 @@
-from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from ..schemas.config import AppConfig, ProviderConfig, ProviderProfile, RetrievalDefaults, RETRIEVAL_PRESETS
-from ..services import get_container, ServiceContainer
-from ..core.providers import discover_models, ProviderError
+from ..core.providers import ProviderError, discover_models
+from ..schemas.config import RETRIEVAL_PRESETS, AppConfig, ProviderConfig, RetrievalDefaults
+from ..services import ServiceContainer, get_container
 
 router = APIRouter()
 
@@ -18,7 +17,7 @@ def read_config(container: ServiceContainer = Depends(get_container)):
 def update_config(
     cfg: AppConfig,
     container: ServiceContainer = Depends(get_container),
-    active_profile: Optional[str] = Query(default=None, description="Optional provider profile to activate"),
+    active_profile: str | None = Query(default=None, description="Optional provider profile to activate"),
 ):
     try:
         if active_profile and cfg.provider_profiles:
@@ -30,7 +29,7 @@ def update_config(
         container.orchestrator.rebuild(stored)
         return stored
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.post("/models", response_model=list[str])
@@ -39,10 +38,10 @@ async def list_models(payload: ProviderConfig):
         models = await discover_models(payload)
         return models
     except ProviderError as exc:
-        raise HTTPException(status_code=502, detail=str(exc))
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
-@router.get("/presets", response_model=Dict[str, RetrievalDefaults])
+@router.get("/presets", response_model=dict[str, RetrievalDefaults])
 def list_presets():
     """List available retrieval presets (fast, balanced, thorough)."""
     return RETRIEVAL_PRESETS
@@ -60,7 +59,7 @@ def apply_preset(
             status_code=404,
             detail=f"Preset '{preset_name}' not found. Available: {list(RETRIEVAL_PRESETS.keys())}"
         )
-    
+
     cfg = container.config_store.read()
     cfg.retrieval = RETRIEVAL_PRESETS[preset_name_lower].model_copy()
     stored = container.config_store.write(cfg)

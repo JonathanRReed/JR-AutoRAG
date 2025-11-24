@@ -1,5 +1,5 @@
 """FastAPI routers for JR AutoRAG."""
 
-from . import health, config, documents, query, evaluation, monitoring, providers
+from . import config, documents, evaluation, health, monitoring, providers, query
 
 __all__ = ["health", "config", "documents", "query", "evaluation", "monitoring", "providers"]

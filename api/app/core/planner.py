@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List
 
 from ..schemas.config import AppConfig
 
@@ -19,7 +18,7 @@ class PlanStep:
 
 @dataclass
 class RetrievalPlan:
-    steps: List[PlanStep]
+    steps: list[PlanStep]
     target_tokens: int
     coverage_target: float
 
