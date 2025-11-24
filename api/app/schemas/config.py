@@ -76,7 +76,7 @@ class ProviderKind(str, Enum):
 class LocalProviderInfo(BaseModel):
     kind: ProviderKind
     name: str
-    base_url: AnyHttpUrl
+    base_url: str
     models: list[str] = []
     running: list[str] = []
     version: str | None = None

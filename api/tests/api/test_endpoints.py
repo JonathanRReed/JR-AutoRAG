@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import tempfile
 from pathlib import Path
 
@@ -14,7 +13,7 @@ from app.services import ServiceContainer, get_container
 
 
 @pytest.fixture()
-def client() -> TestClient:
+def client():
     with tempfile.TemporaryDirectory() as tmpdir:
         container = ServiceContainer(base_path=Path(tmpdir))
 
@@ -55,7 +54,7 @@ def test_document_ingest_query_and_evaluation(client: TestClient) -> None:
     assert query_data["chunks"], "expected evidence chunks in response"
 
     eval_payload = {"name": "SmokeTest", "questions": ["What is JR AutoRAG?"]}
-    eval_resp = client.post("/evaluation", data=json.dumps(eval_payload), headers={"Content-Type": "application/json"})
+    eval_resp = client.post("/evaluation", json=eval_payload)
     assert eval_resp.status_code == 200
     eval_data = eval_resp.json()
     assert eval_data["responses"], "evaluation should include responses"
