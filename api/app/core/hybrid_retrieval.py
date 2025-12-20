@@ -71,6 +71,11 @@ class RetrievalResult:
     score: float
     chunk_text: str
     retrieval_method: str = "hybrid"
+    # Span-level citation metadata
+    chunk_id: str = ""       # Unique ID for this chunk (doc_id-chunk_index)
+    start_char: int = 0      # Start offset in original document text
+    end_char: int = 0        # End offset in original document text
+
 
 
 @dataclass
@@ -101,15 +106,19 @@ class HybridRetrievalEngine:
     
     Combines dense vector search (semantic) with BM25 (keyword) retrieval,
     then optionally applies cross-encoder reranking for maximum precision.
+    
+    Supports disk persistence for indexes to avoid rebuild on restart.
     """
     
     def __init__(
         self,
         documents: DocumentStore,
         config: HybridConfig | None = None,
+        persist_path: str | None = "data/indexes",
     ) -> None:
         self._docs = documents
         self._config = config or HybridConfig()
+        self._persist_path = persist_path
         
         # Models (lazy loaded)
         self._embedder: SentenceTransformer | None = None
@@ -124,6 +133,11 @@ class HybridRetrievalEngine:
         self._tokenized_corpus: list[list[str]] = []
         self._last_cache: dict[str, Any] = {}
         self._cache_manager = get_cache_manager()
+        
+        # Persistence
+        self._index_persistence = None
+        self._corpus_version: str = ""
+        self._config_hash: str = ""
         
         # Phase 4/6: Hierarchical & Graph structures
         self._trees: dict[str, Any] = {}  # doc_id -> DocumentTree
@@ -271,6 +285,137 @@ class HybridRetrievalEngine:
                         if token not in self._graph:
                             self._graph[token] = set()
                         self._graph[token].add(i)
+        
+        # Auto-save if persistence enabled
+        if self._persist_path and self._chunks:
+            self.save_index()
+    
+    def _get_persistence(self):
+        """Lazy-load persistence manager."""
+        if self._index_persistence is None and self._persist_path:
+            from .persistence import IndexPersistence
+            self._index_persistence = IndexPersistence(self._persist_path)
+        return self._index_persistence
+    
+    def _compute_versions(self) -> tuple[str, str]:
+        """Compute corpus version and config hash for cache invalidation."""
+        import hashlib
+        import json
+        
+        # Corpus version from document IDs
+        doc_ids = sorted(d.id for d in self._docs.list())
+        corpus_str = ",".join(doc_ids)
+        corpus_version = hashlib.sha256(corpus_str.encode()).hexdigest()[:16]
+        
+        # Config hash from retrieval config
+        config_dict = {
+            "embedding_model": self._config.embedding_model,
+            "chunk_size": self._config.chunk_size,
+            "chunk_overlap": self._config.chunk_overlap,
+            "chunking_strategy": str(self._config.chunking_strategy),
+        }
+        config_str = json.dumps(config_dict, sort_keys=True)
+        config_hash = hashlib.sha256(config_str.encode()).hexdigest()[:16]
+        
+        return corpus_version, config_hash
+    
+    def save_index(self, index_name: str = "default") -> bool:
+        """Save current index to disk for fast reload."""
+        persistence = self._get_persistence()
+        if not persistence:
+            return False
+        
+        if not self._chunks or self._embeddings is None:
+            print("HybridRetrievalEngine: No index to save")
+            return False
+        
+        from .persistence import IndexMetadata
+        import time
+        
+        corpus_version, config_hash = self._compute_versions()
+        self._corpus_version = corpus_version
+        self._config_hash = config_hash
+        
+        metadata = IndexMetadata(
+            corpus_version=corpus_version,
+            config_hash=config_hash,
+            chunk_count=len(self._chunks),
+            created_at=time.time(),
+            model_name=self._config.embedding_model,
+        )
+        
+        # Save dense index
+        try:
+            persistence.save_dense_index(
+                index_name=index_name,
+                embeddings=self._embeddings,
+                chunks=self._chunks,
+                metadata=metadata,
+            )
+            print(f"HybridRetrievalEngine: Saved dense index ({len(self._chunks)} chunks)")
+        except Exception as e:
+            print(f"HybridRetrievalEngine: Failed to save dense index: {e}")
+            return False
+        
+        # Save sparse index if available
+        if self._bm25 and self._tokenized_corpus:
+            try:
+                persistence.save_sparse_index(
+                    index_name=index_name,
+                    bm25=self._bm25,
+                    tokenized_corpus=self._tokenized_corpus,
+                    metadata=metadata,
+                )
+                print(f"HybridRetrievalEngine: Saved sparse index")
+            except Exception as e:
+                print(f"HybridRetrievalEngine: Failed to save sparse index: {e}")
+        
+        return True
+    
+    def load_index(self, index_name: str = "default") -> bool:
+        """Load index from disk if valid for current corpus/config."""
+        persistence = self._get_persistence()
+        if not persistence:
+            return False
+        
+        corpus_version, config_hash = self._compute_versions()
+        
+        # Check if saved index is valid
+        if not persistence.is_valid(index_name, corpus_version, config_hash):
+            print("HybridRetrievalEngine: Saved index invalid or stale, will rebuild")
+            return False
+        
+        # Load dense index
+        try:
+            embeddings, chunks, metadata = persistence.load_dense_index(index_name)
+            if embeddings is None or chunks is None:
+                return False
+            
+            self._embeddings = embeddings
+            self._chunks = chunks
+            self._corpus_version = corpus_version
+            self._config_hash = config_hash
+            print(f"HybridRetrievalEngine: Loaded dense index ({len(chunks)} chunks)")
+        except Exception as e:
+            print(f"HybridRetrievalEngine: Failed to load dense index: {e}")
+            return False
+        
+        # Load sparse index
+        try:
+            bm25, tokenized, _ = persistence.load_sparse_index(index_name)
+            if bm25 and tokenized:
+                self._bm25 = bm25
+                self._tokenized_corpus = tokenized
+                print("HybridRetrievalEngine: Loaded sparse index")
+        except Exception as e:
+            print(f"HybridRetrievalEngine: Failed to load sparse index: {e}")
+            # Rebuild BM25 from chunks
+            self._tokenized_corpus = [self._tokenize(c.text) for _, c in self._chunks]
+            BM25Class = _get_bm25()
+            if BM25Class:
+                self._bm25 = BM25Class(self._tokenized_corpus)
+        
+        return True
     
     def _dense_search(self, query: str, top_k: int) -> list[tuple[int, float]]:
         """Dense vector similarity search."""
@@ -493,6 +638,9 @@ class HybridRetrievalEngine:
                     score=score,
                     chunk_text=chunk.text,
                     retrieval_method=retrieval_method,
+                    chunk_id=f"{doc.id}-{chunk.index}",
+                    start_char=chunk.start_char,
+                    end_char=chunk.end_char,
                 ))
         
         return results

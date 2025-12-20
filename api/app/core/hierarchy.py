@@ -1,9 +1,12 @@
 """Document hierarchy for RAPTOR-style chunk relationships.
 
 This module provides hierarchical document indexing:
-- Parent-child chunk relationships
-- Section-based grouping
-- Multi-level summaries for tree retrieval
+- Parent-child chunk relationships via markdown headers
+- RAPTOR-style clustering using embeddings
+- Abstractive summarization per cluster via LLM
+- Multi-level retrieval (summary → detail)
+
+RAPTOR Paper: https://arxiv.org/abs/2401.18059
 """
 
 from __future__ import annotations
@@ -13,8 +16,12 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, TYPE_CHECKING
 
+import numpy as np
+
 if TYPE_CHECKING:
     from .chunking import Chunk
+    from .providers import LLMProvider
+    from sentence_transformers import SentenceTransformer
 
 
 @dataclass
@@ -235,6 +242,266 @@ class HierarchyBuilder:
             nodes=nodes,
             document_id=document_id,
         )
+    
+    # =========================================================================
+    # RAPTOR-style clustering and abstractive summarization
+    # =========================================================================
+    
+    async def build_raptor(
+        self,
+        chunks: list["Chunk"],
+        document_id: str,
+        embedder: "SentenceTransformer",
+        provider: "LLMProvider | None" = None,
+        min_cluster_size: int = 2,
+        max_levels: int = 4,
+    ) -> DocumentTree:
+        """Build RAPTOR-style tree via clustering + summarization.
+        
+        RAPTOR (Recursive Abstractive Processing for Tree-Organized Retrieval)
+        builds a hierarchical tree by:
+        1. Embedding all chunks
+        2. Clustering similar chunks together
+        3. Generating abstractive summary per cluster
+        4. Recursively clustering summaries until single root
+        
+        Args:
+            chunks: List of document chunks
+            document_id: ID of the source document
+            embedder: Sentence transformer for embeddings
+            provider: LLM provider for abstractive summaries (optional)
+            min_cluster_size: Minimum chunks per cluster
+            max_levels: Maximum tree depth
+        
+        Returns:
+            DocumentTree with hierarchical structure
+        """
+        if not chunks:
+            # Return empty tree
+            root_id = str(uuid.uuid4())
+            return DocumentTree(
+                root_id=root_id,
+                nodes={root_id: HierarchyNode(
+                    id=root_id, level=0, title="Empty", text="", summary=""
+                )},
+                document_id=document_id,
+            )
+        
+        nodes: dict[str, HierarchyNode] = {}
+        current_level_texts: list[tuple[str, str, list[str]]] = []  # (node_id, text, chunk_ids)
+        
+        # Level 0: Create leaf nodes from chunks
+        for chunk in chunks:
+            node_id = str(uuid.uuid4())
+            text = chunk.text if hasattr(chunk, 'text') else getattr(chunk, 'snippet', '')
+            chunk_id = str(chunk.index) if hasattr(chunk, 'index') else str(id(chunk))
+            
+            node = HierarchyNode(
+                id=node_id,
+                level=0,
+                title=f"Chunk {chunk_id}",
+                text=text,
+                summary=text[:self.summary_max_length] if len(text) > self.summary_max_length else text,
+                chunk_ids=[chunk_id],
+            )
+            nodes[node_id] = node
+            current_level_texts.append((node_id, text, [chunk_id]))
+        
+        level = 1
+        
+        # Recursively cluster until single root or max levels
+        while len(current_level_texts) > 1 and level <= max_levels:
+            # Get texts for clustering
+            texts = [t[1] for t in current_level_texts]
+            
+            # Compute embeddings
+            embeddings = embedder.encode(texts, convert_to_numpy=True)
+            
+            # Cluster
+            clusters = self._cluster_chunks_kmeans(embeddings, min_cluster_size)
+            
+            if len(clusters) >= len(current_level_texts):
+                # No further clustering possible
+                break
+            
+            next_level_texts: list[tuple[str, str, list[str]]] = []
+            
+            for cluster_indices in clusters:
+                if not cluster_indices:
+                    continue
+                
+                # Gather cluster members
+                cluster_node_ids = [current_level_texts[i][0] for i in cluster_indices]
+                cluster_chunk_ids = []
+                for i in cluster_indices:
+                    cluster_chunk_ids.extend(current_level_texts[i][2])
+                
+                # Combine texts for summary
+                cluster_texts = [current_level_texts[i][1] for i in cluster_indices]
+                combined_text = "\n\n".join(cluster_texts)
+                
+                # Generate summary
+                if provider is not None:
+                    summary = await self._summarize_cluster_llm(cluster_texts, provider)
+                else:
+                    summary = self._summarize_cluster_extractive(cluster_texts)
+                
+                # Create parent node
+                parent_id = str(uuid.uuid4())
+                parent_node = HierarchyNode(
+                    id=parent_id,
+                    level=level,
+                    title=f"Cluster L{level}-{len(next_level_texts)}",
+                    text=combined_text[:1000],  # Truncate for storage
+                    summary=summary,
+                    children=cluster_node_ids,
+                    chunk_ids=cluster_chunk_ids,
+                )
+                nodes[parent_id] = parent_node
+                
+                # Update children's parent reference
+                for child_id in cluster_node_ids:
+                    if child_id in nodes:
+                        nodes[child_id].parent_id = parent_id
+                
+                next_level_texts.append((parent_id, summary, cluster_chunk_ids))
+            
+            current_level_texts = next_level_texts
+            level += 1
+        
+        # Create root node if needed
+        if len(current_level_texts) == 1:
+            root_id = current_level_texts[0][0]
+        else:
+            # Create a final root combining remaining nodes
+            root_id = str(uuid.uuid4())
+            root_children = [t[0] for t in current_level_texts]
+            all_chunk_ids = []
+            for t in current_level_texts:
+                all_chunk_ids.extend(t[2])
+            
+            root_texts = [t[1] for t in current_level_texts]
+            if provider is not None:
+                root_summary = await self._summarize_cluster_llm(root_texts, provider)
+            else:
+                root_summary = self._summarize_cluster_extractive(root_texts)
+            
+            root_node = HierarchyNode(
+                id=root_id,
+                level=level,
+                title="Document Root",
+                text="",
+                summary=root_summary,
+                children=root_children,
+                chunk_ids=all_chunk_ids,
+            )
+            nodes[root_id] = root_node
+            
+            # Update children's parent
+            for child_id in root_children:
+                if child_id in nodes:
+                    nodes[child_id].parent_id = root_id
+        
+        return DocumentTree(
+            root_id=root_id,
+            nodes=nodes,
+            document_id=document_id,
+        )
+    
+    def _cluster_chunks_kmeans(
+        self,
+        embeddings: np.ndarray,
+        min_cluster_size: int = 2,
+    ) -> list[list[int]]:
+        """Cluster embeddings using k-means.
+        
+        Uses simple k-means clustering. Falls back to grouping by pairs
+        if sklearn is not available.
+        """
+        n_samples = len(embeddings)
+        
+        if n_samples <= min_cluster_size:
+            return [list(range(n_samples))]
+        
+        # Determine number of clusters (reduce by ~half each level)
+        n_clusters = max(1, n_samples // 2)
+        n_clusters = min(n_clusters, n_samples // min_cluster_size)
+        
+        try:
+            from sklearn.cluster import KMeans
+            
+            kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+            labels = kmeans.fit_predict(embeddings)
+            
+            # Group indices by cluster
+            clusters: dict[int, list[int]] = {}
+            for idx, label in enumerate(labels):
+                if label not in clusters:
+                    clusters[label] = []
+                clusters[label].append(idx)
+            
+            return list(clusters.values())
+        
+        except ImportError:
+            # Fallback: simple pairing
+            clusters = []
+            for i in range(0, n_samples, 2):
+                if i + 1 < n_samples:
+                    clusters.append([i, i + 1])
+                else:
+                    clusters.append([i])
+            return clusters
+    
+    def _summarize_cluster_extractive(self, texts: list[str]) -> str:
+        """Generate extractive summary for a cluster (no LLM)."""
+        # Take first sentence from each text
+        summaries = []
+        for text in texts[:3]:  # Limit to 3 texts
+            sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+            if sentences:
+                summaries.append(sentences[0][:150])
+        
+        combined = " ".join(summaries)
+        if len(combined) > self.summary_max_length:
+            combined = combined[:self.summary_max_length] + "..."
+        return combined
+    
+    async def _summarize_cluster_llm(
+        self,
+        texts: list[str],
+        provider: "LLMProvider",
+    ) -> str:
+        """Generate abstractive summary using LLM."""
+        # Truncate texts to fit context
+        truncated_texts = []
+        total_chars = 0
+        for text in texts:
+            if total_chars > 3000:
+                break
+            truncated = text[:800] if len(text) > 800 else text
+            truncated_texts.append(truncated)
+            total_chars += len(truncated)
+        
+        combined = "\n\n---\n\n".join(truncated_texts)
+        
+        prompt = f"""Summarize the following document sections into a single coherent paragraph.
+Focus on the key information and main themes. Be concise but comprehensive.
+
+Sections:
+{combined}
+
+Summary:"""
+        
+        try:
+            response = await provider.chat([
+                {"role": "system", "content": "You are a precise document summarizer."},
+                {"role": "user", "content": prompt},
+            ])
+            return response.strip()[:self.summary_max_length]
+        except Exception:
+            # Fallback to extractive
+            return self._summarize_cluster_extractive(texts)
+
     
     def associate_chunks(
         self,

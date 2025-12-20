@@ -12,7 +12,7 @@ import random
 import statistics
 import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
@@ -73,7 +73,7 @@ class Experiment:
     description: str
     variants: list[ExperimentVariant]
     status: ExperimentStatus = ExperimentStatus.DRAFT
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     started_at: datetime | None = None
     completed_at: datetime | None = None
     results: list[ExperimentResult] = field(default_factory=list)
@@ -139,7 +139,7 @@ class ABTestingFramework:
             return False
 
         exp.status = ExperimentStatus.RUNNING
-        exp.started_at = datetime.now(UTC)
+        exp.started_at = datetime.now(timezone.utc)
         self._active_experiment_id = experiment_id
         return True
 
@@ -150,7 +150,7 @@ class ABTestingFramework:
             return False
 
         exp.status = ExperimentStatus.COMPLETED
-        exp.completed_at = datetime.now(UTC)
+        exp.completed_at = datetime.now(timezone.utc)
 
         if self._active_experiment_id == experiment_id:
             self._active_experiment_id = None
@@ -201,7 +201,7 @@ class ABTestingFramework:
         result = ExperimentResult(
             variant_id=variant_id,
             query=query,
-            timestamp=datetime.now(UTC),
+            timestamp=datetime.now(timezone.utc),
             latency_ms=latency_ms,
             precision=precision,
             recall=recall,

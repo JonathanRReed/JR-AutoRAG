@@ -17,12 +17,10 @@ body::before {
   inset: 0;
   z-index: -1;
   opacity: 0.02;
-  background: repeating-linear-gradient(
-    0deg,
-    transparent,
-    transparent 24px,
-    rgb(219 216 214 / 6%) 25px
-  );
+  background: repeating-linear-gradient(0deg,
+      transparent,
+      transparent 24px,
+      rgb(219 216 214 / 6%) 25px);
   pointer-events: none;
 }
 
@@ -83,6 +81,7 @@ body::before {
   0% {
     background-position: -200% 0;
   }
+
   100% {
     background-position: 200% 0;
   }
@@ -105,6 +104,7 @@ body::before {
     transform: scale(0.8);
     opacity: 1;
   }
+
   100% {
     transform: scale(2);
     opacity: 0;
@@ -149,10 +149,406 @@ button:not(:disabled):hover {
 }
 
 @media (prefers-reduced-motion) {
+
   *,
   ::before,
   ::after {
     animation: none !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* ========================================
+   Premium Glassmorphism Components
+   ======================================== */
+
+.glass-card {
+  background: rgba(18, 18, 26, 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(99, 102, 241, 0.15);
+  box-shadow:
+    0 4px 24px -4px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.dark .glass-card {
+  background: rgba(18, 18, 26, 0.8);
+  border-color: rgba(99, 102, 241, 0.2);
+}
+
+:root .glass-card {
+  background: rgba(255, 255, 255, 0.8);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+.glass-panel {
+  background: linear-gradient(135deg,
+      rgba(30, 30, 42, 0.6) 0%,
+      rgba(18, 18, 26, 0.8) 100%);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(99, 102, 241, 0.1);
+}
+
+/* ========================================
+   Timeline & Observability Components
+   ======================================== */
+
+.timeline-step {
+  position: relative;
+  padding-left: 2rem;
+}
+
+.timeline-step::before {
+  content: "";
+  position: absolute;
+  left: 0.5rem;
+  top: 1.5rem;
+  bottom: -0.5rem;
+  width: 2px;
+  background: linear-gradient(180deg, var(--border) 0%, transparent 100%);
+}
+
+.timeline-step:last-child::before {
+  display: none;
+}
+
+.timeline-dot {
+  position: absolute;
+  left: 0;
+  top: 0.25rem;
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: 50%;
+  background: var(--muted);
+  border: 2px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.timeline-dot.completed {
+  background: var(--primary);
+  border-color: var(--primary);
+}
+
+.timeline-dot.running {
+  background: var(--secondary);
+  border-color: var(--secondary);
+  animation: pulse-dot 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse-dot {
+
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(219, 216, 214, 0.4);
+  }
+
+  50% {
+    box-shadow: 0 0 0 8px rgba(219, 216, 214, 0);
+  }
+}
+
+/* ========================================
+   Duration Bar Visualization
+   ======================================== */
+
+.duration-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--muted);
+  overflow: hidden;
+  position: relative;
+}
+
+.duration-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, #6366f1 0%, #8b5cf6 100%);
+  transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.duration-bar-fill.fast {
+  background: linear-gradient(90deg, #10b981 0%, #059669 100%);
+}
+
+.duration-bar-fill.medium {
+  background: linear-gradient(90deg, #f59e0b 0%, #d97706 100%);
+}
+
+.duration-bar-fill.slow {
+  background: linear-gradient(90deg, #ef4444 0%, #dc2626 100%);
+}
+
+/* ========================================
+   Stat Card Animations
+   ======================================== */
+
+.stat-card {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.stat-card:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 8px 24px -8px rgba(99, 102, 241, 0.3),
+    0 0 0 1px rgba(99, 102, 241, 0.1);
+}
+
+.stat-value {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Count-up animation helper */
+@keyframes count-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-count-up {
+  animation: count-up 0.4s ease-out forwards;
+}
+
+/* ========================================
+   Mini Sparkline Charts
+   ======================================== */
+
+.sparkline {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 24px;
+}
+
+.sparkline-bar {
+  flex: 1;
+  min-width: 3px;
+  max-width: 6px;
+  background: var(--primary);
+  border-radius: 2px 2px 0 0;
+  transition: height 0.3s ease;
+  opacity: 0.6;
+}
+
+.sparkline-bar:last-child {
+  opacity: 1;
+}
+
+/* ========================================
+   Gauge / Ring Chart
+   ======================================== */
+
+.gauge-ring {
+  position: relative;
+  width: 48px;
+  height: 48px;
+}
+
+.gauge-ring svg {
+  transform: rotate(-90deg);
+}
+
+.gauge-ring-bg {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 4;
+}
+
+.gauge-ring-fill {
+  fill: none;
+  stroke: var(--primary);
+  stroke-width: 4;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.5s ease;
+}
+
+.gauge-ring-value {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+/* ========================================
+   Pipeline Step Cards
+   ======================================== */
+
+.step-card {
+  position: relative;
+  overflow: hidden;
+  transition: all 0.2s ease;
+}
+
+.step-card::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--muted);
+  transition: background 0.2s ease;
+}
+
+.step-card.completed::before {
+  background: var(--primary);
+}
+
+.step-card.running::before {
+  background: var(--secondary);
+  animation: step-pulse 1s ease-in-out infinite;
+}
+
+@keyframes step-pulse {
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.step-card:hover {
+  background: rgba(87, 86, 85, 0.1);
+}
+
+/* ========================================
+   Trend Indicators
+   ======================================== */
+
+.trend-up {
+  color: #34d399;
+}
+
+.trend-down {
+  color: #f87171;
+}
+
+.trend-neutral {
+  color: var(--muted-foreground);
+}
+
+.trend-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+/* ========================================
+   Source Cards (Citations)
+   ======================================== */
+
+.source-card {
+  position: relative;
+  transition: all 0.2s ease;
+  border-left: 3px solid transparent;
+}
+
+.source-card:hover {
+  border-left-color: var(--primary);
+  background: rgba(87, 86, 85, 0.1);
+}
+
+.source-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 50%;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+/* ========================================
+   Live Status Indicator
+   ======================================== */
+
+.live-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #34d399;
+  animation: live-pulse 2s ease-in-out infinite;
+}
+
+@keyframes live-pulse {
+
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.4);
+  }
+
+  50% {
+    box-shadow: 0 0 0 6px rgba(52, 211, 153, 0);
+  }
+}
+
+/* ========================================
+   Smooth Page Transitions
+   ======================================== */
+
+.fade-in {
+  animation: fade-in 0.3s ease-out;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.stagger-in>* {
+  animation: fade-in 0.3s ease-out backwards;
+}
+
+.stagger-in>*:nth-child(1) {
+  animation-delay: 0ms;
+}
+
+.stagger-in>*:nth-child(2) {
+  animation-delay: 50ms;
+}
+
+.stagger-in>*:nth-child(3) {
+  animation-delay: 100ms;
+}
+
+.stagger-in>*:nth-child(4) {
+  animation-delay: 150ms;
+}
+
+.stagger-in>*:nth-child(5) {
+  animation-delay: 200ms;
 }

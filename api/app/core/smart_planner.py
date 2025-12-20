@@ -28,6 +28,10 @@ class QueryType(str, Enum):
     SUMMARY = "summary"           # Needs broad coverage
     PROCEDURAL = "procedural"     # How-to questions
     CONVERSATIONAL = "conversational"  # Follow-up/clarification
+    # New query types for adaptive routing
+    MULTI_HOP = "multi_hop"       # Requires multiple retrieval steps
+    LOCATOR = "locator"           # "Where is X in my docs?" - keyword heavy
+    EXPLORATORY = "exploratory"   # Broad research, high diversity
 
 
 @dataclass
@@ -51,6 +55,11 @@ class RetrievalPlan:
     query_type: QueryType = QueryType.FACTUAL
     decomposed: bool = False
     expanded_terms: list[str] = field(default_factory=list)
+    # Iterative retrieval settings
+    iterative: bool = False
+    max_iterations: int = 1
+    stop_threshold: float = 0.05  # Stop when marginal gain < this
+    routing_params: dict = field(default_factory=dict)  # Full routing strategy
 
 
 @dataclass
@@ -60,6 +69,60 @@ class QueryAnalysis:
     sub_queries: list[str]
     expanded_terms: list[str]
     complexity_score: float  # 0-1, higher = more complex
+
+
+def compute_marginal_gain(
+    existing_chunks: list[dict],
+    new_chunks: list[dict],
+) -> float:
+    """Compute marginal evidence gain from new retrieval iteration.
+    
+    Returns a score 0-1 indicating how much unique information the new
+    chunks add. Used for stop criteria in iterative retrieval.
+    
+    Args:
+        existing_chunks: Previously retrieved chunks (each with 'text' and 'score')
+        new_chunks: Newly retrieved chunks from this iteration
+    
+    Returns:
+        Marginal gain score (0 = all redundant, 1 = all new)
+    """
+    if not new_chunks:
+        return 0.0
+    
+    if not existing_chunks:
+        return 1.0
+    
+    # Get existing text content for deduplication
+    existing_texts = set()
+    for chunk in existing_chunks:
+        text = chunk.get("text", chunk.get("chunk_text", "")).lower()
+        # Use content hash for comparison (first 100 chars + length)
+        key = f"{text[:100]}_{len(text)}"
+        existing_texts.add(key)
+    
+    # Count unique new chunks
+    unique_count = 0
+    score_improvement = 0.0
+    
+    for chunk in new_chunks:
+        text = chunk.get("text", chunk.get("chunk_text", "")).lower()
+        key = f"{text[:100]}_{len(text)}"
+        
+        if key not in existing_texts:
+            unique_count += 1
+            # Weight by score
+            score_improvement += chunk.get("score", 0.5)
+    
+    if unique_count == 0:
+        return 0.0
+    
+    # Combine uniqueness ratio with score-weighted value
+    uniqueness = unique_count / len(new_chunks)
+    avg_new_score = score_improvement / unique_count
+    
+    # Weighted combination: 70% uniqueness, 30% score
+    return 0.7 * uniqueness + 0.3 * avg_new_score
 
 
 class SmartPlanner:
@@ -91,6 +154,102 @@ class SmartPlanner:
         r'\bwhy\b', r'\bcause\b', r'\beffect\b', r'\bimpact\b',
         r'\banalyze\b', r'\bevaluate\b', r'\bassess\b'
     ]
+    # New patterns for adaptive routing
+    LOCATOR_PATTERNS = [
+        r'\bwhere\b.*\b(find|located|mention)\b', r'\bwhich (document|file|section)\b',
+        r'\bfind\b.*\bin\b', r'\blocate\b', r'\bsearch for\b'
+    ]
+    MULTI_HOP_PATTERNS = [
+        r'\band\b.*\bthen\b', r'\bfirst\b.*\bthen\b', r'\bafter\b.*\bwhat\b',
+        r'\bbased on\b.*\bwhat\b', r'\busing\b.*\bcalculate\b'
+    ]
+    EXPLORATORY_PATTERNS = [
+        r'\btell me (about|everything)\b', r'\bexplore\b', r'\bresearch\b',
+        r'\ball\b.*\b(information|details)\b', r'\bcomprehensive\b'
+    ]
+    
+    # Routing strategies per query type
+    ROUTING_STRATEGIES: dict[str, dict] = {
+        QueryType.FACTUAL: {
+            "dense_k": 5,
+            "sparse_k": 3,
+            "rerank_pool": 10,
+            "compression": "tight",
+            "raptor": False,
+            "diversity": 0.0,
+            "description": "Precise fact lookup with minimal k",
+        },
+        QueryType.COMPARATIVE: {
+            "dense_k": 10,
+            "sparse_k": 6,
+            "rerank_pool": 20,
+            "compression": "moderate",
+            "raptor": False,
+            "diversity": 0.3,
+            "description": "Gather multiple items for comparison",
+        },
+        QueryType.MULTI_HOP: {
+            "dense_k": 8,
+            "sparse_k": 5,
+            "rerank_pool": 15,
+            "compression": "moderate",
+            "decompose": True,
+            "iterative": True,
+            "max_hops": 3,
+            "description": "Multi-step reasoning with iteration",
+        },
+        QueryType.SUMMARY: {
+            "dense_k": 12,
+            "sparse_k": 8,
+            "rerank_pool": 25,
+            "compression": "light",
+            "raptor": True,
+            "diversity": 0.2,
+            "description": "Broad coverage for summarization",
+        },
+        QueryType.EXPLORATORY: {
+            "dense_k": 15,
+            "sparse_k": 10,
+            "rerank_pool": 30,
+            "compression": "light",
+            "raptor": True,
+            "diversity": 0.4,
+            "description": "Maximum coverage for research",
+        },
+        QueryType.LOCATOR: {
+            "dense_k": 5,
+            "sparse_k": 10,  # Favor keyword matching
+            "sparse_weight": 0.7,
+            "rerank_pool": 15,
+            "compression": "none",
+            "title_boost": 2.0,
+            "heading_boost": 1.5,
+            "description": "Keyword-heavy for document location",
+        },
+        QueryType.PROCEDURAL: {
+            "dense_k": 8,
+            "sparse_k": 5,
+            "rerank_pool": 15,
+            "compression": "moderate",
+            "raptor": False,
+            "description": "Step-by-step instructions",
+        },
+        QueryType.ANALYTICAL: {
+            "dense_k": 10,
+            "sparse_k": 6,
+            "rerank_pool": 20,
+            "compression": "moderate",
+            "raptor": True,
+            "description": "Evidence for reasoning",
+        },
+        QueryType.CONVERSATIONAL: {
+            "dense_k": 5,
+            "sparse_k": 3,
+            "rerank_pool": 8,
+            "compression": "tight",
+            "description": "Quick follow-up retrieval",
+        },
+    }
     
     def __init__(self, config: AppConfig, provider: "LLMProvider | None" = None) -> None:
         self._config = config
@@ -108,6 +267,20 @@ class SmartPlanner:
         """Classify query using pattern matching."""
         query_lower = query.lower()
         
+        # Check new specialized types first
+        for pattern in self.LOCATOR_PATTERNS:
+            if re.search(pattern, query_lower):
+                return QueryType.LOCATOR
+        
+        for pattern in self.MULTI_HOP_PATTERNS:
+            if re.search(pattern, query_lower):
+                return QueryType.MULTI_HOP
+        
+        for pattern in self.EXPLORATORY_PATTERNS:
+            if re.search(pattern, query_lower):
+                return QueryType.EXPLORATORY
+        
+        # Existing patterns
         for pattern in self.COMPARATIVE_PATTERNS:
             if re.search(pattern, query_lower):
                 return QueryType.COMPARATIVE
@@ -196,32 +369,97 @@ class SmartPlanner:
         
         return min(1.0, score)
     
-    def _get_retrieval_params(self, query_type: QueryType, complexity: float) -> dict:
-        """Get retrieval parameters based on query analysis."""
+    def _compute_dynamic_k(
+        self,
+        base_k: int,
+        corpus_size: int,
+        query_type: QueryType,
+    ) -> int:
+        """Compute dynamic k based on corpus size and query type.
+        
+        Scales k up for larger corpora to maintain recall,
+        scales down for small corpora to avoid noise.
+        """
+        if corpus_size == 0:
+            return base_k
+        
+        # Scaling factors based on corpus size
+        # Small corpus (<100): use base or less
+        # Medium corpus (100-1000): use base
+        # Large corpus (>1000): scale up
+        if corpus_size < 50:
+            scale = 0.6
+        elif corpus_size < 100:
+            scale = 0.8
+        elif corpus_size < 500:
+            scale = 1.0
+        elif corpus_size < 1000:
+            scale = 1.2
+        elif corpus_size < 5000:
+            scale = 1.4
+        else:
+            scale = 1.6
+        
+        # Exploratory/Summary queries scale more aggressively
+        if query_type in (QueryType.EXPLORATORY, QueryType.SUMMARY):
+            scale *= 1.2
+        
+        # Factual queries should stay tight
+        if query_type == QueryType.FACTUAL:
+            scale *= 0.8
+        
+        return max(3, min(50, int(base_k * scale)))
+    
+    def _get_retrieval_params(
+        self,
+        query_type: QueryType,
+        complexity: float,
+        corpus_size: int = 0,
+    ) -> dict:
+        """Get retrieval parameters based on query analysis and corpus size.
+        
+        Uses ROUTING_STRATEGIES for base parameters, then adjusts for
+        complexity and corpus size.
+        """
         defaults = self._config.retrieval
         
-        # Base parameters
+        # Get strategy for this query type (or fall back to FACTUAL)
+        strategy = self.ROUTING_STRATEGIES.get(
+            query_type,
+            self.ROUTING_STRATEGIES[QueryType.FACTUAL]
+        )
+        
+        # Base parameters from strategy
+        base_dense_k = strategy.get("dense_k", defaults.dense_k)
+        base_sparse_k = strategy.get("sparse_k", defaults.sparse_k)
+        base_rerank_pool = strategy.get("rerank_pool", defaults.rerank_pool)
+        
+        # Apply dynamic k based on corpus size
+        dense_k = self._compute_dynamic_k(base_dense_k, corpus_size, query_type)
+        sparse_k = self._compute_dynamic_k(base_sparse_k, corpus_size, query_type)
+        rerank_pool = self._compute_dynamic_k(base_rerank_pool, corpus_size, query_type)
+        
+        # Compression setting
+        compression_map = {"tight": True, "moderate": True, "light": True, "none": False}
+        compression = compression_map.get(strategy.get("compression", "moderate"), defaults.compression)
+        
+        # Build params dict including strategy extras
         params = {
-            'dense_k': defaults.dense_k,
-            'sparse_k': defaults.sparse_k,
-            'rerank_pool': defaults.rerank_pool,
-            'compression': defaults.compression,
+            'dense_k': dense_k,
+            'sparse_k': sparse_k,
+            'rerank_pool': rerank_pool,
+            'compression': compression,
+            'raptor': strategy.get('raptor', False),
+            'diversity': strategy.get('diversity', 0.0),
+            'iterative': strategy.get('iterative', False),
+            'max_hops': strategy.get('max_hops', 1),
+            'sparse_weight': strategy.get('sparse_weight', 0.4),
         }
         
-        # Adjust based on query type
-        if query_type == QueryType.SUMMARY:
-            params['dense_k'] = min(15, params['dense_k'] * 2)
-            params['rerank_pool'] = min(30, params['rerank_pool'] * 2)
-        elif query_type == QueryType.COMPARATIVE:
-            params['dense_k'] = min(12, int(params['dense_k'] * 1.5))
-        elif query_type == QueryType.FACTUAL:
-            params['dense_k'] = max(3, params['dense_k'] - 2)
-            params['compression'] = False  # Keep full context for facts
-        
-        # Adjust for complexity
+        # Adjust for high complexity
         if complexity > 0.7:
-            params['dense_k'] = min(20, int(params['dense_k'] * 1.5))
-            params['rerank_pool'] = min(40, int(params['rerank_pool'] * 1.5))
+            params['dense_k'] = min(40, int(params['dense_k'] * 1.3))
+            params['rerank_pool'] = min(50, int(params['rerank_pool'] * 1.3))
         
         return params
     
@@ -354,6 +592,10 @@ COMPLEXITY: medium"""
             )
             steps.append(step)
         
+        # Determine iterative settings
+        iterative = params.get('iterative', False)
+        max_iterations = params.get('max_hops', 1) if iterative else 1
+        
         return RetrievalPlan(
             steps=steps,
             target_tokens=defaults.target_tokens,
@@ -362,6 +604,9 @@ COMPLEXITY: medium"""
             query_type=analysis.query_type,
             decomposed=len(analysis.sub_queries) > 1,
             expanded_terms=analysis.expanded_terms,
+            iterative=iterative,
+            max_iterations=max_iterations,
+            routing_params=params,
         )
 
 
@@ -375,4 +620,5 @@ __all__ = [
     "QueryAnalysis",
     "SmartPlanner",
     "Planner",
+    "compute_marginal_gain",
 ]

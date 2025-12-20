@@ -77,43 +77,73 @@
 }
 
 .dark {
-  --background: #000000;
-  --foreground: #dbd8d6;
-  --card: #151515;
-  --card-foreground: #dbd8d6;
-  --popover: #151515;
-  --popover-foreground: #dbd8d6;
-  --primary: #dbd8d6;
-  --primary-foreground: #151515;
-  --secondary: #2b2b2a;
-  --secondary-foreground: #dbd8d6;
-  --muted: #2b2b2a;
-  --muted-foreground: #575655;
-  --accent: #414040;
-  --accent-foreground: #dbd8d6;
-  --destructive: #575655;
-  --border: #414040;
-  --input: #414040;
-  --ring: #dbd8d6;
-  --chart-1: #dbd8d6;
-  --chart-2: #575655;
-  --chart-3: #414040;
-  --chart-4: #2b2b2a;
-  --chart-5: #151515;
-  --sidebar: #151515;
-  --sidebar-foreground: #dbd8d6;
-  --sidebar-primary: #dbd8d6;
-  --sidebar-primary-foreground: #151515;
-  --sidebar-accent: #2b2b2a;
-  --sidebar-accent-foreground: #dbd8d6;
-  --sidebar-border: #414040;
-  --sidebar-ring: #dbd8d6;
+  /* Deep, rich background with slight blue tint */
+  --background: #0a0a0f;
+  --foreground: #f0f0f5;
+
+  /* Card with subtle elevation */
+  --card: #12121a;
+  --card-foreground: #f0f0f5;
+  --popover: #16161f;
+  --popover-foreground: #f0f0f5;
+
+  /* Vibrant primary accent - electric blue */
+  --primary: #6366f1;
+  --primary-foreground: #ffffff;
+
+  /* Secondary - warm purple */
+  --secondary: #8b5cf6;
+  --secondary-foreground: #ffffff;
+
+  /* Muted with better visibility */
+  --muted: #1e1e2a;
+  --muted-foreground: #9ca3af;
+
+  /* Accent - teal glow */
+  --accent: #06b6d4;
+  --accent-foreground: #ffffff;
+
+  /* Destructive - vibrant red */
+  --destructive: #ef4444;
+
+  /* Borders with subtle visibility */
+  --border: #2a2a3a;
+  --input: #2a2a3a;
+  --ring: #6366f1;
+
+  /* Chart colors - vibrant spectrum */
+  --chart-1: #6366f1;
+  --chart-2: #8b5cf6;
+  --chart-3: #06b6d4;
+  --chart-4: #10b981;
+  --chart-5: #f59e0b;
+
+  /* Sidebar */
+  --sidebar: #0f0f17;
+  --sidebar-foreground: #f0f0f5;
+  --sidebar-primary: #6366f1;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #1e1e2a;
+  --sidebar-accent-foreground: #f0f0f5;
+  --sidebar-border: #2a2a3a;
+  --sidebar-ring: #6366f1;
+
+  /* Premium accent colors */
+  --accent-glow: rgba(99, 102, 241, 0.2);
+  --accent-gradient-start: #6366f1;
+  --accent-gradient-end: #8b5cf6;
+  --glass-bg: rgba(18, 18, 26, 0.8);
+  --glass-border: rgba(99, 102, 241, 0.15);
+  --success: #10b981;
+  --warning: #f59e0b;
+  --info: #06b6d4;
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
+
   body {
     @apply bg-background text-foreground;
   }
