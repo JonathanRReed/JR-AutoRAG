@@ -4,6 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { CheckCircle2, Loader2, RadioTower, Rocket, Server, Settings2, TriangleAlert, Info } from "lucide-react";
 import type { AppConfig, LocalProviderInfo, ProviderConfig as ProviderConfigType, ProviderProfile, RetrievalDefaults, RoleSelection } from "@/types";
 
 interface ProviderConfigProps {
@@ -25,6 +26,18 @@ interface ProviderConfigProps {
   setLocalSelection: (baseUrl: string, field: keyof RoleSelection, value: string) => void;
   applyLocalProvider: (provider: LocalProviderInfo) => void;
   modelOptions: string[];
+}
+
+function InlineHint({ label, detail }: { label: string; detail: string }) {
+  return (
+    <span
+      className="inline-flex items-center gap-2 rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium text-muted-foreground"
+      title={detail}
+    >
+      <Info className="h-3.5 w-3.5 text-secondary-foreground" />
+      <span className="truncate">{label}</span>
+    </span>
+  );
 }
 
 export function ProviderConfig({
@@ -54,7 +67,6 @@ export function ProviderConfig({
   }, [config, selectedProfile]);
 
   const configProvider = config?.provider;
-  const retrieval = config?.retrieval;
 
   const updateProvider = (field: keyof ProviderConfigType, value: string) => {
     setConfig(cfg =>
@@ -72,33 +84,45 @@ export function ProviderConfig({
     );
   };
 
-  const updateRetrieval = (field: keyof RetrievalDefaults, value: string | number | boolean) => {
-    setConfig(cfg => (cfg ? { ...cfg, retrieval: { ...cfg.retrieval, [field]: value } } : cfg));
-  };
-
-  const handleNumber = (event: ChangeEvent<HTMLInputElement>, field: keyof RetrievalDefaults) => {
-    updateRetrieval(field, Number(event.target.value));
-  };
-
-  const renderProviderModels = (provider: LocalProviderInfo, field: keyof RoleSelection, label: string) => {
+  const renderProviderModels = (provider: LocalProviderInfo, field: keyof RoleSelection | "all", label: string) => {
     const selection = localSelections[provider.base_url];
+    const value = field === "all" ? (selection?.planner || "") : (selection?.[field] ?? "");
+
     return (
       <div className="space-y-1">
-        <Label className="text-xs text-muted-foreground">{label}</Label>
+        <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{label}</Label>
         <Select
-          value={selection?.[field] ?? ""}
-          onValueChange={value => setLocalSelection(provider.base_url, field, value)}
+          value={value}
+          onValueChange={(val: string) => {
+            if (field === "all") {
+              setLocalSelection(provider.base_url, "planner", val);
+              setLocalSelection(provider.base_url, "generator", val);
+              setLocalSelection(provider.base_url, "gatherer", val);
+            } else {
+              setLocalSelection(provider.base_url, field, val);
+            }
+          }}
           disabled={!provider.models.length}
         >
-          <SelectTrigger>
-            <SelectValue placeholder="Select model" />
+          <SelectTrigger className="h-8 text-xs bg-muted/30 hover:bg-muted/50 transition-colors w-full min-w-0 overflow-hidden">
+            <div className="flex-1 truncate text-left">
+              <SelectValue placeholder="Select model" />
+            </div>
           </SelectTrigger>
           <SelectContent>
-            {provider.models.map(model => (
-              <SelectItem key={model} value={model}>
-                {model}
-              </SelectItem>
-            ))}
+            {provider.models.map(model => {
+              const isRunning = provider.running.includes(model);
+              return (
+                <SelectItem key={model} value={model} className="text-xs">
+                  <div className="flex items-center gap-2">
+                    {model}
+                    {isRunning && (
+                      <span className="flex h-1.5 w-1.5 rounded-full bg-primary" title="Currently running" />
+                    )}
+                  </div>
+                </SelectItem>
+              );
+            })}
           </SelectContent>
         </Select>
       </div>
@@ -106,303 +130,349 @@ export function ProviderConfig({
   };
 
   return (
-    <>
-      <Card>
-        <CardHeader>
-          <CardTitle>Quick Setup</CardTitle>
-          <CardDescription>Define provider defaults and save reusable profiles.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          <div className="grid gap-4 sm:grid-cols-[minmax(220px,260px)_1fr]">
-            <div className="space-y-4">
-              <Label>Active Profile</Label>
-              <Select value={selectedProfile} onValueChange={handleSelectProfile}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Choose profile" />
-                </SelectTrigger>
-                <SelectContent>
-                  {profileOptions.map(name => (
-                    <SelectItem key={name} value={name}>
-                      {name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+    <div className="space-y-8">
+      <div className="grid gap-12 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] lg:items-stretch">
+        {/* Active Profile & Core Settings */}
+        <Card className="flex h-full flex-col overflow-hidden">
+          <CardHeader className="bg-muted/20">
+            <CardTitle className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+                <Settings2 className="h-5 w-5 text-primary" />
+              </div>
+              <div>
+                <span className="flex items-center gap-2">
+                  Provider Settings
+                  <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground uppercase">
+                    {selectedProfile || "default"}
+                  </span>
+                  <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground uppercase">
+                    Active
+                  </span>
+                </span>
+              </div>
+            </CardTitle>
+            <CardDescription>
+              Configure your AI backend and manage reusable profiles.
+            </CardDescription>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <InlineHint label="Step 1: Select models" detail="Planner = break down queries; Gatherer = fetch; Generator = answer." />
+              <InlineHint label="Step 2: Save profile" detail="Keep stable configs per environment (local vs cloud)." />
+              <InlineHint label="Step 3: Apply detected runtime" detail="Use auto-detected Ollama / LM Studio models instantly." />
+            </div>
+          </CardHeader>
+          <CardContent className="flex h-full flex-1 flex-col space-y-8 pt-8">
+            <div className="grid gap-8 lg:grid-cols-[420px_minmax(0,1fr)]">
+            {/* Profiles Sidebar */}
+            <div className="space-y-6 rounded-lg border border-border/60 bg-muted/10 p-4">
               <div className="space-y-2">
-                <Label htmlFor="newProfile">Save as</Label>
-                <Input id="newProfile" value={newProfileName} onChange={e => setNewProfileName(e.target.value)} />
-                <div className="flex gap-2">
-                  <Button variant="secondary" onClick={handleAddProfile}>
-                    Save Profile
-                  </Button>
-                  <Button variant="outline" onClick={handleDiscoverModels}>
-                    Discover Models
-                  </Button>
+                <Label>Active Profile</Label>
+                <Select value={selectedProfile} onValueChange={handleSelectProfile}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Choose profile" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {profileOptions.map(name => (
+                      <SelectItem key={name} value={name}>
+                        {name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-3">
+                <Label htmlFor="newProfile">Save current as...</Label>
+                <div className="flex flex-col gap-2">
+                  <Input
+                    id="newProfile"
+                    value={newProfileName}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewProfileName(e.target.value)}
+                    placeholder="Profile name"
+                    className="h-8 text-xs"
+                  />
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button variant="secondary" size="sm" onClick={handleAddProfile} className="text-xs">
+                      Save Profile
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={handleDiscoverModels} className="text-xs">
+                      Scan Models
+                    </Button>
+                  </div>
                 </div>
               </div>
+
+              {config?.provider_profiles && config.provider_profiles.length > 0 && (
+                <div className="pt-2">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Saved Profiles</p>
+                  <ul className="mt-3 space-y-2">
+                    {config.provider_profiles.map(profile => (
+                      <li key={profile.name} className="flex flex-col rounded-md border border-border/60 bg-card p-2 text-xs">
+                        <span className="font-bold text-foreground">{profile.name}</span>
+                        <span className="text-muted-foreground truncate">{profile.provider.name}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="providerName">Provider Name</Label>
-                <Input
-                  id="providerName"
-                  value={configProvider?.name ?? ""}
-                  onChange={e => updateProvider("name", e.target.value)}
-                />
+
+            {/* Config Fields */}
+            <div className="grid gap-6">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="providerName" className="text-xs">Provider Name</Label>
+                  <Input
+                    id="providerName"
+                    value={configProvider?.name ?? ""}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateProvider("name", e.target.value)}
+                    placeholder="e.g. OpenAI, Ollama"
+                    title="Display name for this provider profile"
+                  />
+                </div>
+                <div className="space-y-2 sm:col-span-2">
+                  <Label htmlFor="providerUrl" className="text-xs">Base URL</Label>
+                  <Input
+                    id="providerUrl"
+                    value={configProvider?.base_url ?? ""}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateProvider("base_url", e.target.value)}
+                    placeholder="http://localhost:11434"
+                    title="Endpoint for your runtime (Ollama/LM Studio/self-hosted)"
+                  />
+                </div>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="providerUrl">Provider Base URL</Label>
-                <Input
-                  id="providerUrl"
-                  value={configProvider?.base_url ?? ""}
-                  onChange={e => updateProvider("base_url", e.target.value)}
-                />
+
+              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                <div className="space-y-2">
+                  <Label htmlFor="plannerModel" className="text-xs">Planner Model</Label>
+                  <Input
+                    id="plannerModel"
+                    list="modelOptions"
+                    value={configProvider?.planner_model ?? ""}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateProvider("planner_model", e.target.value)}
+                    placeholder="llama3-8b"
+                    title="Planner: decomposes questions and proposes searches."
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="generatorModel" className="text-xs">Generator Model</Label>
+                  <Input
+                    id="generatorModel"
+                    list="modelOptions"
+                    value={configProvider?.generator_model ?? ""}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateProvider("generator_model", e.target.value)}
+                    placeholder="llama3-8b"
+                    title="Generator: crafts the final response."
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="gathererModel" className="text-xs">Gatherer Model</Label>
+                  <Input
+                    id="gathererModel"
+                    list="modelOptions"
+                    value={configProvider?.gatherer_model ?? ""}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateProvider("gatherer_model", e.target.value)}
+                    placeholder="llama3-8b"
+                    title="Gatherer: executes searches and returns source snippets."
+                  />
+                </div>
               </div>
+
               <div className="space-y-2">
-                <Label htmlFor="plannerModel">Planner Model</Label>
-                <Input
-                  id="plannerModel"
-                  list="modelOptions"
-                  value={configProvider?.planner_model ?? ""}
-                  onChange={e => updateProvider("planner_model", e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="generatorModel">Generator Model</Label>
-                <Input
-                  id="generatorModel"
-                  list="modelOptions"
-                  value={configProvider?.generator_model ?? ""}
-                  onChange={e => updateProvider("generator_model", e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="gathererModel">Gatherer Model</Label>
-                <Input
-                  id="gathererModel"
-                  list="modelOptions"
-                  value={configProvider?.gatherer_model ?? ""}
-                  onChange={e => updateProvider("gatherer_model", e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="apiKey">API Key</Label>
+                <Label htmlFor="apiKey" className="text-xs font-bold uppercase tracking-wider">API Key (if required)</Label>
                 <Input
                   id="apiKey"
                   type="password"
                   value={configProvider?.api_key ?? ""}
-                  onChange={e => updateProvider("api_key", e.target.value)}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateProvider("api_key", e.target.value)}
+                  placeholder="sk-..."
+                  className="max-w-md"
+                  title="Stored locally; used when your provider requires a key."
                 />
               </div>
-            </div>
-          </div>
 
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="space-y-2">
-              <Label htmlFor="denseK">Dense k</Label>
-              <Input
-                id="denseK"
-                type="number"
-                value={retrieval?.dense_k ?? 0}
-                onChange={event => handleNumber(event, "dense_k")}
-              />
+              <div className="flex items-center gap-4 pt-4">
+                <Button
+                  onClick={handleSaveConfig}
+                  disabled={isSavingConfig}
+                  className="bg-primary text-primary-foreground px-8"
+                >
+                  {isSavingConfig ? "Saving..." : "Save Configuration"}
+                </Button>
+                <Button variant="ghost" onClick={refreshAll} className="text-muted-foreground">
+                  Reset Changes
+                </Button>
+                <span className="text-xs text-muted-foreground">
+                  Profile: {selectedProfile || "default"}
+                </span>
+              </div>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="sparseK">Sparse k</Label>
-              <Input
-                id="sparseK"
-                type="number"
-                value={retrieval?.sparse_k ?? 0}
-                onChange={event => handleNumber(event, "sparse_k")}
-              />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="rerankPool">Rerank pool</Label>
-              <Input
-                id="rerankPool"
-                type="number"
-                value={retrieval?.rerank_pool ?? 0}
-                onChange={event => handleNumber(event, "rerank_pool")}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="topN">Final top N</Label>
-              <Input
-                id="topN"
-                type="number"
-                value={retrieval?.top_n ?? 0}
-                onChange={event => handleNumber(event, "top_n")}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="coverage">Coverage target</Label>
-              <Input
-                id="coverage"
-                type="number"
-                step="0.05"
-                value={retrieval?.coverage_target ?? 0}
-                onChange={event => handleNumber(event, "coverage_target")}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="context">Max context tokens</Label>
-              <Input
-                id="context"
-                type="number"
-                value={retrieval?.max_context_tokens ?? 0}
-                onChange={event => handleNumber(event, "max_context_tokens")}
-              />
-            </div>
-          </div>
+          </CardContent>
+        </Card>
 
-          <div className="grid gap-4 sm:grid-cols-3">
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                className="h-4 w-4"
-                checked={retrieval?.hybrid ?? false}
-                onChange={event => updateRetrieval("hybrid", event.target.checked)}
-              />
-              Hybrid search
-            </label>
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                className="h-4 w-4"
-                checked={retrieval?.compression ?? false}
-                onChange={event => updateRetrieval("compression", event.target.checked)}
-              />
-              Compression
-            </label>
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                className="h-4 w-4"
-                checked={retrieval?.graph ?? false}
-                onChange={event => updateRetrieval("graph", event.target.checked)}
-              />
-              Graph mode
-            </label>
-          </div>
-
-          <div className="flex flex-wrap gap-3">
-            <Button onClick={handleSaveConfig} disabled={isSavingConfig}>
-              {isSavingConfig ? "Saving..." : "Save Configuration"}
-            </Button>
-            <Button variant="outline" onClick={refreshAll}>
-              Refresh
+        {/* Local Runtimes */}
+        <Card className="flex h-full flex-col overflow-hidden">
+          <CardHeader className="bg-muted/20">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+                <Server className="h-5 w-5 text-primary" />
+              </div>
+              <div>
+                <CardTitle className="flex items-center gap-2">
+                  Auto-Detected Providers
+                  {localProviders.length > 0 && (
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-muted text-[10px] font-semibold text-muted-foreground">
+                      {localProviders.length}
+                    </span>
+                  )}
+                </CardTitle>
+                <CardDescription>
+                  Click to apply settings from running Ollama or LM Studio instances.
+                </CardDescription>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Button asChild size="sm" variant="outline" className="h-8 text-xs">
+                    <a href="https://ollama.com/download" target="_blank" rel="noreferrer">
+                      Download Ollama
+                    </a>
+                  </Button>
+                  <Button asChild size="sm" variant="outline" className="h-8 text-xs">
+                    <a href="https://lmstudio.ai/" target="_blank" rel="noreferrer">
+                      Download LM Studio
+                    </a>
+                  </Button>
+                </div>
+              </div>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={refreshLocalProviders}
+              disabled={localProvidersStatus === "loading"}
+              className="gap-2"
+            >
+              {localProvidersStatus === "loading" ? (
+                <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Scanning...</>
+              ) : (
+                "Refresh"
+              )}
             </Button>
           </div>
-
-          {(config?.provider_profiles?.length ?? 0) > 0 && (
-            <div>
-              <p className="text-sm font-semibold">Profiles</p>
-              <ul className="mt-2 space-y-1 text-sm text-muted-foreground">
-                {config?.provider_profiles?.map(profile => (
-                  <li key={profile.name}>
-                    <span className="font-medium text-foreground">{profile.name}</span> · {profile.provider.name} @
-                    {" "}
-                    {profile.provider.base_url}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Detected Local Providers</CardTitle>
-          <CardDescription>
-            Auto-detect running Ollama or LM Studio runtimes and apply their models with one click.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center justify-between text-sm text-muted-foreground">
-            <span>
-              {localProvidersStatus === "loading" && "Scanning for runtimes..."}
-              {localProvidersStatus === "ready" && `Found ${localProviders.length} provider${localProviders.length === 1 ? "" : "s"}.`}
-              {localProvidersStatus === "error" && "Unable to reach local runtimes."}
-              {localProvidersStatus === "idle" && "Waiting to scan..."}
-            </span>
-            <Button variant="outline" size="sm" onClick={refreshLocalProviders} disabled={localProvidersStatus === "loading"}>
-              {localProvidersStatus === "loading" ? "Scanning..." : "Rescan"}
-            </Button>
-          </div>
-          {config?.provider && (
-            <div className="rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
-              Active provider: <span className="font-semibold text-foreground">{config.provider.name}</span> @
-              <span className="text-foreground"> {config.provider.base_url}</span>
-              {config.provider.generator_model && ` · Generator: ${config.provider.generator_model}`}
-            </div>
-          )}
-          {localProviders.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              Start Ollama (`ollama serve`) or LM Studio and click Rescan to prefill provider settings.
-            </p>
-          ) : (
-            <div className="space-y-4">
-              {localProviders.map(provider => {
-                const running = provider.running.filter(Boolean);
-                const models = provider.models;
-                const badgeLabel = provider.kind === "ollama" ? "Ollama" : provider.kind === "lmstudio" ? "LM Studio" : "OpenAI";
-                return (
-                  <div key={provider.base_url} className="rounded-lg border border-border p-4 space-y-4">
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                      <div>
-                        <p className="font-semibold text-foreground">{provider.name}</p>
-                        <p className="text-xs text-muted-foreground">{provider.base_url}</p>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2 text-xs uppercase tracking-wide">
-                        <span className="rounded-full bg-muted px-2 py-1 text-muted-foreground">{badgeLabel}</span>
-                        {provider.version && <span className="text-muted-foreground">v{provider.version}</span>}
-                        {provider.status === "error" && (
-                          <span className="rounded-full bg-destructive/10 px-2 py-1 text-destructive">
-                            Warning
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    {provider.status === "error" && provider.error_message && (
-                      <p className="text-sm text-destructive">
-                        {provider.error_message}
-                      </p>
-                    )}
-                    <div className="text-sm text-muted-foreground space-y-1">
-                      {running.length ? (
-                        <p>
-                          Running: <span className="text-foreground">{running.join(", ")}</span>
-                        </p>
-                      ) : (
-                        <p>No models currently loaded.</p>
-                      )}
-                      <p>{models.length ? `${models.length} model${models.length === 1 ? "" : "s"} available.` : "No models found."}</p>
-                    </div>
-                    <div className="grid gap-3 md:grid-cols-3">
-                      {renderProviderModels(provider, "planner", "Planner model")}
-                      {renderProviderModels(provider, "gatherer", "Gatherer model")}
-                      {renderProviderModels(provider, "generator", "Generator model")}
-                    </div>
+          </CardHeader>
+          <CardContent className="flex h-full flex-1 flex-col pt-8">
+            <div className="flex h-full flex-col space-y-4">
+            {localProviders.length === 0 ? (
+              <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border/70 bg-muted/10 p-12 text-center">
+                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+                  <RadioTower className="h-6 w-6 text-muted-foreground" />
+                </div>
+                <h3 className="mt-4 font-medium text-foreground">No local runtimes detected</h3>
+                <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+                  Start Ollama or LM Studio on your machine, then click Refresh to detect available models.
+                </p>
+              </div>
+            ) : (
+              <div className="grid gap-4 sm:grid-cols-1 xl:grid-cols-2">
+                <div className="xl:col-span-2 flex items-center justify-between rounded-lg border border-border/60 bg-muted/10 p-3 text-xs text-muted-foreground">
+                  <div className="flex items-center gap-2">
+                    <Info className="h-3.5 w-3.5" />
+                    <span>Apply a detected runtime to auto-fill planner, gatherer, and generator.</span>
+                  </div>
+                  <div className="flex items-center gap-2">
                     <Button
-                      onClick={() => void applyLocalProvider(provider)}
-                      disabled={!models.length || isSavingConfig}
-                      variant="secondary"
+                      variant="outline"
+                      size="sm"
+                      onClick={refreshLocalProviders}
+                      disabled={localProvidersStatus === "loading"}
+                      className="h-8 text-xs"
                     >
-                      Use {provider.name}
+                      {localProvidersStatus === "loading" ? "Scanning..." : "Rescan"}
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={localProviders.length === 0 || isSavingConfig}
+                      onClick={() => {
+                        const first = localProviders[0];
+                        if (first) {
+                          void applyLocalProvider(first);
+                        }
+                      }}
+                      className="h-8 text-xs"
+                    >
+                      Use detected models
                     </Button>
                   </div>
-                );
-              })}
+                </div>
+                {localProviders.map(provider => {
+                  const running = provider.running.filter(Boolean);
+                  const models = provider.models;
+                  const kind = provider.kind;
+
+                  return (
+                    <div
+                      key={provider.base_url}
+                      className="group flex flex-col justify-between rounded-lg border border-border/60 bg-card p-5 transition-colors"
+                    >
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="font-bold text-foreground">{provider.name}</p>
+                            <p className="text-[10px] text-muted-foreground font-mono">{provider.base_url}</p>
+                          </div>
+                          <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-bold text-muted-foreground uppercase">
+                            {kind}
+                          </span>
+                        </div>
+
+                        {provider.status === "error" && provider.error_message ? (
+                          <div className="rounded-lg bg-destructive/15 p-2 text-[10px] text-destructive font-medium">
+                            <TriangleAlert className="mr-1 inline h-3.5 w-3.5" />
+                            {provider.error_message}
+                          </div>
+                        ) : (
+                          <div className="space-y-3">
+                            {/* Fast-set option */}
+                            {renderProviderModels(provider, "all", "Use for all roles")}
+
+                            <div className="grid grid-cols-3 gap-2 mt-2 pt-2 border-t border-border/50">
+                              {renderProviderModels(provider, "planner", "Planner")}
+                              {renderProviderModels(provider, "gatherer", "Gatherer")}
+                              {renderProviderModels(provider, "generator", "Generator")}
+                            </div>
+                            <div className="flex items-center gap-2 text-[10px]">
+                              <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+                              <span className="text-muted-foreground">
+                                {models.length} models, {provider.running.length} active
+                              </span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      <Button
+                        onClick={() => void applyLocalProvider(provider)}
+                        disabled={!models.length || isSavingConfig}
+                        className="mt-6 w-full gap-2"
+                      >
+                        <CheckCircle2 className="h-4 w-4" />
+                        Apply {provider.name}
+                      </Button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
             </div>
-          )}
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      </div>
+
       <datalist id="modelOptions">
         {modelOptions.map(model => (
           <option key={model} value={model} />
         ))}
       </datalist>
-    </>
+    </div>
   );
 }

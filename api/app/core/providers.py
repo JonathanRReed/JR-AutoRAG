@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, AsyncIterator
 
 import httpx
 
@@ -29,6 +30,9 @@ class LLMProvider:
     async def complete(self, prompt: str, **kwargs: Any) -> str:
         raise NotImplementedError
 
+    async def chat_stream(self, messages: Iterable[dict[str, Any]], **kwargs: Any) -> AsyncIterator[str]:
+        raise NotImplementedError
+
 
 class _HTTPProvider(LLMProvider):
     """Shared utilities for HTTP based providers."""
@@ -38,7 +42,7 @@ class _HTTPProvider(LLMProvider):
     async def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         url = f"{self.base_url}{path}"
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=120.0) as client:
                 response = await client.post(url, json=payload)
             response.raise_for_status()
             return response.json()
@@ -58,6 +62,31 @@ class OllamaProvider(_HTTPProvider):
         }
         data = await self._post("/api/chat", payload)
         return data.get("message", {}).get("content", "")
+
+    async def chat_stream(self, messages: Iterable[dict[str, Any]], **kwargs: Any):
+        model = kwargs.get("model") or self.default_model or "llama3"
+        payload = {
+            "model": model,
+            "messages": list(messages),
+            "stream": True,
+        }
+        url = f"{self.base_url}/api/chat"
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            async with client.stream("POST", url, json=payload) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    message = data.get("message", {})
+                    content = message.get("content", "")
+                    if content:
+                        yield content
+                    if data.get("done") is True:
+                        break
 
     async def complete(self, prompt: str, **kwargs: Any) -> str:
         model = kwargs.get("model") or self.default_model or "llama3"
