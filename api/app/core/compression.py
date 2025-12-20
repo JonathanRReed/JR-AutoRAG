@@ -239,8 +239,14 @@ class ContextCompressor:
         self,
         chunks: list["EvidenceChunk"],
         include_numbers: bool = True,
+        rich_format: bool = True,
     ) -> tuple[str, list[dict]]:
-        """Format chunks with inline citation numbers.
+        """Format chunks with inline citation numbers and rich metadata.
+        
+        Args:
+            chunks: List of evidence chunks
+            include_numbers: Include [1], [2] markers
+            rich_format: Include document title and chunk ID headers
         
         Returns:
             Tuple of (formatted_text, citations_list)
@@ -249,17 +255,28 @@ class ContextCompressor:
         citations = []
         
         for i, chunk in enumerate(chunks, 1):
-            if include_numbers:
+            if rich_format:
+                # Rich format with document title and chunk ID for precise locators
+                header = f"[{i}] Source: {chunk.title} | ChunkID: {chunk.id}"
+                body = f'"{chunk.snippet[:200]}..."' if len(chunk.snippet) > 200 else f'"{chunk.snippet}"'
+                texts.append(f"{header}\n{body}")
+            elif include_numbers:
                 texts.append(f"[{i}] {chunk.snippet}")
             else:
                 texts.append(chunk.snippet)
             
+            # Extract a key quote (first sentence or first 100 chars)
+            key_quote = chunk.snippet.split('.')[0][:100] if '.' in chunk.snippet else chunk.snippet[:100]
+            
             citations.append({
                 "id": chunk.id,
                 "title": chunk.title,
-                "snippet_preview": chunk.snippet[:100] + "..." if len(chunk.snippet) > 100 else chunk.snippet,
+                "snippet_preview": chunk.snippet[:150] + "..." if len(chunk.snippet) > 150 else chunk.snippet,
+                "key_quote": key_quote,
                 "citation_number": i,
                 "score": chunk.score,
+                "document_title": chunk.title,  # Alias for clarity
+                "chunk_id": chunk.id,  # Alias for clarity
             })
         
         return "\n\n".join(texts), citations

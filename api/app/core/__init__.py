@@ -28,6 +28,20 @@ from .telemetry import TelemetryStore
 from .tools import CalculatorTool, DateTimeTool, Tool, ToolRegistry, ToolResult
 from .tracing import DetailedTrace, TraceSpan, Tracer, get_tracer
 from .vector_store import ChromaVectorStore, InMemoryVectorStore, VectorStore, get_vector_store
+# SOTA Agentic components
+from .retrieval_evaluator import RetrievalEvaluator, RetrievalVerdict, EvaluationResult as RetrievalEvalResult, KnowledgeStrip
+from .adaptive_gate import AdaptiveGate, GateDecision, GateResult
+# Web search disabled for offline-only operation
+# from .web_search import WebSearch, WebResult, WebSearchProvider, get_web_search
+from .graph_rag import GraphRAG, Entity, Relationship, Community, EntityType
+from .flare import FLAREGenerator, FLAREConfig, FLAREResult, FLAREStep
+# Enterprise modules
+from .auth import APIKeyAuth, APIKey, get_auth
+from .audit import AuditLog, AuditEntry, AuditAction, get_audit_log
+from .rate_limiter import RateLimiter, TokenBucket, RateLimitConfig, get_rate_limiter
+from .citation_formatter import RichCitation, format_rich_context, generate_reference_section, validate_answer_citations
+from .evidence_validator import EvidenceValidator, ValidationResult, create_strict_validator
+from .structured_generator import ClaimType, ClaimSlot, StructuredPick, StructuredMemo, StructuredGenerator
 
 __all__ = [
     "ConfigStore",
@@ -114,4 +128,55 @@ __all__ = [
     "get_cache_manager",
     "BatchProcessor",
     "BatchResult",
+    # SOTA Agentic components
+    "RetrievalEvaluator",
+    "RetrievalVerdict",
+    "RetrievalEvalResult",
+    "KnowledgeStrip",
+    "AdaptiveGate",
+    "GateDecision",
+    "GateResult",
+    # Web search disabled for offline-only operation
+    # "WebSearch",
+    # "WebResult",
+    # "WebSearchProvider",
+    # "get_web_search",
+    # GraphRAG
+    "GraphRAG",
+    "Entity",
+    "Relationship",
+    "Community",
+    "EntityType",
+    # FLARE
+    "FLAREGenerator",
+    "FLAREConfig",
+    "FLAREResult",
+    "FLAREStep",
+    # Enterprise modules
+    "APIKeyAuth",
+    "APIKey",
+    "get_auth",
+    "AuditLog",
+    "AuditEntry",
+    "AuditAction",
+    "get_audit_log",
+    "RateLimiter",
+    "TokenBucket",
+    "RateLimitConfig",
+    "get_rate_limiter",
+    # Citation fidelity
+    "RichCitation",
+    "format_rich_context",
+    "generate_reference_section",
+    "validate_answer_citations",
+    # Evidence validation (10/10)
+    "EvidenceValidator",
+    "ValidationResult",
+    "create_strict_validator",
+    # Structured generation
+    "ClaimType",
+    "ClaimSlot",
+    "StructuredPick",
+    "StructuredMemo",
+    "StructuredGenerator",
 ]

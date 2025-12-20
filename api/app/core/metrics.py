@@ -207,6 +207,234 @@ class MetricsCalculator:
             compression_ms=step_times.get("compression", 0),
             generation_ms=step_times.get("generation", 0),
         )
+    
+    # =========================================================================
+    # RAGAS-style metrics (reference-free evaluation)
+    # https://arxiv.org/abs/2309.15217
+    # =========================================================================
+    
+    def calculate_context_relevancy(
+        self,
+        question: str,
+        contexts: list[str],
+    ) -> float:
+        """RAGAS Context Relevancy: How relevant is retrieved context to question.
+        
+        Measures the proportion of context sentences that are relevant to the question.
+        Higher = more focused retrieval with less noise.
+        """
+        import re
+        
+        if not contexts:
+            return 0.0
+        
+        question_terms = set(re.findall(r'\b[a-z]{3,}\b', question.lower()))
+        if not question_terms:
+            return 0.5  # Neutral if no terms
+        
+        total_sentences = 0
+        relevant_sentences = 0
+        
+        for context in contexts:
+            sentences = re.split(r'(?<=[.!?])\s+', context)
+            for sentence in sentences:
+                if len(sentence) < 20:
+                    continue
+                total_sentences += 1
+                
+                sent_terms = set(re.findall(r'\b[a-z]{3,}\b', sentence.lower()))
+                overlap = len(question_terms & sent_terms)
+                
+                # Consider relevant if 2+ term overlap
+                if overlap >= 2:
+                    relevant_sentences += 1
+        
+        if total_sentences == 0:
+            return 0.0
+        
+        return relevant_sentences / total_sentences
+    
+    def calculate_context_precision(
+        self,
+        question: str,
+        contexts: list[str],
+        answer: str,
+    ) -> float:
+        """RAGAS Context Precision: How many retrieved contexts were useful.
+        
+        Estimates which contexts actually contributed to the answer.
+        """
+        import re
+        
+        if not contexts or not answer:
+            return 0.0
+        
+        answer_terms = set(re.findall(r'\b[a-z]{4,}\b', answer.lower()))
+        question_terms = set(re.findall(r'\b[a-z]{3,}\b', question.lower()))
+        
+        # Unique answer terms not in question
+        answer_unique = answer_terms - question_terms
+        
+        if not answer_unique:
+            return 0.5  # Can't determine precision
+        
+        useful_contexts = 0
+        
+        for context in contexts:
+            context_terms = set(re.findall(r'\b[a-z]{4,}\b', context.lower()))
+            
+            # Context is useful if it contains unique answer terms
+            overlap = len(answer_unique & context_terms)
+            if overlap >= 2:
+                useful_contexts += 1
+        
+        return useful_contexts / len(contexts)
+    
+    def calculate_context_recall(
+        self,
+        answer: str,
+        contexts: list[str],
+        ground_truth: str | None = None,
+    ) -> float:
+        """RAGAS Context Recall: Did we retrieve context for all answer parts.
+        
+        Measures if the context contains information for the complete answer.
+        If ground_truth provided, measures recall against expected answer.
+        """
+        import re
+        
+        if not contexts:
+            return 0.0
+        
+        reference = ground_truth if ground_truth else answer
+        if not reference:
+            return 0.0
+        
+        # Extract key information nuggets from reference
+        reference_sentences = re.split(r'(?<=[.!?])\s+', reference)
+        reference_nuggets = [s.strip() for s in reference_sentences if len(s) > 30]
+        
+        if not reference_nuggets:
+            return 0.5
+        
+        combined_context = ' '.join(contexts).lower()
+        supported_nuggets = 0
+        
+        for nugget in reference_nuggets:
+            # Check if key terms from nugget appear in context
+            nugget_terms = set(re.findall(r'\b[a-z]{4,}\b', nugget.lower()))
+            if len(nugget_terms) < 2:
+                continue
+            
+            context_terms = set(re.findall(r'\b[a-z]{4,}\b', combined_context))
+            overlap_ratio = len(nugget_terms & context_terms) / len(nugget_terms)
+            
+            if overlap_ratio >= 0.5:  # 50% term overlap counts as supported
+                supported_nuggets += 1
+        
+        return supported_nuggets / len(reference_nuggets) if reference_nuggets else 0.5
+    
+    def calculate_answer_semantic_similarity(
+        self,
+        answer: str,
+        ground_truth: str,
+    ) -> float:
+        """RAGAS Answer Semantic Similarity: How close is answer to expected.
+        
+        Uses term overlap as a proxy for semantic similarity.
+        For true semantic similarity, would need embeddings.
+        """
+        import re
+        
+        if not answer or not ground_truth:
+            return 0.0
+        
+        answer_terms = set(re.findall(r'\b[a-z]{3,}\b', answer.lower()))
+        truth_terms = set(re.findall(r'\b[a-z]{3,}\b', ground_truth.lower()))
+        
+        if not truth_terms:
+            return 0.0
+        
+        # Jaccard similarity
+        intersection = len(answer_terms & truth_terms)
+        union = len(answer_terms | truth_terms)
+        
+        return intersection / union if union > 0 else 0.0
+    
+    def calculate_faithfulness(
+        self,
+        answer: str,
+        contexts: list[str],
+    ) -> float:
+        """RAGAS Faithfulness: Is the answer grounded in context.
+        
+        Measures proportion of answer claims that can be found in context.
+        """
+        import re
+        
+        if not answer or not contexts:
+            return 0.0
+        
+        # Split answer into claims (sentences)
+        answer_sentences = re.split(r'(?<=[.!?])\s+', answer)
+        claims = [s.strip() for s in answer_sentences if len(s) > 20]
+        
+        if not claims:
+            return 0.5
+        
+        combined_context = ' '.join(contexts).lower()
+        supported_claims = 0
+        
+        for claim in claims:
+            claim_terms = set(re.findall(r'\b[a-z]{4,}\b', claim.lower()))
+            if len(claim_terms) < 2:
+                supported_claims += 1  # Short claims are fine
+                continue
+            
+            context_terms = set(re.findall(r'\b[a-z]{4,}\b', combined_context))
+            overlap = len(claim_terms & context_terms) / len(claim_terms)
+            
+            if overlap >= 0.4:  # 40% term overlap counts as grounded
+                supported_claims += 1
+        
+        return supported_claims / len(claims)
+    
+    def calculate_ragas_score(
+        self,
+        question: str,
+        answer: str,
+        contexts: list[str],
+        ground_truth: str | None = None,
+    ) -> dict[str, float]:
+        """Calculate complete RAGAS metric suite.
+        
+        Returns all RAGAS metrics as a dictionary.
+        """
+        metrics = {
+            "context_relevancy": self.calculate_context_relevancy(question, contexts),
+            "context_precision": self.calculate_context_precision(question, contexts, answer),
+            "faithfulness": self.calculate_faithfulness(answer, contexts),
+        }
+        
+        if ground_truth:
+            metrics["context_recall"] = self.calculate_context_recall(answer, contexts, ground_truth)
+            metrics["answer_similarity"] = self.calculate_answer_semantic_similarity(answer, ground_truth)
+        else:
+            # Without ground truth, estimate from answer
+            metrics["context_recall"] = self.calculate_context_recall(answer, contexts)
+        
+        # Overall RAGAS score (weighted average)
+        weights = {
+            "context_relevancy": 0.2,
+            "context_precision": 0.2,
+            "context_recall": 0.2,
+            "faithfulness": 0.4,
+        }
+        
+        overall = sum(metrics.get(k, 0) * v for k, v in weights.items())
+        metrics["ragas_score"] = overall
+        
+        return metrics
 
 
 @dataclass
