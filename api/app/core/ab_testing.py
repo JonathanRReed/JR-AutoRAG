@@ -9,12 +9,12 @@ This module enables experimentation with:
 from __future__ import annotations
 
 import random
+import statistics
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Any, Callable
-import statistics
+from typing import Any
 
 
 class ExperimentStatus(str, Enum):
@@ -59,7 +59,7 @@ class ExperimentStats:
     avg_precision: float
     avg_recall: float
     avg_quality: float | None
-    
+
     def __post_init__(self):
         # Calculate confidence intervals
         pass
@@ -73,11 +73,11 @@ class Experiment:
     description: str
     variants: list[ExperimentVariant]
     status: ExperimentStatus = ExperimentStatus.DRAFT
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     started_at: datetime | None = None
     completed_at: datetime | None = None
     results: list[ExperimentResult] = field(default_factory=list)
-    
+
     def get_variant(self, variant_id: str) -> ExperimentVariant | None:
         """Get variant by ID."""
         for v in self.variants:
@@ -88,11 +88,11 @@ class Experiment:
 
 class ABTestingFramework:
     """Framework for running A/B tests on RAG configurations."""
-    
+
     def __init__(self) -> None:
         self._experiments: dict[str, Experiment] = {}
         self._active_experiment_id: str | None = None
-    
+
     def create_experiment(
         self,
         name: str,
@@ -100,17 +100,17 @@ class ABTestingFramework:
         variants: list[dict[str, Any]],
     ) -> Experiment:
         """Create a new experiment.
-        
+
         Args:
             name: Experiment name
             description: What we're testing
             variants: List of variant configs with name, description, config
-        
+
         Returns:
             Created experiment
         """
         exp_id = str(uuid.uuid4())
-        
+
         variant_objects = [
             ExperimentVariant(
                 id=str(uuid.uuid4()),
@@ -121,67 +121,67 @@ class ABTestingFramework:
             )
             for v in variants
         ]
-        
+
         experiment = Experiment(
             id=exp_id,
             name=name,
             description=description,
             variants=variant_objects,
         )
-        
+
         self._experiments[exp_id] = experiment
         return experiment
-    
+
     def start_experiment(self, experiment_id: str) -> bool:
         """Start running an experiment."""
         exp = self._experiments.get(experiment_id)
         if not exp:
             return False
-        
+
         exp.status = ExperimentStatus.RUNNING
-        exp.started_at = datetime.now(timezone.utc)
+        exp.started_at = datetime.now(UTC)
         self._active_experiment_id = experiment_id
         return True
-    
+
     def stop_experiment(self, experiment_id: str) -> bool:
         """Stop an experiment."""
         exp = self._experiments.get(experiment_id)
         if not exp:
             return False
-        
+
         exp.status = ExperimentStatus.COMPLETED
-        exp.completed_at = datetime.now(timezone.utc)
-        
+        exp.completed_at = datetime.now(UTC)
+
         if self._active_experiment_id == experiment_id:
             self._active_experiment_id = None
-        
+
         return True
-    
+
     def select_variant(self, experiment_id: str | None = None) -> ExperimentVariant | None:
         """Select a variant for the current request.
-        
+
         Uses weighted random selection based on variant weights.
         """
         exp_id = experiment_id or self._active_experiment_id
         if not exp_id:
             return None
-        
+
         exp = self._experiments.get(exp_id)
         if not exp or exp.status != ExperimentStatus.RUNNING:
             return None
-        
+
         # Weighted random selection
         total_weight = sum(v.weight for v in exp.variants)
         r = random.random() * total_weight
-        
+
         current = 0
         for variant in exp.variants:
             current += variant.weight
             if r <= current:
                 return variant
-        
+
         return exp.variants[-1] if exp.variants else None
-    
+
     def record_result(
         self,
         experiment_id: str,
@@ -197,30 +197,30 @@ class ABTestingFramework:
         exp = self._experiments.get(experiment_id)
         if not exp:
             return
-        
+
         result = ExperimentResult(
             variant_id=variant_id,
             query=query,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             latency_ms=latency_ms,
             precision=precision,
             recall=recall,
             quality_score=quality_score,
             metadata=metadata or {},
         )
-        
+
         exp.results.append(result)
-    
+
     def get_variant_stats(self, experiment_id: str) -> list[ExperimentStats]:
         """Get statistics for each variant in an experiment."""
         exp = self._experiments.get(experiment_id)
         if not exp:
             return []
-        
+
         stats = []
         for variant in exp.variants:
             variant_results = [r for r in exp.results if r.variant_id == variant.id]
-            
+
             if not variant_results:
                 stats.append(ExperimentStats(
                     variant_id=variant.id,
@@ -232,12 +232,12 @@ class ABTestingFramework:
                     avg_quality=None,
                 ))
                 continue
-            
+
             latencies = [r.latency_ms for r in variant_results]
             precisions = [r.precision for r in variant_results]
             recalls = [r.recall for r in variant_results]
             qualities = [r.quality_score for r in variant_results if r.quality_score is not None]
-            
+
             stats.append(ExperimentStats(
                 variant_id=variant.id,
                 sample_count=len(variant_results),
@@ -247,37 +247,37 @@ class ABTestingFramework:
                 avg_recall=statistics.mean(recalls),
                 avg_quality=statistics.mean(qualities) if qualities else None,
             ))
-        
+
         return stats
-    
+
     def get_winner(self, experiment_id: str, metric: str = "precision") -> ExperimentVariant | None:
         """Determine the winning variant for a metric.
-        
+
         Args:
             experiment_id: Experiment to analyze
             metric: Metric to compare (precision, recall, latency, quality)
-        
+
         Returns:
             Best performing variant or None
         """
         stats = self.get_variant_stats(experiment_id)
         if not stats:
             return None
-        
+
         exp = self._experiments.get(experiment_id)
         if not exp:
             return None
-        
+
         # Find best by metric
         best_stat = None
         for stat in stats:
             if stat.sample_count == 0:
                 continue
-            
+
             if best_stat is None:
                 best_stat = stat
                 continue
-            
+
             if metric == "latency":
                 # Lower is better
                 if stat.avg_latency_ms < best_stat.avg_latency_ms:
