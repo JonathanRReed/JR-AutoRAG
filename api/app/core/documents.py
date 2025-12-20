@@ -58,3 +58,8 @@ class DocumentStore:
             if doc_id in self._docs:
                 del self._docs[doc_id]
                 self._persist()
+
+    def clear(self) -> None:
+        with self._lock:
+            self._docs = {}
+            self._persist()

@@ -12,10 +12,13 @@ from .core import (
     Gatherer,
     IngestPipeline,
     Orchestrator,
-    Planner,
     ProviderFactory,
-    RetrievalEngine,
     TelemetryStore,
+    HybridRetrievalEngine,
+    HybridConfig,
+    ChunkingStrategy,
+    Planner,
+    SmartPlanner,  # Phase 2: Smart planning
 )
 
 
@@ -26,12 +29,32 @@ class ServiceContainer:
         self.config_store = ConfigStore(data_dir / "config.json")
         self.document_store = DocumentStore(data_dir / "documents.json")
         self.telemetry = TelemetryStore(data_dir / "traces.json")
-        self.retrieval_engine = RetrievalEngine(self.document_store)
+        
+        # Load config for retrieval settings
+        cfg = self.config_store.read()
+        
+        # Configure hybrid retrieval from app config
+        retrieval_config = HybridConfig(
+            embedding_model=cfg.retrieval.embedding_model,
+            reranker_model=cfg.retrieval.reranker_model,
+            use_reranking=cfg.retrieval.use_reranking,
+            rerank_top_k=cfg.retrieval.rerank_pool,
+            chunking_strategy=ChunkingStrategy(cfg.retrieval.chunking_strategy),
+            chunk_size=cfg.retrieval.chunk_size,
+            chunk_overlap=cfg.retrieval.chunk_overlap,
+            dense_weight=0.6 if cfg.retrieval.hybrid else 0.0,
+            sparse_weight=0.4 if cfg.retrieval.hybrid else 1.0,
+            raptor=getattr(cfg.retrieval, 'raptor', False),
+            graph=getattr(cfg.retrieval, 'graph', False),
+        )
+        
+        self.retrieval_engine = HybridRetrievalEngine(self.document_store, retrieval_config)
         self.retrieval_engine.build()
         self.ingest = IngestPipeline(self.document_store, self.retrieval_engine)
         self.gatherer = Gatherer(self.retrieval_engine)
-        cfg = self.config_store.read()
-        self.planner = Planner(cfg)
+        self.simple_planner = Planner(cfg)
+        self.smart_planner = SmartPlanner(cfg)
+        self.planner = self.smart_planner if cfg.retrieval.planner_mode != "simple" else self.simple_planner
         self.provider_factory = ProviderFactory()
         self.orchestrator = Orchestrator(
             planner=self.planner,
@@ -40,6 +63,13 @@ class ServiceContainer:
             provider_factory=self.provider_factory,
             telemetry=self.telemetry,
         )
+        self.orchestrator.rebuild(cfg)
+
+    def apply_config(self, cfg: AppConfig) -> None:
+        self.simple_planner.rebuild(cfg)
+        self.smart_planner.rebuild(cfg)
+        self.planner = self.smart_planner if cfg.retrieval.planner_mode != "simple" else self.simple_planner
+        self.orchestrator.set_planner(self.planner)
         self.orchestrator.rebuild(cfg)
 
 

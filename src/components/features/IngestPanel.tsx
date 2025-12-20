@@ -4,7 +4,21 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import type { DocumentOut } from "@/types";
+import {
+    Calendar,
+    CheckCircle2,
+    FileText,
+    FolderOpen,
+    HardDrive,
+    Inbox,
+    Loader2,
+    Trash2,
+    Upload,
+    XCircle,
+    ShieldCheck,
+    Info,
+} from "lucide-react";
+import type { DocumentOut, IngestResponse } from "@/types";
 
 interface UploadProgress {
     filename: string;
@@ -21,10 +35,24 @@ interface IngestPanelProps {
     handleIngest: () => void;
     documents: DocumentOut[];
     handleDeleteDocument: (id: string, title: string) => void;
+    handleDeleteAllDocuments: () => void;
     isUploadingFile: boolean;
-    uploadFile: (file: File) => Promise<void>;
+    uploadFile: (file: File) => Promise<IngestResponse>;
+    waitForDocumentReady: (documentId: string, label?: string) => Promise<void>;
     fileInputRef: React.RefObject<HTMLInputElement | null>;
     formatDateTime: (value?: string) => string;
+}
+
+function InlineHint({ label, detail }: { label: string; detail: string }) {
+    return (
+        <span
+            className="inline-flex items-center gap-2 rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium text-muted-foreground"
+            title={detail}
+        >
+            <Info className="h-3.5 w-3.5 text-secondary-foreground" />
+            <span className="truncate">{label}</span>
+        </span>
+    );
 }
 
 export function IngestPanel({
@@ -36,8 +64,10 @@ export function IngestPanel({
     handleIngest,
     documents,
     handleDeleteDocument,
+    handleDeleteAllDocuments,
     isUploadingFile,
     uploadFile,
+    waitForDocumentReady,
     fileInputRef,
     formatDateTime,
 }: IngestPanelProps) {
@@ -46,7 +76,7 @@ export function IngestPanel({
 
     const processFiles = async (files: FileList | File[]) => {
         const fileArray = Array.from(files);
-        const validFiles = fileArray.filter(f => 
+        const validFiles = fileArray.filter(f =>
             /\.(pdf|docx?|txt|md|markdown)$/i.test(f.name)
         );
 
@@ -54,36 +84,37 @@ export function IngestPanel({
             return;
         }
 
-        // Initialize queue
         const initialQueue: UploadProgress[] = validFiles.map(f => ({
             filename: f.name,
             status: "pending",
         }));
         setUploadQueue(initialQueue);
 
-        // Process files sequentially
         for (let i = 0; i < validFiles.length; i++) {
             const file = validFiles[i];
             if (!file) continue;
-            
-            setUploadQueue(prev => prev.map((item, idx) => 
+
+            setUploadQueue(prev => prev.map((item, idx) =>
                 idx === i ? { ...item, status: "uploading" } : item
             ));
 
             try {
-                await uploadFile(file);
-                setUploadQueue(prev => prev.map((item, idx) => 
+                const result = await uploadFile(file);
+                setUploadQueue(prev => prev.map((item, idx) =>
+                    idx === i ? { ...item, status: "processing" } : item
+                ));
+                await waitForDocumentReady(result.document_id, file.name);
+                setUploadQueue(prev => prev.map((item, idx) =>
                     idx === i ? { ...item, status: "done" } : item
                 ));
             } catch (err) {
-                setUploadQueue(prev => prev.map((item, idx) => 
+                setUploadQueue(prev => prev.map((item, idx) =>
                     idx === i ? { ...item, status: "error", error: String(err) } : item
                 ));
             }
         }
 
-        // Clear queue after a delay
-        setTimeout(() => setUploadQueue([]), 3000);
+        setTimeout(() => setUploadQueue([]), 5000);
     };
 
     const handleFileInputChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -113,29 +144,74 @@ export function IngestPanel({
     };
 
     return (
-        <Card>
-            <CardHeader>
-                <CardTitle>Ingest Documents</CardTitle>
-                <CardDescription>Load PDFs, wikis or notes to make them queryable.</CardDescription>
+        <Card className="overflow-hidden">
+            <CardHeader className="bg-muted/20">
+                <CardTitle className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+                        <FileText className="h-5 w-5 text-primary" />
+                    </div>
+                    <div>
+                        <span>Document Management</span>
+                        {documents.length > 0 && (
+                            <span className="ml-2 inline-flex h-5 items-center justify-center rounded-full bg-muted px-2 text-[10px] font-semibold text-muted-foreground">
+                                {documents.length}
+                            </span>
+                        )}
+                    </div>
+                </CardTitle>
+                <CardDescription>
+                    Build your knowledge base by uploading files or pasting text.
+                </CardDescription>
+                <div className="mt-3 flex flex-wrap gap-2">
+                    <InlineHint label="Step 1: Add files or text" detail="PDF, DOCX, Markdown, TXT. Up to 25MB." />
+                    <InlineHint label="Step 2: Wait for processing" detail="We parse, OCR if needed, and index automatically." />
+                    <InlineHint label="Step 3: Query with coverage" detail="Docs become searchable in the Query Interface." />
+                </div>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-6 pt-6">
+                {/* Premium setup checklist */}
+                {documents.length === 0 && (
+                    <div className="flex flex-col gap-3 rounded-lg border border-border/70 bg-muted/10 p-4">
+                        <div className="flex items-center gap-2">
+                            <ShieldCheck className="h-4 w-4 text-primary" />
+                            <p className="text-sm font-semibold text-foreground">Getting ready to ingest</p>
+                        </div>
+                        <div className="space-y-2 text-sm">
+                            <div className="flex items-center gap-2">
+                                <span className="h-2 w-2 rounded-full bg-amber-500" />
+                                <span className="text-foreground">Add at least one document or text snippet</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                                <span className="text-foreground">Automatic OCR + indexing will start on upload</span>
+                            </div>
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                            Drag and drop multiple files at once; we’ll queue, parse, and confirm readiness.
+                        </div>
+                    </div>
+                )}
+
+                {/* Upload Zone */}
                 <div
-                    className={`rounded-lg border-2 border-dashed p-6 text-center transition ${
-                        isDragOver 
-                            ? "border-blue-500 bg-blue-50" 
-                            : "border-border hover:border-foreground"
-                    }`}
+                    className={`group flex flex-col items-center justify-center rounded-lg border border-dashed p-8 transition-colors ${isDragOver
+                        ? "border-primary/60 bg-primary/10"
+                        : "border-border/70 hover:border-border hover:bg-muted/40"
+                        }`}
                     onDrop={handleDrop}
                     onDragOver={handleDragOver}
                     onDragLeave={handleDragLeave}
                 >
-                    <p className="font-medium">
-                        {isDragOver ? "Drop files here!" : "Drop PDF, DOCX, TXT, or Markdown files here"}
+                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
+                        <FolderOpen className="h-5 w-5" />
+                    </div>
+                    <p className="mt-4 font-semibold text-foreground">
+                        {isDragOver ? "Drop files now" : "Click or drag to upload"}
                     </p>
-                    <p className="text-sm text-muted-foreground">
-                        Upload multiple files at once. Files are chunked locally before indexing.
+                    <p className="mt-1 text-sm text-muted-foreground">
+                        PDF, DOCX, TXT, or Markdown (up to 25MB)
                     </p>
-                    <div className="mt-3 flex flex-col items-center gap-2">
+                    <div className="mt-6">
                         <input
                             type="file"
                             accept=".pdf,.doc,.docx,.txt,.md,.markdown"
@@ -145,101 +221,218 @@ export function IngestPanel({
                             className="sr-only"
                             id="document-upload-input"
                         />
-                        <Button variant="outline" onClick={() => fileInputRef.current?.click()} disabled={isUploadingFile || uploadQueue.length > 0}>
-                            {isUploadingFile || uploadQueue.length > 0 ? "Processing..." : "Select Files"}
+                        <Button
+                            variant="secondary"
+                            onClick={() => fileInputRef.current?.click()}
+                            disabled={isUploadingFile || uploadQueue.length > 0}
+                            className="px-8"
+                        >
+                            {isUploadingFile || uploadQueue.length > 0 ? (
+                                <>
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                    Processing...
+                                </>
+                            ) : (
+                                "Select Files"
+                            )}
                         </Button>
-                        <p className="text-xs text-muted-foreground">Supports PDFs, Word docs, Markdown, and plain text up to 25 MB each.</p>
                     </div>
                 </div>
 
                 {/* Upload Progress Queue */}
                 {uploadQueue.length > 0 && (
-                    <div className="rounded-lg border border-blue-200 bg-blue-50/50 p-3">
-                        <p className="mb-2 text-sm font-semibold text-blue-800">Upload Progress</p>
-                        <div className="space-y-2">
+                    <div className="rounded-lg border border-border/60 bg-muted/20 p-4">
+                        <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                            Upload Progress
+                        </h4>
+                        <div className="space-y-3">
                             {uploadQueue.map((item, idx) => (
-                                <div key={idx} className="flex items-center gap-2 text-sm">
-                                    <span className={`h-2 w-2 rounded-full ${
-                                        item.status === "done" ? "bg-green-500" :
-                                        item.status === "error" ? "bg-red-500" :
-                                        item.status === "uploading" ? "bg-blue-500 animate-pulse" :
-                                        "bg-gray-300"
-                                    }`} />
-                                    <span className="flex-1 truncate">{item.filename}</span>
-                                    <span className={`text-xs ${
-                                        item.status === "done" ? "text-green-600" :
-                                        item.status === "error" ? "text-red-600" :
-                                        "text-blue-600"
-                                    }`}>
-                                        {item.status === "done" ? "Done" :
-                                         item.status === "error" ? "Failed" :
-                                         item.status === "uploading" ? "Uploading..." :
-                                         "Pending"}
+                                <div key={idx} className="flex items-center gap-3 rounded-md bg-card/60 p-2 text-sm">
+                                    {item.status === "done" ? (
+                                        <CheckCircle2 className="h-4 w-4 text-primary" />
+                                    ) : item.status === "error" ? (
+                                        <XCircle className="h-4 w-4 text-destructive" />
+                                    ) : item.status === "uploading" || item.status === "processing" ? (
+                                        <Loader2 className="h-4 w-4 text-secondary-foreground animate-spin" />
+                                    ) : (
+                                        <div className="h-4 w-4 rounded-full bg-muted" />
+                                    )}
+                                    <span className="flex-1 truncate font-medium">{item.filename}</span>
+                                    <span className={`text-xs font-semibold uppercase tracking-wide ${item.status === "done" ? "text-primary" :
+                                        item.status === "error" ? "text-destructive" :
+                                            "text-secondary-foreground"
+                                        }`}>
+                                        {item.status}
                                     </span>
                                 </div>
                             ))}
                         </div>
                     </div>
                 )}
-                <div className="flex flex-col gap-4 lg:flex-row">
-                    <div className="basis-full space-y-2 lg:basis-1/2">
-                        <Label htmlFor="ingestTitle">Title</Label>
-                        <Input id="ingestTitle" value={ingestTitle} onChange={e => setIngestTitle(e.target.value)} />
-                        <Button disabled={isIngesting} onClick={handleIngest}>
+
+                {/* Text Ingest */}
+                <div className="space-y-4 rounded-lg border border-border/60 p-4 bg-muted/10">
+                    <h4 className="text-sm font-semibold text-foreground">Quick Text Ingest</h4>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                        <div className="space-y-2">
+                            <Label htmlFor="ingestTitle" className="text-xs">Document Title</Label>
+                            <Input
+                                id="ingestTitle"
+                                placeholder="e.g., Company Handbook"
+                                value={ingestTitle}
+                                onChange={e => setIngestTitle(e.target.value)}
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="ingestText" className="text-xs">Content Snippet</Label>
+                            <Textarea
+                                id="ingestText"
+                                rows={3}
+                                value={ingestText}
+                                onChange={e => setIngestText(e.target.value)}
+                                placeholder="Paste content here..."
+                                className="resize-none"
+                            />
+                        </div>
+                    </div>
+                    <div className="flex justify-end">
+                        <Button
+                            disabled={isIngesting || !ingestText.trim()}
+                            onClick={handleIngest}
+                            className="bg-primary text-primary-foreground hover:bg-primary/90"
+                            size="sm"
+                        >
                             {isIngesting ? "Ingesting..." : "Ingest Text"}
                         </Button>
                     </div>
-                    <div className="basis-full space-y-2 lg:basis-1/2">
-                        <Label htmlFor="ingestText">Content</Label>
-                        <Textarea
-                            id="ingestText"
-                            rows={6}
-                            value={ingestText}
-                            onChange={e => setIngestText(e.target.value)}
-                            placeholder="Paste doc text or summary"
-                        />
+                </div>
+
+                {/* Document List */}
+                <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                        <h4 className="text-sm font-semibold text-foreground">
+                            Knowledge Base
+                            <span className="ml-2 rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
+                                {documents.length}
+                            </span>
+                        </h4>
+                        {documents.length > 0 && (
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={handleDeleteAllDocuments}
+                                className="h-8 text-[10px] font-bold uppercase tracking-wider text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                            >
+                                <Trash2 className="mr-1 h-3.5 w-3.5" />
+                                Clear All
+                            </Button>
+                        )}
                     </div>
                 </div>
-                <div>
-                    <p className="text-sm font-semibold">Documents ({documents.length})</p>
-                    {documents.length === 0 ? (
-                        <p className="mt-2 text-sm text-muted-foreground">No documents ingested yet.</p>
-                    ) : (
-                        <div className="mt-3 grid gap-3 md:grid-cols-2">
-                            {documents.map(doc => {
-                                const uploadedAt = formatDateTime(doc.metadata?.uploaded_at);
-                                const filesize = doc.metadata?.filesize
-                                    ? `${(Number(doc.metadata.filesize) / (1024 * 1024)).toFixed(2)} MB`
-                                    : undefined;
-                                const filename = doc.metadata?.original_filename || doc.metadata?.filename;
-                                return (
-                                    <div key={doc.id} className="rounded-lg border border-border p-3 text-sm">
+
+                {documents.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border/70 bg-muted/10 p-12 text-center">
+                        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+                            <Inbox className="h-6 w-6 text-muted-foreground" />
+                        </div>
+                        <h3 className="mt-4 font-medium text-foreground">No documents yet</h3>
+                        <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+                            Upload files or paste text to start building your knowledge base.
+                        </p>
+                        <div className="mt-4">
+                            <Button
+                                variant="secondary"
+                                onClick={() => fileInputRef.current?.click()}
+                                className="px-6"
+                            >
+                                Add documents
+                            </Button>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                        {documents.map(doc => {
+                            const uploadedAt = formatDateTime(doc.metadata?.uploaded_at);
+                            const processingStatus = doc.metadata?.processing_status;
+                            const statusLabel = processingStatus === "ready"
+                                ? "Ready"
+                                : processingStatus === "processing"
+                                    ? "Processing"
+                                    : processingStatus === "error"
+                                        ? "Error"
+                                        : "Unknown";
+                            const statusTone = processingStatus === "ready"
+                                ? "text-primary bg-primary/10"
+                                : processingStatus === "processing"
+                                    ? "text-secondary-foreground bg-secondary/30"
+                                    : processingStatus === "error"
+                                        ? "text-destructive bg-destructive/20"
+                                        : "text-muted-foreground bg-muted";
+                            const filesize = doc.metadata?.filesize
+                                ? `${(Number(doc.metadata.filesize) / (1024 * 1024)).toFixed(2)} MB`
+                                : undefined;
+                            const filename = doc.metadata?.original_filename || doc.metadata?.filename;
+                            const contentType = doc.metadata?.content_type;
+                            const processedAt = formatDateTime(doc.metadata?.processed_at);
+
+                            return (
+                                <div
+                                    key={doc.id}
+                                    className="group flex flex-col justify-between rounded-lg border border-border/60 bg-card p-4 transition-colors hover:border-border"
+                                >
+                                    <div>
                                         <div className="flex items-start justify-between gap-2">
-                                            <div>
-                                                <p className="font-semibold text-foreground">{doc.title || filename || "Untitled"}</p>
-                                                {filename && <p className="text-xs text-muted-foreground">{filename}</p>}
+                                            <div className="min-w-0">
+                                                <p className="font-bold text-foreground truncate">
+                                                    {doc.title || filename || "Untitled"}
+                                                </p>
+                                                {filename && <p className="text-[10px] text-muted-foreground truncate uppercase tracking-tighter">{filename}</p>}
                                             </div>
                                             <Button
                                                 variant="ghost"
-                                                size="sm"
-                                                className="text-destructive hover:bg-destructive/10"
+                                                size="icon"
+                                                className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted"
                                                 onClick={() => void handleDeleteDocument(doc.id, doc.title || filename || "document")}
                                             >
-                                                Remove
+                                                <Trash2 className="h-4 w-4" />
                                             </Button>
                                         </div>
-                                        <p className="mt-2 text-muted-foreground">{doc.text.slice(0, 140) || "(Empty document)"}…</p>
-                                        <div className="mt-3 flex flex-wrap gap-3 text-xs text-muted-foreground">
-                                            <span>Uploaded {uploadedAt}</span>
-                                            {filesize && <span>Size {filesize}</span>}
-                                            {doc.metadata?.content_type && <span>{doc.metadata.content_type}</span>}
-                                        </div>
+                                        <p className="mt-3 text-xs text-muted-foreground line-clamp-3 leading-relaxed">
+                                            {doc.text.slice(0, 180) || "(Empty document)"}…
+                                        </p>
                                     </div>
-                                );
-                            })}
-                        </div>
-                    )}
-                </div>
+
+                                    <div className="mt-4 flex flex-wrap gap-2">
+                                        <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${statusTone}`}>
+                                            {statusLabel}
+                                        </span>
+                                        <span className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                                            <Calendar className="mr-1 h-3 w-3" />
+                                            {uploadedAt.split(",")[0]}
+                                        </span>
+                                        {processingStatus === "ready" && (
+                                            <span className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                                                <Calendar className="mr-1 h-3 w-3" />
+                                                {processedAt.split(",")[0]}
+                                            </span>
+                                        )}
+                                        {filesize && (
+                                            <span className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                                                <HardDrive className="mr-1 h-3 w-3" />
+                                                {filesize}
+                                            </span>
+                                        )}
+                                        {contentType && (
+                                            <span className="inline-flex items-center rounded bg-secondary/30 px-1.5 py-0.5 text-[10px] text-foreground">
+                                                {contentType.split("/").pop()?.toUpperCase()}
+                                            </span>
+                                        )}
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
             </CardContent>
         </Card>
     );

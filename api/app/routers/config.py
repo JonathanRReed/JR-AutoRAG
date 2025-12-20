@@ -1,11 +1,61 @@
+from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ..core.providers import ProviderError, discover_models
-from ..schemas.config import RETRIEVAL_PRESETS, AppConfig, ProviderConfig, RetrievalDefaults
+from ..schemas.config import (
+    RETRIEVAL_PRESETS,
+    AppConfig,
+    ModelDownloadRequest,
+    ModelStatusRequest,
+    ModelStatusResponse,
+    ProviderConfig,
+    RetrievalDefaults,
+)
 from ..services import ServiceContainer, get_container
 
 router = APIRouter()
+
+
+def _check_model_cached(model_id: str) -> tuple[str, str | None]:
+    try:
+        from huggingface_hub import scan_cache_dir, snapshot_download
+    except Exception as exc:
+        return "unknown", f"Cache check unavailable: {exc}"
+    try:
+        snapshot_download(repo_id=model_id, local_files_only=True)
+        return "installed", None
+    except Exception as exc:
+        try:
+            cache_info = scan_cache_dir()
+            if any(repo.repo_id == model_id for repo in cache_info.repos):
+                return "installed", None
+        except Exception:
+            pass
+        return "missing", str(exc)
+
+
+def _download_model(model_id: str) -> None:
+    try:
+        from huggingface_hub import snapshot_download
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Download unavailable: {exc}") from exc
+    try:
+        snapshot_download(repo_id=model_id, local_files_only=False)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Download failed: {exc}") from exc
+
+
+def _delete_model_cache(model_id: str) -> None:
+    try:
+        from huggingface_hub import scan_cache_dir
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Delete unavailable: {exc}") from exc
+    try:
+        cache_info = scan_cache_dir()
+        cache_info.delete_repos(model_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Delete failed: {exc}") from exc
 
 
 @router.get("", response_model=AppConfig)
@@ -26,7 +76,7 @@ def update_config(
                 raise HTTPException(status_code=404, detail=f"Profile '{active_profile}' not found")
             cfg.provider = profile.provider
         stored = container.config_store.write(cfg)
-        container.orchestrator.rebuild(stored)
+        container.apply_config(stored)
         return stored
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -39,6 +89,48 @@ async def list_models(payload: ProviderConfig):
         return models
     except ProviderError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.post("/models/status", response_model=ModelStatusResponse)
+def model_status(payload: ModelStatusRequest):
+    embedding_status = "unknown"
+    reranker_status = "unknown"
+    embedding_message = None
+    reranker_message = None
+
+    if payload.embedding_model:
+        embedding_status, embedding_message = _check_model_cached(payload.embedding_model)
+    if payload.reranker_model:
+        reranker_status, reranker_message = _check_model_cached(payload.reranker_model)
+
+    return ModelStatusResponse(
+        embedding=embedding_status,
+        reranker=reranker_status,
+        embedding_message=embedding_message,
+        reranker_message=reranker_message,
+    )
+
+
+@router.post("/models/download")
+def download_model(payload: ModelDownloadRequest):
+    kind = payload.kind.lower().strip()
+    if kind not in {"embedding", "reranker"}:
+        raise HTTPException(status_code=400, detail="kind must be 'embedding' or 'reranker'")
+    if not payload.model:
+        raise HTTPException(status_code=400, detail="model is required")
+    _download_model(payload.model)
+    return {"status": "ok", "model": payload.model}
+
+
+@router.post("/models/delete")
+def delete_model(payload: ModelDownloadRequest):
+    kind = payload.kind.lower().strip()
+    if kind not in {"embedding", "reranker"}:
+        raise HTTPException(status_code=400, detail="kind must be 'embedding' or 'reranker'")
+    if not payload.model:
+        raise HTTPException(status_code=400, detail="model is required")
+    _delete_model_cache(payload.model)
+    return {"status": "ok", "model": payload.model}
 
 
 @router.get("/presets", response_model=dict[str, RetrievalDefaults])
@@ -63,5 +155,5 @@ def apply_preset(
     cfg = container.config_store.read()
     cfg.retrieval = RETRIEVAL_PRESETS[preset_name_lower].model_copy()
     stored = container.config_store.write(cfg)
-    container.orchestrator.rebuild(stored)
+    container.apply_config(stored)
     return stored

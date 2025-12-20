@@ -30,7 +30,7 @@ class Trace:
     completed_at: datetime
     prompt: str
     answer: str
-    metrics: dict[str, float]
+    metrics: dict[str, Any]
     steps: list[PipelineStep] = field(default_factory=list)
 
 
@@ -86,7 +86,7 @@ class TelemetryStore:
         self,
         prompt: str,
         answer: str,
-        metrics: dict[str, float] | None = None,
+        metrics: dict[str, Any] | None = None,
         steps: builtins.list[PipelineStep] | None = None,
         started_at: datetime | None = None,
     ) -> Trace:

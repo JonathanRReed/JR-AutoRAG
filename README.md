@@ -1,13 +1,16 @@
 # JR AutoRAG
 
-JR AutoRAG is a **100% local** Retrieval Augmented Generation (RAG) workbench. No cloud services required - everything runs on your machine. A FastAPI backend orchestrates ingestion, retrieval, and provider calls, while a admin console provides a single pane of glass for:
+**JR AutoRAG** is a 100% local Retrieval Augmented Generation workbench. Run your own FastAPI backend and Bun/React admin console to ingest docs, configure local LLMs (Ollama / LM Studio), and inspect the full pipeline (planning → retrieval → generation) with transparent traces.
 
-- **Auto-detecting local LLMs** - Ollama/LM Studio runtimes detected and switchable instantly
-- **Full pipeline transparency** - See exactly what the AI does at each step (planning, retrieval, generation)
-- **Batch file upload** - Drag-and-drop multiple PDFs, DOC/DOCX, TXT files with progress tracking
-- **Retrieval presets** - Fast, Balanced, or Thorough modes for different use cases
-- **Running queries/evaluations** and inspecting detailed traces
-- **Managing documents** (metadata, deletion, upload timestamps)
+---
+
+## At a glance
+
+- **Local-first**: No cloud required; keep data on-device.
+- **Provider auto-detect**: Ollama / LM Studio discovery with one-click config save.
+- **Document ingestion**: Drag/drop PDFs, DOC/DOCX, Markdown, TXT + inline text; OCR fallback for scans.
+- **Presets & profiles**: Fast / Balanced / Thorough retrieval presets; save provider profiles.
+- **Observability**: Per-step traces, tokens, timing, and errors.
 
 ## Architecture
 
@@ -19,37 +22,41 @@ JR AutoRAG is a **100% local** Retrieval Augmented Generation (RAG) workbench. N
          └────── Documents / Traces ─┘ (JSON stores under `data/`)
 ```
 
-## Prerequisites
+## Quickstart (5 minutes)
 
-- **Bun** v1.3+
-- **Python** 3.11 with `pip`
-- **OCR tooling** (for scanned PDFs):
+```bash
+# 1) Install deps
+bun install
+cd api && python3 -m pip install -r requirements.txt
+
+# 2) Run everything (from repo root)
+bun run dev:all
+# UI: http://localhost:3000  | API: http://localhost:8000
+
+# 3) In the UI header, click Test next to API Base URL — expect “API reachable”
+```
+
+## Requirements
+
+- Bun v1.3+
+- Python 3.11 + pip
+- OCR (for scanned PDFs):
   - macOS: `brew install tesseract poppler`
   - Ubuntu/Debian: `sudo apt-get install tesseract-ocr poppler-utils`
   - Fedora: `sudo dnf install tesseract poppler-utils`
 - Optional: Docker + Docker Compose
 
-## Installation
-
-```bash
-# frontend & shared tooling
-bun install
-
-# backend deps (includes pdf2image / pytesseract / docx2txt)
-cd api && python3 -m pip install -r requirements.txt
-```
-
-## Running locally
+## Local development (manual control)
 
 ```bash
 # backend (from api/)
 PYTHONPATH=. uvicorn app.main:app --reload --port 8000
 
 # frontend (from repo root)
-bun dev        # http://localhost:3000
+bun dev   # http://localhost:3000
 ```
 
-The frontend points to `http://localhost:8000` by default. Override with `BUN_PUBLIC_API_BASE_URL` (or `VITE_API_BASE_URL`) if your API lives elsewhere.
+Override API target with `BUN_PUBLIC_API_BASE_URL` (or `VITE_API_BASE_URL`).
 
 ## Docker Compose
 
@@ -60,49 +67,43 @@ docker compose up --build
 - API → <http://localhost:8000>
 - Admin console → <http://localhost:3000>
 
-## Document ingestion guide
+## Document ingestion behavior
 
 | Input type | How it’s handled |
 |------------|------------------|
-| PDF        | Native text extraction via `pypdf`, then OCR fallback using `pdf2image` + `pytesseract` if the file is scanned |
-| DOC/DOCX   | Processed with `docx2txt` via a temporary file |
-| Markdown   | `.md` / `.markdown` decoded to UTF-8 with light token stripping |
+| PDF        | `pypdf` for text; OCR fallback via `pdf2image` + `pytesseract` for scans |
+| DOC/DOCX   | `docx2txt` via temp file |
+| Markdown   | UTF-8 decode with light token stripping |
 | TXT        | UTF-8 decode with `errors="ignore"` |
-| Inline text | Use the “Ingest Text” form for quick snippets |
+| Inline text | “Ingest Text” form for quick snippets |
 
-The admin console surfaces upload metadata (filename, content type, file size, timestamp) and allows deleting a document, which triggers a retrieval index rebuild automatically.
+The admin console shows upload metadata and allows deletion, which triggers an index rebuild.
 
-### Tips
+## Retrieval presets
 
-1. Start Ollama (`ollama serve`) or LM Studio before launching the UI so the Quick Setup card can auto-detect local providers.
-2. Large PDFs with OCR may take a few seconds—watch the status banner for progress.
-3. Use the profiles dropdown to save favorite provider configurations (local vs. cloud).
-
-## Retrieval Presets
-
-JR AutoRAG includes three retrieval presets optimized for different use cases:
-
-| Preset | Top-K | Target Tokens | Coverage | Best For |
+| Preset | Top-K | Target Tokens | Coverage | Best for |
 |--------|-------|---------------|----------|----------|
-| **Fast** | 3 | 800 | 50% | Quick answers, low latency |
-| **Balanced** | 5 | 1600 | 70% | General use (default) |
-| **Thorough** | 10 | 3000 | 90% | Research, comprehensive answers |
+| Fast | 3 | 800 | 50% | Low-latency answers |
+| Balanced (default) | 5 | 1600 | 70% | General use |
+| Thorough | 10 | 3000 | 90% | Deep research |
 
-Apply a preset via API:
+Apply via API:
 
 ```bash
 curl -X POST http://localhost:8000/config/presets/balanced
 ```
 
-## Pipeline Transparency
+## Observability (per-query trace)
 
-Every query shows exactly what the AI is doing:
+1. Planning: generated search queries, target tokens, coverage goals
+2. Retrieval: chunks per sub-query, timing, unique sources
+3. Generation: provider, model, context tokens, errors
 
-1. **Planning** - Search queries generated, target tokens, coverage goals
-2. **Retrieval** - Chunks found per sub-query, timing, unique sources
-3. **Generation** - Provider used, model, context tokens, errors if any
+## Configuration & env
 
-This helps you understand why the AI gave a particular answer and debug retrieval issues.
+- `BUN_PUBLIC_API_BASE_URL` (or `VITE_API_BASE_URL`): frontend → API URL
+- `JR_OLLAMA_URL`, `JR_LMSTUDIO_URL`: override local provider endpoints
+- `JR_DATA_DIR` (backend): data/config/traces storage path
 
 ## Testing & quality checks
 
@@ -113,11 +114,11 @@ cd api && PYTHONPATH=. pytest
 # frontend tests
 bun test
 
-# build for production (static assets in dist/)
+# production build
 bun run build
 ```
 
-You can combine them into a single sequence when prepping for demos:
+For demo prep:
 
 ```bash
 cd api && PYTHONPATH=. pytest && cd .. && bun run build && bun test
@@ -127,16 +128,16 @@ cd api && PYTHONPATH=. pytest && cd .. && bun run build && bun test
 
 | Issue | Fix |
 |-------|-----|
-| PDF uploads return empty text | Ensure `pdf2image` and `pytesseract` are installed and that the system Tesseract binary is on `PATH`. On macOS run `brew install tesseract poppler`. |
-| Provider buttons don’t save | Confirm the FastAPI backend is running on `:8000` and that CORS isn’t blocked. Check the status badge in the UI header. |
-| Ollama/LM Studio not detected | Click **Rescan**, ensure the runtime listens on the default ports (`11434` / `1234`), or edit `JR_OLLAMA_URL` / `JR_LMSTUDIO_URL`. |
+| PDF uploads return empty text | Ensure `pypdf`, `pdf2image`, `pytesseract` installed and `pdftotext`/`tesseract` on PATH. On macOS: `brew install poppler tesseract`, then restart API. |
+| Provider buttons don’t save | Confirm FastAPI running on `:8000`; check UI status badge; ensure CORS not blocked. |
+| Ollama/LM Studio not detected | Click **Rescan**; ensure runtimes listen on `11434` / `1234`; override `JR_OLLAMA_URL` / `JR_LMSTUDIO_URL`. |
 
 ## Deployment
 
-1. Run `bun run build` and host the `dist/` directory behind any static host (Bun, nginx, S3 + CloudFront, etc.).
-2. Deploy the FastAPI app (Uvicorn/Gunicorn, Fly.io, Render, etc.). Point the frontend’s `BUN_PUBLIC_API_BASE_URL` to the deployed API.
-3. Persist the `data/` directory (config, documents, traces) on shared storage or a volume for stateful runs.
+1. `bun run build` and serve `dist/` (Bun, nginx, S3+CloudFront, etc.).
+2. Deploy FastAPI (Uvicorn/Gunicorn, Fly.io, Render, etc.). Point frontend `BUN_PUBLIC_API_BASE_URL` to it.
+3. Persist `data/` (config, documents, traces) on shared storage/volume for stateful runs.
 
 ## Onboarding
 
-An abridged onboarding checklist lives in [`onboarding.txt`](./onboarding.txt).
+See the refreshed checklist in [`onboarding.txt`](./onboarding.txt) for a 5-minute path from clone → first answer.

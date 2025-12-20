@@ -33,6 +33,12 @@ def delete_document(document_id: str, container: ServiceContainer = Depends(get_
     container.retrieval_engine.build()
 
 
+@router.delete("", status_code=204)
+def delete_all_documents(container: ServiceContainer = Depends(get_container)):
+    container.document_store.clear()
+    container.retrieval_engine.build()
+
+
 @router.post("/upload", response_model=IngestResponse)
 async def ingest_file(
     file: UploadFile = File(...),
@@ -45,7 +51,10 @@ async def ingest_file(
         result = container.ingest.ingest_file(
             title=title or filename,
             content=content,
-            metadata={"filename": filename},
+            metadata={
+                "filename": filename,
+                "content_type": file.content_type or "application/octet-stream",
+            },
         )
         return IngestResponse(document_id=result.document_id, title=result.title, chunk_count=result.chunk_count)
     except Exception as exc:

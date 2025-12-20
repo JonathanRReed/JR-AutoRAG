@@ -5,20 +5,28 @@ from __future__ import annotations
 import io
 import mimetypes
 import os
+import subprocess
 import tempfile
+import shutil
+import zipfile
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 try:  # pragma: no cover - optional dependency
     from pypdf import PdfReader  # type: ignore
+    print("PDF library (pypdf) loaded successfully")
 except ImportError:  # pragma: no cover
     PdfReader = None  # type: ignore
+    print("WARNING: PDF library (pypdf) failed to load")
 
 try:  # pragma: no cover
-    import docx2txt  # type: ignore
+    import docx  # type: ignore
+    print("DOCX library loaded successfully")
 except ImportError:  # pragma: no cover
-    docx2txt = None  # type: ignore
+    docx = None  # type: ignore
+    print("WARNING: docx library failed to load")
 
 try:  # pragma: no cover
     from pdf2image import convert_from_bytes  # type: ignore
@@ -50,11 +58,21 @@ class IngestPipeline:
 
     def ingest_text(self, title: str, text: str, metadata: dict[str, str] | None = None) -> IngestResult:
         meta = self._prepare_metadata(metadata)
+        meta.setdefault("processing_status", "processing")
         chunks = self._chunk(text)
         combined = "\n\n".join(chunks)
         doc = self._store.add(title=title, text=combined, metadata=meta)
-        self._retrieval.build()
-        return IngestResult(document_id=doc.id, title=doc.title, chunk_count=len(chunks))
+        try:
+            self._retrieval.build()
+            doc.metadata["processing_status"] = "ready"
+            doc.metadata["processed_at"] = datetime.now(timezone.utc).isoformat()
+            self._store.upsert(doc)
+            return IngestResult(document_id=doc.id, title=doc.title, chunk_count=len(chunks))
+        except Exception as exc:
+            doc.metadata["processing_status"] = "error"
+            doc.metadata["processing_error"] = str(exc)
+            self._store.upsert(doc)
+            raise
 
     def ingest_file(self, title: str, content: bytes, metadata: dict[str, str] | None = None) -> IngestResult:
         meta = {**(metadata or {})}
@@ -67,7 +85,7 @@ class IngestPipeline:
 
     def _prepare_metadata(self, metadata: dict[str, str] | None) -> dict[str, str]:
         meta = {**(metadata or {})}
-        meta.setdefault("uploaded_at", datetime.now(UTC).isoformat())
+        meta.setdefault("uploaded_at", datetime.now(timezone.utc).isoformat())
         return meta
 
     def _infer_extension(self, metadata: dict[str, str] | None) -> str:
@@ -80,31 +98,54 @@ class IngestPipeline:
                 return (mimetypes.guess_extension(content_type) or "").lower()
         return ""
 
+    def _detect_magic_extension(self, content: bytes) -> str:
+        if content.startswith(b"%PDF"):
+            return ".pdf"
+        if content[:4] == b"PK\x03\x04":
+            try:
+                with zipfile.ZipFile(io.BytesIO(content)) as archive:
+                    if "word/document.xml" in archive.namelist():
+                        return ".docx"
+            except Exception:
+                return ""
+        if content[:8] == b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1":
+            return ".doc"
+        return ""
+
     def _extract_text(self, content: bytes, metadata: dict[str, str] | None = None) -> str:
         ext = self._infer_extension(metadata)
+        if not ext:
+            ext = self._detect_magic_extension(content)
         if ext in {".md", ".markdown"}:
             return self._extract_markdown(content)
         if ext == ".pdf":
             text = self._extract_pdf_text(content)
             if text.strip():
                 return text
+            text = self._extract_pdf_text_pdftotext(content)
+            if text.strip():
+                return text
             ocr_text = self._ocr_pdf(content)
             if ocr_text.strip():
                 return ocr_text
-        if ext in {".doc", ".docx"} and docx2txt:
-            try:
-                suffix = ext or ".docx"
-                with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-                    tmp.write(content)
-                    tmp.flush()
-                    tmp_path = tmp.name
-                try:
-                    return docx2txt.process(tmp_path)  # type: ignore[arg-type]
-                finally:
-                    os.unlink(tmp_path)
-            except Exception:
-                pass
-        return content.decode("utf-8", errors="ignore")
+            return (
+                "(PDF extraction failed: no text found. "
+                "If this is a scanned PDF, install poppler + tesseract for OCR. "
+                "If it is text-based, try re-exporting the PDF.)"
+            )
+        if ext in {".doc", ".docx"}:
+            if ext == ".docx":
+                text = self._extract_docx_text(content)
+                if text.strip():
+                    return text
+            if ext == ".doc":
+                print("Tip: .doc files are legacy. Convert to .docx for better extraction.")
+
+        # Fallback to plain text if not binary
+        try:
+            return content.decode("utf-8")
+        except UnicodeDecodeError:
+            return f"(Binary content: {ext or 'unknown'})"
 
     def _extract_markdown(self, content: bytes) -> str:
         text = content.decode("utf-8", errors="ignore")
@@ -118,18 +159,91 @@ class IngestPipeline:
         if not PdfReader:
             return ""
         try:
-            reader = PdfReader(io.BytesIO(content))  # type: ignore[name-defined]
+            reader = PdfReader(io.BytesIO(content), strict=False)  # type: ignore[name-defined]
+            if getattr(reader, "is_encrypted", False):
+                try:
+                    reader.decrypt("")  # type: ignore[attr-defined]
+                except Exception:
+                    return ""
             pages = [page.extract_text() or "" for page in reader.pages]
             return "\n".join(pages)
         except Exception as exc:
             print(f"Error extracting PDF text: {exc}")
             return ""
 
+    def _extract_pdf_text_pdftotext(self, content: bytes) -> str:
+        """Fallback PDF extraction using pdftotext if installed."""
+        try:
+            pdftotext_bin = shutil.which("pdftotext")
+            if not pdftotext_bin:
+                return ""
+            with tempfile.TemporaryDirectory() as tmpdir:
+                pdf_path = Path(tmpdir) / "input.pdf"
+                txt_path = Path(tmpdir) / "output.txt"
+                pdf_path.write_bytes(content)
+                result = subprocess.run(
+                    [pdftotext_bin, "-enc", "UTF-8", str(pdf_path), str(txt_path)],
+                    check=False,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                if result.returncode != 0:
+                    return ""
+                if not txt_path.exists():
+                    return ""
+                return txt_path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            return ""
+
+    def _extract_docx_text(self, content: bytes) -> str:
+        """Extract text from a .docx using python-docx or a zip/XML fallback."""
+        if docx:
+            try:
+                doc = docx.Document(io.BytesIO(content))
+                text = "\n".join([para.text for para in doc.paragraphs])
+                if text.strip():
+                    return text
+                table_text = []
+                for table in doc.tables:
+                    for row in table.rows:
+                        table_text.append(" | ".join([cell.text for cell in row.cells]))
+                return "\n".join(table_text)
+            except Exception as exc:
+                print(f"Error extracting Word text: {exc}")
+
+        # Fallback: parse the document.xml from the docx zip
+        try:
+            with zipfile.ZipFile(io.BytesIO(content)) as archive:
+                xml_data = archive.read("word/document.xml")
+            root = ET.fromstring(xml_data)
+            namespace = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+            lines: list[str] = []
+            buffer: list[str] = []
+            for elem in root.iter():
+                if elem.tag == f"{namespace}t" and elem.text:
+                    buffer.append(elem.text)
+                elif elem.tag == f"{namespace}p":
+                    if buffer:
+                        lines.append("".join(buffer).strip())
+                        buffer = []
+            if buffer:
+                lines.append("".join(buffer).strip())
+            return "\n".join([line for line in lines if line])
+        except Exception as exc:
+            print(f"Error parsing DOCX fallback: {exc}")
+            return ""
+
     def _ocr_pdf(self, content: bytes) -> str:
         if not convert_from_bytes or not pytesseract:
             return ""
+        poppler_bin = shutil.which("pdftoppm") or shutil.which("pdftocairo")
+        poppler_path = str(Path(poppler_bin).parent) if poppler_bin else None
+        tesseract_bin = shutil.which("tesseract")
+        if tesseract_bin:
+            pytesseract.pytesseract.tesseract_cmd = tesseract_bin  # type: ignore[attr-defined]
         try:
-            images = convert_from_bytes(content)  # type: ignore[name-defined]
+            images = convert_from_bytes(content, poppler_path=poppler_path)  # type: ignore[name-defined]
         except Exception as exc:
             print(f"Error converting PDF to images for OCR: {exc}")
             return ""
