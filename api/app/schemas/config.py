@@ -30,6 +30,8 @@ class RetrievalDefaults(BaseModel):
     hybrid: bool = True  # Enable hybrid search (dense + BM25)
     dense_k: int = 5  # Top chunks from dense retrieval
     sparse_k: int = 10  # Top chunks from BM25 retrieval
+    dense_weight: float = 0.6  # RRF weight for dense results
+    sparse_weight: float = 0.4  # RRF weight for sparse results
     rerank_pool: int = 20  # Candidates for reranking
     top_n: int = 5  # Final chunks to use in context
     compression: bool = False  # Context compression (requires LLM)
@@ -44,9 +46,21 @@ class RetrievalDefaults(BaseModel):
     embedding_model: str = "BAAI/bge-base-en-v1.5"  # Sentence transformer model
     reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"  # Cross-encoder
     use_reranking: bool = True  # Enable cross-encoder reranking
+    use_colbert: bool = False  # Enable ColBERT late-interaction reranking
+    colbert_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    colbert_top_k: int = 12
     chunk_size: int = 400  # Target chunk size in characters
     chunk_overlap: int = 50  # Overlap between chunks
     planner_mode: str = "smart"  # "simple" or "smart"
+    flare_generation: bool = True  # Enable FLARE mid-generation retrieval
+    enforce_evidence_contract: bool = True  # Require evidence-first self-checks
+    multi_resolution: bool = True  # Enable parent-child context expansion
+    recency_weight: float = 0.1  # Recency prior boost for newer docs
+    recency_half_life_days: float = 90.0  # Days for recency score to halve
+    title_boost: float = 0.6  # Field-aware boost for title matches
+    heading_boost: float = 0.4  # Field-aware boost for heading matches
+    proximity_weight: float = 0.5  # Term-proximity boost for BM25
+    diversity: float = 0.0  # 0-1: prefer diverse chunks when >0
 
     @field_validator("raptor", mode="before")
     @classmethod

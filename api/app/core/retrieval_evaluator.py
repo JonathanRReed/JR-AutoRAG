@@ -27,6 +27,7 @@ class RetrievalVerdict(str, Enum):
     CORRECT = "correct"          # Context is relevant and sufficient
     AMBIGUOUS = "ambiguous"      # Partially relevant, may need refinement
     INCORRECT = "incorrect"      # Context is irrelevant, need retry/fallback
+    LOW_COVERAGE = "low_coverage" # Relevant but missing key aspects
 
 
 @dataclass
@@ -404,6 +405,226 @@ INCORRECT means the context is irrelevant to the query."""
                 unique_strips.append(strip)
         
         return unique_strips[:15]  # Limit to top 15
+
+    def _extract_query_slots(self, query: str) -> list[str]:
+        """Extract information slots/entities from query."""
+        slots = []
+        # Extract quoted terms
+        quoted = re.findall(r'"([^"]+)"', query)
+        slots.extend(quoted)
+        # Extract capitalized terms (entities)
+        entities = re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', query)
+        slots.extend(entities)
+        # Extract key question words and their objects
+        wh_matches = re.findall(r'\b(what|who|when|where|which|how)\s+(?:is|are|was|were|does|did)?\s*(\w+)', query.lower())
+        for _, obj in wh_matches:
+            if len(obj) > 3:
+                slots.append(obj)
+        return list(set(slots))
+
+    def _find_covered_slots(self, slots: list[str], chunks: list["EvidenceChunk"]) -> list[str]:
+        """Find which slots are covered by retrieved chunks."""
+        covered = []
+        chunk_text = " ".join(c.snippet.lower() for c in chunks if hasattr(c, 'snippet'))
+        for slot in slots:
+            if slot.lower() in chunk_text:
+                covered.append(slot)
+        return covered
+
+    def generate_slot_fill_queries(
+        self,
+        query: str,
+        chunks: list["EvidenceChunk"],
+        provider: "LLMProvider | None" = None,
+    ) -> list[str]:
+        """Generate targeted queries to fill missing information slots.
+        
+        This implements slot-filling for LOW_COVERAGE verdicts, creating
+        targeted queries for aspects of the original query not covered
+        by retrieved evidence.
+        
+        Args:
+            query: Original user query
+            chunks: Retrieved evidence chunks
+            provider: Optional LLM provider (unused, for future enhancement)
+            
+        Returns:
+            List of targeted slot-fill queries
+        """
+        slots = self._extract_query_slots(query)
+        covered = self._find_covered_slots(slots, chunks)
+        missing = [s for s in slots if s not in covered]
+        
+        fill_queries = []
+        for slot in missing[:3]:  # Limit to 3 slot-fill queries
+            # Generate targeted query for the missing slot
+            fill_queries.append(f"{slot} {query}")
+        
+        # If no explicit slots, try extracting key terms from query
+        if not fill_queries:
+            query_terms = [w for w in query.split() if len(w) > 5]
+            chunk_text = " ".join(c.snippet.lower() for c in chunks if hasattr(c, 'snippet'))
+            missing_terms = [t for t in query_terms if t.lower() not in chunk_text]
+            for term in missing_terms[:2]:
+                fill_queries.append(f"What is {term} in the context of {query[:50]}")
+        
+        return fill_queries
+    
+    def generate_clarification_queries(
+        self,
+        query: str,
+        chunks: list["EvidenceChunk"],
+        max_queries: int = 2,
+    ) -> list[str]:
+        """Generate follow-up clarification queries for ambiguous requests."""
+        clarifications: list[str] = []
+        pronoun_pattern = re.compile(r'\b(it|they|them|this|that|these|those)\b', re.IGNORECASE)
+        has_pronoun = bool(pronoun_pattern.search(query))
+        top_titles = []
+        for chunk in chunks[:3]:
+            title = getattr(chunk, "title", "")
+            if title:
+                top_titles.append(title)
+        if has_pronoun and top_titles:
+            for title in top_titles[:max_queries]:
+                clarifications.append(f"{query} (specifically about {title})")
+        if not clarifications and " vs " in query.lower():
+            parts = [p.strip() for p in re.split(r'vs\.?|versus', query, flags=re.IGNORECASE) if p.strip()]
+            if len(parts) >= 2:
+                clarifications.append(f"{parts[0]} compared to {parts[1]} in detail")
+        if not clarifications:
+            key_terms = re.findall(r'"([^"]+)"', query)
+            if len(key_terms) >= 2:
+                clarifications.append(f"Relationship between {key_terms[0]} and {key_terms[1]} in {query}")
+        # Fallback: use chunk headings to generate targeted clarifications
+        if not clarifications and top_titles:
+            for title in top_titles[:max_queries]:
+                clarifications.append(f"{query} focusing on {title}")
+        return clarifications[:max_queries]
+    
+    def filter_relevant_sentences(
+        self,
+        query: str,
+        chunks: list["EvidenceChunk"],
+        min_overlap: float = 0.2,
+        max_sentences: int = 3,
+    ) -> dict[str, int]:
+        """Trim chunk snippets to the most relevant sentences for the query."""
+        query_terms = set(re.findall(r'\b[a-z]{3,}\b', query.lower()))
+        trimmed_chunks = 0
+        trimmed_sentences = 0
+        total_sentences = 0
+        for chunk in chunks:
+            snippet = getattr(chunk, "snippet", "")
+            if not snippet or not query_terms:
+                continue
+            sentences = [
+                s.strip()
+                for s in re.split(r'(?<=[.!?])\s+', snippet)
+                if s.strip()
+            ]
+            if not sentences:
+                continue
+            total_sentences += len(sentences)
+            scored: list[tuple[str, float]] = []
+            for sentence in sentences:
+                sent_terms = set(re.findall(r'\b[a-z]{3,}\b', sentence.lower()))
+                if not sent_terms:
+                    continue
+                overlap = len(query_terms & sent_terms) / len(sent_terms)
+                if overlap >= min_overlap:
+                    scored.append((sentence, overlap))
+            if not scored:
+                continue
+            scored.sort(key=lambda x: x[1], reverse=True)
+            selected = scored[:max_sentences]
+            trimmed_chunks += 1
+            trimmed_sentences += len(selected)
+            labeled_sentences = [
+                f"[{chunk.id}::s{i+1}] {sentence}"
+                for i, (sentence, _) in enumerate(selected)
+            ]
+            chunk.snippet = " ".join(labeled_sentences)
+        return {
+            "trimmed_chunks": trimmed_chunks,
+            "trimmed_sentences": trimmed_sentences,
+            "total_sentences": total_sentences,
+        }
+
+    def evaluate_coverage(
+        self,
+        query: str,
+        chunks: list["EvidenceChunk"],
+        min_coverage: float = 0.5,
+    ) -> tuple[RetrievalVerdict, float, list[str]]:
+        """Evaluate coverage of query aspects by retrieved chunks.
+        
+        Returns:
+            Tuple of (verdict, coverage_ratio, missing_aspects)
+        """
+        slots = self._extract_query_slots(query)
+        if not slots:
+            # Fall back to term-based coverage
+            query_terms = set(w.lower() for w in query.split() if len(w) > 4)
+            chunk_text = " ".join(c.snippet.lower() for c in chunks if hasattr(c, 'snippet'))
+            covered = sum(1 for t in query_terms if t in chunk_text)
+            coverage = covered / max(len(query_terms), 1)
+            missing = [t for t in query_terms if t not in chunk_text]
+        else:
+            covered = self._find_covered_slots(slots, chunks)
+            coverage = len(covered) / max(len(slots), 1)
+            missing = [s for s in slots if s not in covered]
+        
+        if coverage >= 0.8:
+            verdict = RetrievalVerdict.CORRECT
+        elif coverage >= min_coverage:
+            verdict = RetrievalVerdict.AMBIGUOUS
+        else:
+            verdict = RetrievalVerdict.LOW_COVERAGE
+        
+        return verdict, coverage, missing
+
+    def evaluate_plan_coverage(
+        self,
+        step_queries: list[str],
+        chunks: list["EvidenceChunk"],
+        min_match_ratio: float = 0.5,
+    ) -> tuple[float, list[str]]:
+        """Estimate how well retrieved chunks cover plan step queries.
+
+        Args:
+            step_queries: List of sub-queries from the planner.
+            chunks: Retrieved evidence chunks.
+            min_match_ratio: Fraction of slot terms needed to mark a step covered.
+
+        Returns:
+            Tuple of (coverage_ratio, missing_step_queries).
+        """
+        if not step_queries:
+            return 1.0, []
+        chunk_text = " ".join(
+            c.snippet.lower() for c in chunks if hasattr(c, "snippet") and c.snippet
+        )
+        if not chunk_text:
+            return 0.0, list(step_queries)
+        covered = 0
+        missing: list[str] = []
+        for query in step_queries:
+            slots = self._extract_query_slots(query)
+            if not slots:
+                terms = [w for w in query.split() if len(w) > 4]
+                slots = terms[:5]
+            if not slots:
+                missing.append(query)
+                continue
+            matches = sum(1 for slot in slots if slot.lower() in chunk_text)
+            match_ratio = matches / max(len(slots), 1)
+            if match_ratio >= min_match_ratio:
+                covered += 1
+            else:
+                missing.append(query)
+        coverage_ratio = covered / max(len(step_queries), 1)
+        return coverage_ratio, missing
 
 
 __all__ = [

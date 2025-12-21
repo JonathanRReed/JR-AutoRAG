@@ -20,11 +20,17 @@ if TYPE_CHECKING:
     from .providers import LLMProvider
     from .gatherer import EvidenceChunk
     from .hybrid_retrieval import HybridRetrievalEngine
+from .uncertainty_monitor import (
+    ConfidenceSignal,
+    UncertaintyMonitor,
+    UNCERTAINTY_PATTERNS,
+)
 
 
 @dataclass
 class FLAREConfig:
     """Configuration for FLARE generation."""
+
     confidence_threshold: float = 0.3  # Trigger retrieval below this
     max_retrievals: int = 3  # Maximum mid-generation retrievals
     lookahead_tokens: int = 50  # Tokens to generate for lookahead
@@ -35,15 +41,18 @@ class FLAREConfig:
 @dataclass
 class FLAREStep:
     """A single step in FLARE generation."""
+
     text: str
     confidence: float
     triggered_retrieval: bool = False
     retrieved_chunks: list[str] = field(default_factory=list)
+    confidence_signal: ConfidenceSignal | None = None
 
 
 @dataclass
 class FLAREResult:
     """Result of FLARE generation."""
+
     answer: str
     steps: list[FLAREStep]
     total_retrievals: int
@@ -52,73 +61,35 @@ class FLAREResult:
 
 class FLAREGenerator:
     """Forward-Looking Active Retrieval during generation.
-    
+
     FLARE monitors generation confidence and triggers retrieval
     when the model is uncertain. Key steps:
-    
+
     1. Generate a sentence
     2. Estimate confidence (via heuristics or logprobs)
     3. If low confidence, use generated text as retrieval query
     4. Inject new context and regenerate sentence
     5. Continue until complete
-    
-    This implementation uses heuristic confidence estimation since
-    most local LLMs don't expose logprobs.
+
+    This implementation now leverages the shared UncertaintyMonitor so that
+    logprob- or entropy-based signals (when available) can be blended with the
+    heuristic cues.
     """
-    
-    # Patterns that suggest uncertainty
-    UNCERTAINTY_PATTERNS = [
-        r'\b(maybe|perhaps|possibly|might|could be|I think|I believe)\b',
-        r'\b(not sure|uncertain|unclear|unknown)\b',
-        r'\b(approximately|around|about|roughly)\b',
-        r'\?$',  # Questions indicate uncertainty
-    ]
-    
-    # Patterns that suggest confidence
-    CONFIDENCE_PATTERNS = [
-        r'\b(definitely|certainly|clearly|obviously|according to)\b',
-        r'\[\d+\]',  # Citations indicate grounded statements
-        r'\b(research shows|studies indicate|data shows)\b',
-    ]
-    
-    def __init__(self, config: FLAREConfig | None = None) -> None:
+
+    def __init__(
+        self,
+        config: FLAREConfig | None = None,
+        monitor: UncertaintyMonitor | None = None,
+    ) -> None:
         self.config = config or FLAREConfig()
-        self._uncertainty_re = [re.compile(p, re.IGNORECASE) for p in self.UNCERTAINTY_PATTERNS]
-        self._confidence_re = [re.compile(p, re.IGNORECASE) for p in self.CONFIDENCE_PATTERNS]
-    
-    def _estimate_confidence(self, text: str) -> float:
-        """Estimate confidence of generated text via heuristics.
-        
-        Returns a score 0-1 where:
-        - 0.0 = very uncertain
-        - 1.0 = very confident
-        """
-        if not text.strip():
-            return 0.5
-        
-        # Count uncertainty indicators
-        uncertainty_count = sum(1 for p in self._uncertainty_re if p.search(text))
-        
-        # Count confidence indicators
-        confidence_count = sum(1 for p in self._confidence_re if p.search(text))
-        
-        # Base confidence
-        base = 0.5
-        
-        # Adjust based on patterns
-        uncertainty_penalty = 0.15 * uncertainty_count
-        confidence_bonus = 0.2 * confidence_count
-        
-        # Short sentences are less confident
-        if len(text) < 50:
-            uncertainty_penalty += 0.1
-        
-        # Very long sentences might be rambling
-        if len(text) > 300:
-            uncertainty_penalty += 0.05
-        
-        confidence = base - uncertainty_penalty + confidence_bonus
-        return max(0.0, min(1.0, confidence))
+        threshold = self.config.confidence_threshold
+        self._monitor = monitor or UncertaintyMonitor(threshold=threshold)
+        self._uncertainty_re = [re.compile(p, re.IGNORECASE) for p in UNCERTAINTY_PATTERNS]
+
+    def _estimate_confidence(self, text: str) -> ConfidenceSignal:
+        """Estimate confidence of generated text."""
+
+        return self._monitor.estimate(text)
     
     def _split_sentences(self, text: str) -> list[str]:
         """Split text into sentences."""
@@ -153,6 +124,9 @@ class FLAREGenerator:
         provider: "LLMProvider",
         retriever: "HybridRetrievalEngine",
         document_ids: list[str] | None = None,
+        system_prompt: str | None = None,
+        answer_instruction: str | None = None,
+        continue_instruction: str | None = None,
     ) -> FLAREResult:
         """Generate answer with active retrieval on uncertainty.
         
@@ -172,14 +146,25 @@ class FLAREGenerator:
         all_chunk_ids: set[str] = set()
         
         # System prompt for RAG generation
-        system_prompt = """You are a precise RAG assistant. Answer based on the provided context.
+        system_prompt = system_prompt or """You are a precise RAG assistant. Answer based on the provided context.
 Use citations like [1], [2] when referencing sources.
 If uncertain about something, state it clearly."""
+
+        answer_instruction = answer_instruction or (
+            "Answer ONLY using the provided context and include bracketed citations like [1]."
+        )
+        continue_instruction = continue_instruction or "Provide just the next sentence with bracketed citations."
         
         # Generate initial response
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Context:\n{current_context}\n\nQuestion: {query}"},
+            {
+                "role": "user",
+                "content": (
+                    f"Context:\n{current_context}\n\nQuestion: {query}\n\n"
+                    f"{answer_instruction}"
+                ),
+            },
         ]
         
         try:
@@ -198,17 +183,20 @@ If uncertain about something, state it clearly."""
         final_answer_parts = []
         
         for i, sentence in enumerate(sentences):
-            confidence = self._estimate_confidence(sentence)
-            
+            signal = self._estimate_confidence(sentence)
+            confidence_value = signal.aggregate
             step = FLAREStep(
                 text=sentence,
-                confidence=confidence,
+                confidence=confidence_value,
+                confidence_signal=signal,
             )
             
             # Check if retrieval needed
-            if (confidence < self.config.confidence_threshold and 
+            if (
+                self._monitor.should_trigger(signal) and 
                 retrieval_count < self.config.max_retrievals and
-                len(sentence) >= self.config.min_sentence_length):
+                len(sentence) >= self.config.min_sentence_length
+            ):
                 
                 # Generate retrieval query from uncertain sentence
                 retrieval_query = self._extract_retrieval_query(sentence, query)
@@ -241,7 +229,7 @@ If uncertain about something, state it clearly."""
                                 f"{new_context}\n\n"
                                 f"Question: {query}\n\n"
                                 f"Continue the answer after: {' '.join(final_answer_parts)}\n"
-                                f"Provide just the next sentence with citations."
+                                f"{continue_instruction}"
                             )},
                         ]
                         
@@ -251,8 +239,10 @@ If uncertain about something, state it clearly."""
                             regen_sentences = self._split_sentences(regenerated)
                             if regen_sentences:
                                 sentence = regen_sentences[0]
+                                signal = self._estimate_confidence(sentence)
                                 step.text = sentence
-                                step.confidence = self._estimate_confidence(sentence)
+                                step.confidence = signal.aggregate
+                                step.confidence_signal = signal
                         except Exception:
                             pass  # Keep original sentence
                         
@@ -282,6 +272,9 @@ If uncertain about something, state it clearly."""
         retriever: "HybridRetrievalEngine",
         document_ids: list[str] | None = None,
         on_token: Any = None,
+        system_prompt: str | None = None,
+        answer_instruction: str | None = None,
+        continue_instruction: str | None = None,
     ) -> FLAREResult:
         """Generate with FLARE and streaming output.
         
@@ -291,7 +284,14 @@ If uncertain about something, state it clearly."""
         # For simplicity, this implementation generates fully then streams
         # A full implementation would integrate with streaming generation
         result = await self.generate_with_flare(
-            query, initial_context, provider, retriever, document_ids
+            query,
+            initial_context,
+            provider,
+            retriever,
+            document_ids,
+            system_prompt=system_prompt,
+            answer_instruction=answer_instruction,
+            continue_instruction=continue_instruction,
         )
         
         # Stream the result if callback provided
