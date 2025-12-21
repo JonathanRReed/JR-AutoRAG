@@ -136,11 +136,6 @@ __all__ = [
     "AdaptiveGate",
     "GateDecision",
     "GateResult",
-    # Web search disabled for offline-only operation
-    # "WebSearch",
-    # "WebResult",
-    # "WebSearchProvider",
-    # "get_web_search",
     # GraphRAG
     "GraphRAG",
     "Entity",

@@ -450,10 +450,15 @@ class SmartPlanner:
             'rerank_pool': rerank_pool,
             'compression': compression,
             'raptor': strategy.get('raptor', False),
-            'diversity': strategy.get('diversity', 0.0),
+            'diversity': strategy.get('diversity', defaults.diversity),
             'iterative': strategy.get('iterative', False),
             'max_hops': strategy.get('max_hops', 1),
-            'sparse_weight': strategy.get('sparse_weight', 0.4),
+            'sparse_weight': strategy.get('sparse_weight', defaults.sparse_weight),
+            'title_boost': strategy.get('title_boost', defaults.title_boost),
+            'heading_boost': strategy.get('heading_boost', defaults.heading_boost),
+            'proximity_weight': strategy.get('proximity_weight', defaults.proximity_weight),
+            'recency_weight': defaults.recency_weight,
+            'recency_half_life_days': defaults.recency_half_life_days,
         }
         
         # Adjust for high complexity

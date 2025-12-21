@@ -33,6 +33,11 @@ class LLMProvider:
     async def chat_stream(self, messages: Iterable[dict[str, Any]], **kwargs: Any) -> AsyncIterator[str]:
         raise NotImplementedError
 
+    # Optional: surface token-level stats for uncertainty monitoring.
+    # Subclasses can override; default returns empty stats.
+    def get_token_stats(self, text: str) -> dict[str, float | None]:  # pragma: no cover - optional hook
+        return {"avg_logprob": None, "entropy": None, "logit_margin": None}
+
 
 class _HTTPProvider(LLMProvider):
     """Shared utilities for HTTP based providers."""

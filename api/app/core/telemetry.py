@@ -108,3 +108,62 @@ class TelemetryStore:
     def list(self) -> builtins.list[Trace]:
         with self._lock:
             return list(self._traces)
+
+    def export_metrics(self) -> dict:
+        """Export aggregated metrics for dashboard."""
+        with self._lock:
+            if not self._traces:
+                return {"total_queries": 0}
+            
+            latencies = [t.metrics.get("duration_ms", 0) for t in self._traces]
+            chunk_counts = [t.metrics.get("context_chunks", 0) for t in self._traces]
+            cache_hits = sum(1 for t in self._traces if t.metrics.get("embedding_cache") == "hit")
+            
+            return {
+                "total_queries": len(self._traces),
+                "cache_hit_rate": cache_hits / len(self._traces) if self._traces else 0,
+                "avg_latency_ms": sum(latencies) / len(latencies) if latencies else 0,
+                "p50_latency_ms": sorted(latencies)[len(latencies) // 2] if latencies else 0,
+                "p95_latency_ms": sorted(latencies)[int(len(latencies) * 0.95)] if latencies else 0,
+                "avg_chunks_per_query": sum(chunk_counts) / len(chunk_counts) if chunk_counts else 0,
+                "queries_per_hour": self._calculate_queries_per_hour(),
+                "quality_distribution": self._calculate_quality_distribution(),
+                "rerank_usage_rate": self._calculate_rerank_usage(),
+            }
+
+    def _calculate_queries_per_hour(self) -> float:
+        """Calculate queries per hour over last 24h."""
+        if len(self._traces) < 2:
+            return 0.0
+        # Sort traces by time just in case
+        sorted_traces = sorted(self._traces, key=lambda t: t.started_at)
+        first = sorted_traces[0].started_at
+        last = sorted_traces[-1].started_at
+        
+        # Calculate timespan in hours
+        hours = (last - first).total_seconds() / 3600
+        return len(self._traces) / max(hours, 0.01)
+
+    def _calculate_quality_distribution(self) -> dict:
+        """Distribution of answer quality ratings."""
+        dist = {"high": 0, "medium": 0, "low": 0, "unknown": 0}
+        for t in self._traces:
+            quality = t.metrics.get("quality_rating", "unknown")
+            if quality in dist:
+                dist[quality] += 1
+            else:
+                dist["unknown"] += 1
+        return dist
+
+    def _calculate_rerank_usage(self) -> float:
+        """Percentage of queries using reranking or advanced retrieval."""
+        advanced_count = 0
+        for t in self._traces:
+            used_rerank = False
+            for step in t.steps:
+                if step.name == "retrieval" and step.details.get("reranked", False):
+                    used_rerank = True
+                    break
+            if used_rerank:
+                advanced_count += 1
+        return advanced_count / len(self._traces) if self._traces else 0.0

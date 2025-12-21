@@ -9,18 +9,34 @@ This module provides a state-of-the-art retrieval implementation that combines:
 
 from __future__ import annotations
 
+import math
 import os
+import re
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+try:
+    import torch
+    import torch.nn.functional as F
+except ImportError:
+    torch = None
+    F = None
+
 from .cache import get_cache_manager
 from .documents import Document, DocumentStore
 from .chunking import Chunk, ChunkingStrategy, get_chunker
+from .hierarchy import DocumentTree
 
 if TYPE_CHECKING:
     from sentence_transformers import SentenceTransformer, CrossEncoder
+
+try:
+    from transformers import AutoTokenizer, AutoModel
+except ImportError:
+    AutoTokenizer = AutoModel = None
 
 # Lazy imports for optional dependencies
 _sentence_transformer = None
@@ -90,6 +106,12 @@ class HybridConfig:
     sparse_weight: float = 0.4
     use_reranking: bool = True
     rerank_top_k: int = 20  # Candidates for reranking
+    recency_weight: float = 0.1
+    recency_half_life_days: float = 90.0
+    title_boost: float = 0.6
+    heading_boost: float = 0.4
+    proximity_weight: float = 0.5
+    diversity: float = 0.0
     
     # Chunking
     chunking_strategy: ChunkingStrategy = ChunkingStrategy.SEMANTIC
@@ -99,13 +121,16 @@ class HybridConfig:
     # Feature toggles
     raptor: bool = False
     graph: bool = False
+    use_colbert: bool = False
+    colbert_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    colbert_top_k: int = 12
 
 
 class HybridRetrievalEngine:
     """Advanced retrieval engine with hybrid search and reranking.
     
     Combines dense vector search (semantic) with BM25 (keyword) retrieval,
-    then optionally applies cross-encoder reranking for maximum precision.
+    then optionally applies cross-encoder or ColBERT-style reranking for maximum precision.
     
     Supports disk persistence for indexes to avoid rebuild on restart.
     """
@@ -133,6 +158,16 @@ class HybridRetrievalEngine:
         self._tokenized_corpus: list[list[str]] = []
         self._last_cache: dict[str, Any] = {}
         self._cache_manager = get_cache_manager()
+        # Precision modes
+        self._colbert_tokenizer = None
+        self._colbert_model = None
+        self._colbert_failed = False
+        self._colbert_device = "cpu"
+        self._last_colbert_stats: dict[str, Any] = {"applied": False}
+        # Metadata-aware scoring
+        self._doc_title_tokens: dict[str, set[str]] = {}
+        self._chunk_heading_tokens: dict[int, set[str]] = {}
+        self._doc_timestamps: dict[str, datetime] = {}
         
         # Persistence
         self._index_persistence = None
@@ -191,6 +226,246 @@ class HybridRetrievalEngine:
     def _tokenize(self, text: str) -> list[str]:
         """Simple tokenization for BM25."""
         return text.lower().split()
+
+    def _tokenize_terms(self, text: str) -> list[str]:
+        """Tokenize text into alphanumeric terms for scoring boosts."""
+        return [t for t in re.findall(r"[a-z0-9]+", text.lower()) if t]
+
+    def _parse_timestamp(self, value: str) -> datetime | None:
+        """Parse common timestamp formats into timezone-aware UTC datetime."""
+        if not value:
+            return None
+        raw = value.strip()
+        if not raw:
+            return None
+        # Epoch seconds or milliseconds
+        if re.fullmatch(r"\d{10,}", raw):
+            try:
+                epoch = int(raw)
+                if len(raw) > 10:
+                    epoch = int(epoch / 1000)
+                return datetime.fromtimestamp(epoch, tz=timezone.utc)
+            except Exception:
+                return None
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(raw)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+        except Exception:
+            return None
+
+    def _extract_doc_timestamp(self, metadata: dict[str, str]) -> datetime | None:
+        """Extract the most recent timestamp from document metadata."""
+        if not metadata:
+            return None
+        keys = (
+            "updated_at",
+            "published_at",
+            "created_at",
+            "uploaded_at",
+            "processed_at",
+            "timestamp",
+            "date",
+        )
+        best: datetime | None = None
+        for key in keys:
+            value = metadata.get(key)
+            if not value:
+                continue
+            parsed = self._parse_timestamp(value)
+            if parsed and (best is None or parsed > best):
+                best = parsed
+        return best
+
+    def _build_field_tokens(self, docs: list[Document]) -> None:
+        """Precompute title and heading tokens for field-aware scoring."""
+        self._doc_title_tokens = {
+            doc.id: set(self._tokenize_terms(doc.title))
+            for doc in docs
+            if doc.title
+        }
+        self._chunk_heading_tokens = {}
+        if not self._trees:
+            return
+        # Map (doc_id, chunk_index) -> global index in self._chunks
+        chunk_index_map: dict[tuple[str, int], int] = {}
+        for idx, (doc_id, chunk) in enumerate(self._chunks):
+            chunk_index_map[(doc_id, chunk.index)] = idx
+        for doc_id, tree in self._trees.items():
+            for node in tree.nodes.values():
+                if not node.chunk_ids:
+                    continue
+                headings = [node.title]
+                for ancestor in tree.get_ancestors(node.id):
+                    headings.append(ancestor.title)
+                heading_tokens: set[str] = set()
+                for heading in headings:
+                    heading_tokens.update(self._tokenize_terms(heading))
+                if not heading_tokens:
+                    continue
+                for chunk_id in node.chunk_ids:
+                    try:
+                        chunk_index = int(chunk_id)
+                    except ValueError:
+                        continue
+                    global_idx = chunk_index_map.get((doc_id, chunk_index))
+                    if global_idx is None:
+                        continue
+                    existing = self._chunk_heading_tokens.get(global_idx, set())
+                    self._chunk_heading_tokens[global_idx] = existing | heading_tokens
+
+    def _normalize_routing_params(self, routing_params: dict[str, Any] | None) -> dict[str, float]:
+        """Normalize per-query routing params and merge with defaults."""
+        params = dict(routing_params or {})
+        sparse_weight = float(params.get("sparse_weight", self._config.sparse_weight) or 0.0)
+        dense_weight = float(params.get("dense_weight", self._config.dense_weight) or 0.0)
+        if "dense_weight" not in params and "sparse_weight" in params:
+            dense_weight = max(0.0, 1.0 - sparse_weight)
+        total = dense_weight + sparse_weight
+        if total > 0:
+            dense_weight /= total
+            sparse_weight /= total
+        literal_weight = float(params.get("literal_weight", max(0.2, min(0.6, sparse_weight))))
+        return {
+            "dense_weight": dense_weight,
+            "sparse_weight": sparse_weight,
+            "literal_weight": literal_weight,
+            "diversity": float(params.get("diversity", self._config.diversity) or 0.0),
+            "title_boost": float(params.get("title_boost", self._config.title_boost) or 0.0),
+            "heading_boost": float(params.get("heading_boost", self._config.heading_boost) or 0.0),
+            "proximity_weight": float(params.get("proximity_weight", self._config.proximity_weight) or 0.0),
+            "recency_weight": float(params.get("recency_weight", self._config.recency_weight) or 0.0),
+            "recency_half_life_days": float(
+                params.get("recency_half_life_days", self._config.recency_half_life_days) or 1.0
+            ),
+        }
+
+    def _field_boost(
+        self,
+        idx: int,
+        query_terms: set[str],
+        title_boost: float,
+        heading_boost: float,
+    ) -> float:
+        """Compute field-aware boost for title and heading matches."""
+        if not query_terms:
+            return 0.0
+        doc_id = self._chunks[idx][0] if idx < len(self._chunks) else ""
+        title_terms = self._doc_title_tokens.get(doc_id, set())
+        heading_terms = self._chunk_heading_tokens.get(idx, set())
+        title_hits = len(query_terms & title_terms) if title_terms else 0
+        heading_hits = len(query_terms & heading_terms) if heading_terms else 0
+        return (title_hits * title_boost) + (heading_hits * heading_boost)
+
+    def _term_proximity(
+        self,
+        query_terms: set[str],
+        chunk_terms: list[str],
+    ) -> float:
+        """Compute a proximity score based on minimal term window."""
+        if len(query_terms) < 2 or not chunk_terms:
+            return 0.0
+        positions: list[tuple[int, str]] = []
+        for idx, term in enumerate(chunk_terms):
+            if term in query_terms:
+                positions.append((idx, term))
+        if len(positions) < 2:
+            return 0.0
+        positions.sort()
+        needed = {t for t in query_terms}
+        counts: dict[str, int] = {}
+        covered = 0
+        left = 0
+        best_window: int | None = None
+        for right, (_, term) in enumerate(positions):
+            if counts.get(term, 0) == 0:
+                covered += 1
+            counts[term] = counts.get(term, 0) + 1
+            while covered == len(needed) and left <= right:
+                window_size = positions[right][0] - positions[left][0] + 1
+                if best_window is None or window_size < best_window:
+                    best_window = window_size
+                left_term = positions[left][1]
+                counts[left_term] -= 1
+                if counts[left_term] == 0:
+                    covered -= 1
+                left += 1
+        if best_window is None:
+            return 0.0
+        return 1.0 / (1.0 + float(best_window))
+
+    def _apply_recency_boost(
+        self,
+        results: list[tuple[int, float]],
+        recency_weight: float,
+        half_life_days: float,
+    ) -> list[tuple[int, float]]:
+        """Apply recency prior to result scores."""
+        if recency_weight <= 0 or half_life_days <= 0:
+            return results
+        now = datetime.now(timezone.utc)
+        adjusted: list[tuple[int, float]] = []
+        for idx, score in results:
+            doc_id = self._chunks[idx][0] if idx < len(self._chunks) else ""
+            ts = self._doc_timestamps.get(doc_id)
+            if not ts:
+                adjusted.append((idx, score))
+                continue
+            age_days = max(0.0, (now - ts).total_seconds() / 86400.0)
+            decay = math.exp(-math.log(2) * age_days / half_life_days)
+            adjusted.append((idx, score * (1.0 + (recency_weight * decay))))
+        return adjusted
+
+    def _apply_diversity_rerank(
+        self,
+        candidates: list[tuple[int, float]],
+        top_k: int,
+        diversity: float,
+    ) -> list[tuple[int, float]]:
+        """Apply a lightweight diversity rerank using token overlap."""
+        if diversity <= 0 or len(candidates) <= 1:
+            return candidates[:top_k]
+        pool = candidates[: max(top_k * 4, top_k)]
+        selected: list[tuple[int, float]] = []
+        token_cache: dict[int, set[str]] = {}
+
+        def tokens_for(idx: int) -> set[str]:
+            if idx in token_cache:
+                return token_cache[idx]
+            if idx >= len(self._chunks):
+                token_cache[idx] = set()
+                return token_cache[idx]
+            _, chunk = self._chunks[idx]
+            token_cache[idx] = set(self._tokenize_terms(chunk.text))
+            return token_cache[idx]
+
+        while pool and len(selected) < top_k:
+            best = None
+            best_score = None
+            for idx, score in pool:
+                candidate_tokens = tokens_for(idx)
+                max_sim = 0.0
+                if selected and candidate_tokens:
+                    for sel_idx, _ in selected:
+                        sel_tokens = tokens_for(sel_idx)
+                        if not sel_tokens:
+                            continue
+                        overlap = len(candidate_tokens & sel_tokens)
+                        union = len(candidate_tokens | sel_tokens)
+                        if union:
+                            max_sim = max(max_sim, overlap / union)
+                mmr_score = ((1 - diversity) * score) - (diversity * max_sim)
+                if best_score is None or mmr_score > best_score:
+                    best_score = mmr_score
+                    best = (idx, score)
+            if best is None:
+                break
+            selected.append(best)
+            pool = [c for c in pool if c[0] != best[0]]
+        return selected
 
     def model_status(self) -> dict[str, bool]:
         """Return availability of dense and rerank models."""
@@ -285,6 +560,14 @@ class HybridRetrievalEngine:
                         if token not in self._graph:
                             self._graph[token] = set()
                         self._graph[token].add(i)
+
+        # Metadata-aware scoring caches
+        self._doc_timestamps = {}
+        for doc in docs:
+            ts = self._extract_doc_timestamp(doc.metadata or {})
+            if ts:
+                self._doc_timestamps[doc.id] = ts
+        self._build_field_tokens(docs)
         
         # Auto-save if persistence enabled
         if self._persist_path and self._chunks:
@@ -414,6 +697,22 @@ class HybridRetrievalEngine:
             BM25Class = _get_bm25()
             if BM25Class:
                 self._bm25 = BM25Class(self._tokenized_corpus)
+        docs = self._docs.list()
+        if self._config.raptor or self._config.chunking_strategy != ChunkingStrategy.FIXED:
+            from .hierarchy import HierarchyBuilder
+            hb = HierarchyBuilder()
+            self._trees = {}
+            for doc in docs:
+                tree = hb.build(doc.text, doc.id, doc.title)
+                doc_chunks = [c for did, c in self._chunks if did == doc.id]
+                hb.associate_chunks(tree, doc_chunks, doc.text)
+                self._trees[doc.id] = tree
+        self._doc_timestamps = {}
+        for doc in docs:
+            ts = self._extract_doc_timestamp(doc.metadata or {})
+            if ts:
+                self._doc_timestamps[doc.id] = ts
+        self._build_field_tokens(docs)
         
         return True
     
@@ -439,21 +738,59 @@ class HybridRetrievalEngine:
         top_indices = np.argsort(similarities)[::-1][:top_k]
         return [(int(idx), float(similarities[idx])) for idx in top_indices]
     
-    def _sparse_search(self, query: str, top_k: int) -> list[tuple[int, float]]:
+    def _sparse_search(
+        self,
+        query: str,
+        top_k: int,
+        *,
+        title_boost: float = 0.0,
+        heading_boost: float = 0.0,
+        proximity_weight: float = 0.0,
+    ) -> list[tuple[int, float]]:
         """BM25 keyword search."""
         if self._bm25 is None:
-            return self._fallback_sparse_search(query, top_k)
+            return self._fallback_sparse_search(
+                query,
+                top_k,
+                title_boost=title_boost,
+                heading_boost=heading_boost,
+                proximity_weight=proximity_weight,
+            )
         
         query_tokens = self._tokenize(query)
         scores = self._bm25.get_scores(query_tokens)
-        
+        query_terms = {t for t in self._tokenize_terms(query) if len(t) > 2}
         top_indices = np.argsort(scores)[::-1][:top_k]
-        return [(int(idx), float(scores[idx])) for idx in top_indices if scores[idx] > 0]
+        adjusted: list[tuple[int, float]] = []
+        for idx in top_indices:
+            base_score = float(scores[idx])
+            if base_score <= 0:
+                continue
+            base_score += self._field_boost(
+                int(idx),
+                query_terms,
+                title_boost=title_boost,
+                heading_boost=heading_boost,
+            )
+            if proximity_weight > 0 and query_terms:
+                chunk_terms = self._tokenize_terms(self._chunks[int(idx)][1].text)
+                base_score += proximity_weight * self._term_proximity(query_terms, chunk_terms)
+            adjusted.append((int(idx), base_score))
+        return adjusted
 
-    def _fallback_sparse_search(self, query: str, top_k: int) -> list[tuple[int, float]]:
+    def _fallback_sparse_search(
+        self,
+        query: str,
+        top_k: int,
+        *,
+        title_boost: float = 0.0,
+        heading_boost: float = 0.0,
+        proximity_weight: float = 0.0,
+    ) -> list[tuple[int, float]]:
         """Fallback sparse search using token overlap when BM25 isn't available."""
         if not self._tokenized_corpus:
             return []
+        query_terms = {t for t in self._tokenize_terms(query) if len(t) > 2}
         query_tokens = set(self._tokenize(query))
         if not query_tokens:
             return []
@@ -461,11 +798,35 @@ class HybridRetrievalEngine:
         for idx, tokens in enumerate(self._tokenized_corpus):
             overlap = query_tokens.intersection(tokens)
             if overlap:
-                scores.append((idx, float(len(overlap))))
+                base_score = float(len(overlap))
+                base_score += self._field_boost(
+                    idx,
+                    query_terms,
+                    title_boost=title_boost,
+                    heading_boost=heading_boost,
+                )
+                if proximity_weight > 0 and query_terms:
+                    chunk_terms = self._tokenize_terms(self._chunks[idx][1].text)
+                    base_score += proximity_weight * self._term_proximity(query_terms, chunk_terms)
+                scores.append((idx, base_score))
         if not scores:
             return []
         scores.sort(key=lambda x: x[1], reverse=True)
         return scores[:top_k]
+
+    def get_document_trees(self) -> dict[str, DocumentTree]:
+        """Expose built document trees for RAPTOR-style retrieval."""
+        return dict(self._trees)
+
+    def get_keyword_graph_index(self) -> dict[str, set[int]]:
+        """Expose keyword graph index (term -> chunk indices)."""
+        return {
+            term: set(indices) for term, indices in self._graph.items()
+        } if self._graph else {}
+
+    def get_chunk_records(self) -> list[tuple[str, Chunk]]:
+        """Return chunk records for downstream multi-resolution retrieval."""
+        return list(self._chunks)
 
     def _literal_search(self, query: str, top_k: int) -> tuple[list[tuple[int, float]], int]:
         """Literal grep-style scoring for exact phrase/token matches."""
@@ -494,6 +855,7 @@ class HybridRetrievalEngine:
         self,
         result_lists: list[list[tuple[int, float]]],
         k: int = 60,
+        weights: list[float] | None = None,
     ) -> list[tuple[int, float]]:
         """Combine multiple result lists using RRF.
         
@@ -501,11 +863,12 @@ class HybridRetrievalEngine:
         """
         scores: dict[int, float] = {}
         
-        for results in result_lists:
+        weight_list = weights or [1.0] * len(result_lists)
+        for results, weight in zip(result_lists, weight_list):
             for rank, (idx, _) in enumerate(results):
                 if idx not in scores:
                     scores[idx] = 0.0
-                scores[idx] += 1.0 / (k + rank + 1)
+                scores[idx] += weight / (k + rank + 1)
         
         # Sort by RRF score
         sorted_results = sorted(scores.items(), key=lambda x: x[1], reverse=True)
@@ -538,12 +901,146 @@ class HybridRetrievalEngine:
         except Exception as e:
             print(f"Warning: Reranking failed: {e}")
             return candidates[:top_k]
+
+    def _apply_colbert_rerank(
+        self,
+        query: str,
+        candidates: list[tuple[int, float]],
+        top_k: int,
+    ) -> list[tuple[int, float]]:
+        """Apply lightweight ColBERT-style late interaction reranking."""
+        if not candidates or not self._config.use_colbert:
+            return candidates[:top_k]
+        if not self._ensure_colbert_ready():
+            return candidates[:top_k]
+        try:
+            query_embed = self._encode_colbert(query)
+        except Exception as exc:
+            print(f"Warning: ColBERT query encoding failed: {exc}")
+            return candidates[:top_k]
+        
+        scored: list[tuple[int, float]] = []
+        limit = min(len(candidates), self._config.colbert_top_k)
+        for idx, _ in candidates[:limit]:
+            if idx >= len(self._chunks):
+                continue
+            _, chunk = self._chunks[idx]
+            try:
+                chunk_embed = self._encode_colbert(chunk.text)
+                score = self._colbert_similarity(query_embed, chunk_embed)
+                scored.append((idx, score))
+            except Exception as exc:
+                print(f"Warning: ColBERT chunk encoding failed: {exc}")
+                continue
+        if not scored:
+            return candidates[:top_k]
+        scored.sort(key=lambda x: x[1], reverse=True)
+        
+        # Merge ColBERT ordering with original candidate scores
+        seen = set()
+        refined: list[tuple[int, float]] = []
+        for idx, score in scored:
+            refined.append((idx, score))
+            seen.add(idx)
+            if len(refined) >= top_k:
+                break
+        if len(refined) < top_k:
+            for idx, score in candidates:
+                if idx not in seen:
+                    refined.append((idx, score))
+                if len(refined) >= top_k:
+                    break
+        self._last_colbert_stats = {
+            "applied": True,
+            "candidates": len(candidates),
+            "scored": len(scored),
+            "model": self._config.colbert_model,
+        }
+        return refined[:top_k]
+
+    def _ensure_colbert_ready(self) -> bool:
+        """Lazy-load ColBERT model/tokenizer if enabled."""
+        if not self._config.use_colbert or self._colbert_failed:
+            return False
+        if self._colbert_model is not None and self._colbert_tokenizer is not None:
+            return True
+        if AutoTokenizer is None or AutoModel is None or torch is None or F is None:
+            self._colbert_failed = True
+            print("Warning: transformers/torch not available. ColBERT disabled.")
+            return False
+        try:
+            self._colbert_tokenizer = AutoTokenizer.from_pretrained(self._config.colbert_model)
+            self._colbert_model = AutoModel.from_pretrained(self._config.colbert_model)
+            self._colbert_model.eval()
+            if torch.cuda.is_available():
+                self._colbert_device = "cuda"
+                self._colbert_model.to(self._colbert_device)
+            return True
+        except Exception as exc:
+            print(f"Warning: Failed to load ColBERT model '{self._config.colbert_model}': {exc}")
+            self._colbert_failed = True
+            return False
+
+    def _encode_colbert(self, text: str):
+        """Encode text into token embeddings for ColBERT scoring."""
+        if self._colbert_tokenizer is None or self._colbert_model is None or torch is None or F is None:
+            raise RuntimeError("ColBERT model not available")
+        inputs = self._colbert_tokenizer(
+            text,
+            return_tensors="pt",
+            truncation=True,
+            max_length=256,
+        )
+        inputs = {k: v.to(self._colbert_device) for k, v in inputs.items()}
+        with torch.no_grad():
+            outputs = self._colbert_model(**inputs)
+        token_embeddings = outputs.last_hidden_state.squeeze(0)
+        mask = inputs["attention_mask"].squeeze(0).bool()
+        valid_embeddings = token_embeddings[mask]
+        normalized = F.normalize(valid_embeddings, p=2, dim=-1)
+        return normalized
+
+    def _colbert_similarity(self, query_embed, passage_embed) -> float:
+        """Compute ColBERT-style MaxSim similarity."""
+        if query_embed.shape[0] == 0 or passage_embed.shape[0] == 0:
+            return -1.0
+        # Query tokens attend over passage tokens
+        scores = torch.matmul(query_embed, passage_embed.T)
+        max_scores, _ = torch.max(scores, dim=1)
+        return float(max_scores.mean().item())
+
+    def set_precision_mode(self, enable_colbert: bool) -> None:
+        """Enable/disable late-interaction reranking dynamically."""
+        enable = bool(enable_colbert)
+        if self._config.use_colbert == enable:
+            if enable:
+                self._ensure_colbert_ready()
+            return
+        self._config.use_colbert = enable
+        if enable:
+            self._ensure_colbert_ready()
+
+    def colbert_enabled(self) -> bool:
+        """Return True if ColBERT precision mode is active."""
+        return bool(self._config.use_colbert and self._colbert_model is not None)
+    
+    def precision_stats(self) -> dict[str, Any]:
+        """Return latest ColBERT precision stats for telemetry."""
+        return dict(self._last_colbert_stats)
+
+    def set_rerank_mode(self, enabled: bool) -> None:
+        """Enable/disable cross-encoder reranking on the fly."""
+        if not enabled:
+            self._config.use_reranking = False
+            return
+        self._config.use_reranking = bool(self._reranker)
     
     def query(
         self,
         text: str,
         top_k: int = 5,
         document_ids: list[str] | None = None,
+        routing_params: dict[str, Any] | None = None,
     ) -> list[RetrievalResult]:
         """Execute hybrid retrieval query.
         
@@ -560,10 +1057,17 @@ class HybridRetrievalEngine:
         
         # Reset cache info for this query
         self._last_cache = {}
+        overrides = self._normalize_routing_params(routing_params)
         # Get candidates from both methods
         rerank_k = self._config.rerank_top_k
         dense_results = self._dense_search(text, rerank_k)
-        sparse_results = self._sparse_search(text, rerank_k)
+        sparse_results = self._sparse_search(
+            text,
+            rerank_k,
+            title_boost=overrides["title_boost"],
+            heading_boost=overrides["heading_boost"],
+            proximity_weight=overrides["proximity_weight"],
+        )
         literal_results, literal_hits = self._literal_search(text, rerank_k)
         if literal_hits:
             self._last_cache["literal_hits"] = literal_hits
@@ -574,8 +1078,16 @@ class HybridRetrievalEngine:
         
         # Combine with RRF if both available, otherwise use what we have
         result_lists = [lst for lst in (dense_results, sparse_results, literal_results) if lst]
-        if len(result_lists) > 1:
-            fused = self._reciprocal_rank_fusion(result_lists)
+        if dense_results and sparse_results:
+            weights: list[float] = []
+            for result_list in result_lists:
+                if result_list is dense_results:
+                    weights.append(overrides["dense_weight"])
+                elif result_list is sparse_results:
+                    weights.append(overrides["sparse_weight"])
+                else:
+                    weights.append(overrides["literal_weight"])
+            fused = self._reciprocal_rank_fusion(result_lists, weights=weights)
         else:
             fused = result_lists[0]
         
@@ -584,6 +1096,26 @@ class HybridRetrievalEngine:
             final_results = self._rerank(text, fused, top_k)
         else:
             final_results = fused[:top_k]
+        
+        self._last_colbert_stats = {
+            "applied": False,
+            "candidates": len(final_results),
+            "scored": 0,
+        }
+        if self._config.use_colbert:
+            final_results = self._apply_colbert_rerank(text, final_results, top_k)
+
+        final_results = self._apply_recency_boost(
+            final_results,
+            recency_weight=overrides["recency_weight"],
+            half_life_days=overrides["recency_half_life_days"],
+        )
+        final_results.sort(key=lambda x: x[1], reverse=True)
+        final_results = self._apply_diversity_rerank(
+            final_results,
+            top_k=top_k,
+            diversity=overrides["diversity"],
+        )
         
         # Build result objects
         id_to_doc = {doc.id: doc for doc in self._docs.list()}
