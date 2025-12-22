@@ -117,11 +117,19 @@ class TelemetryStore:
             
             latencies = [t.metrics.get("duration_ms", 0) for t in self._traces]
             chunk_counts = [t.metrics.get("context_chunks", 0) for t in self._traces]
+            embedding_hits = sum(int(t.metrics.get("embedding_cache_hits", 0)) for t in self._traces)
+            embedding_misses = sum(int(t.metrics.get("embedding_cache_misses", 0)) for t in self._traces)
+            embedding_total = embedding_hits + embedding_misses
             cache_hits = sum(1 for t in self._traces if t.metrics.get("embedding_cache") == "hit")
+            cache_hit_rate = (
+                embedding_hits / embedding_total
+                if embedding_total > 0
+                else (cache_hits / len(self._traces) if self._traces else 0)
+            )
             
             return {
                 "total_queries": len(self._traces),
-                "cache_hit_rate": cache_hits / len(self._traces) if self._traces else 0,
+                "cache_hit_rate": cache_hit_rate,
                 "avg_latency_ms": sum(latencies) / len(latencies) if latencies else 0,
                 "p50_latency_ms": sorted(latencies)[len(latencies) // 2] if latencies else 0,
                 "p95_latency_ms": sorted(latencies)[int(len(latencies) * 0.95)] if latencies else 0,
@@ -146,7 +154,7 @@ class TelemetryStore:
 
     def _calculate_quality_distribution(self) -> dict:
         """Distribution of answer quality ratings."""
-        dist = {"high": 0, "medium": 0, "low": 0, "unknown": 0}
+        dist = {"high": 0, "medium": 0, "low": 0, "insufficient": 0, "unknown": 0}
         for t in self._traces:
             quality = t.metrics.get("quality_rating", "unknown")
             if quality in dist:
@@ -189,6 +197,36 @@ class TelemetryStore:
                 for name in stage_totals
                 if stage_counts[name] > 0
             }
+
+    def get_stage_latency_percentiles(self) -> dict[str, dict[str, float]]:
+        """Get latency percentiles per pipeline stage."""
+        def percentile(values: list[float], pct: float) -> float:
+            if not values:
+                return 0.0
+            ordered = sorted(values)
+            if len(ordered) == 1:
+                return ordered[0]
+            k = (len(ordered) - 1) * pct
+            f = int(k)
+            c = min(f + 1, len(ordered) - 1)
+            if f == c:
+                return ordered[f]
+            return ordered[f] + (ordered[c] - ordered[f]) * (k - f)
+
+        with self._lock:
+            stage_values: dict[str, list[float]] = {}
+            for trace in self._traces:
+                for step in trace.steps:
+                    stage_values.setdefault(step.name, []).append(step.duration_ms)
+
+            output: dict[str, dict[str, float]] = {}
+            for name, values in stage_values.items():
+                output[name] = {
+                    "p50_ms": round(percentile(values, 0.5), 2),
+                    "p95_ms": round(percentile(values, 0.95), 2),
+                    "p99_ms": round(percentile(values, 0.99), 2),
+                }
+            return output
 
     def get_retrieval_mode_distribution(self) -> dict[str, int]:
         """Distribution of retrieval modes used (standard, RAPTOR, GraphRAG)."""
@@ -246,9 +284,9 @@ class TelemetryStore:
         base = self.export_metrics()
         base.update({
             "stage_latency_breakdown": self.get_stage_latency_breakdown(),
+            "stage_latency_percentiles": self.get_stage_latency_percentiles(),
             "retrieval_mode_distribution": self.get_retrieval_mode_distribution(),
             "flare_trigger_rate": self.get_flare_trigger_rate(),
             "hallucination_pass_rate": self.get_hallucination_pass_rate(),
         })
         return base
-

@@ -17,13 +17,33 @@ import {
     Play
 } from "lucide-react";
 
+type ArtifactStage = "not_built" | "building" | "ready" | "failed";
+
+interface ArtifactState {
+    status: ArtifactStage;
+    progress?: number;
+    item_count?: number;
+    error?: string;
+    corpus_version?: string;
+    started_at?: number;
+    completed_at?: number;
+}
+
 interface ArtifactStatus {
-    graph_rag: "not_built" | "building" | "ready" | "failed";
-    raptor: "not_built" | "building" | "ready" | "failed";
+    graph_rag: ArtifactState;
+    raptor: ArtifactState;
+}
+
+interface ArtifactStatusPayload {
+    graph_rag?: ArtifactState;
+    raptor?: ArtifactState;
+    graph_rag_status?: ArtifactStage;
+    raptor_status?: ArtifactStage;
     graph_build_progress?: number;
     raptor_build_progress?: number;
     graph_version?: string;
     raptor_version?: string;
+    corpus_version?: string;
 }
 
 interface EnterpriseStatusProps {
@@ -53,15 +73,35 @@ function StatusBadge({ status }: { status: string }) {
 export function EnterpriseStatusPanel({ baseUrl }: EnterpriseStatusProps) {
     const { toast } = useToast();
     const [artifactStatus, setArtifactStatus] = useState<ArtifactStatus>({
-        graph_rag: "not_built",
-        raptor: "not_built",
+        graph_rag: { status: "not_built" },
+        raptor: { status: "not_built" },
     });
     const [isDownloading, setIsDownloading] = useState(false);
     const [isPolling, setIsPolling] = useState(false);
     const [lastTraceTime, setLastTraceTime] = useState<string | null>(null);
     const [corpusVersion, setCorpusVersion] = useState<string>("—");
 
-    const isBuilding = artifactStatus.graph_rag === "building" || artifactStatus.raptor === "building";
+    const isBuilding = artifactStatus.graph_rag.status === "building" || artifactStatus.raptor.status === "building";
+    const activeProgresses = [
+        artifactStatus.graph_rag.status === "building" ? artifactStatus.graph_rag.progress : undefined,
+        artifactStatus.raptor.status === "building" ? artifactStatus.raptor.progress : undefined,
+    ].filter((value): value is number => typeof value === "number");
+    const activeProgress = activeProgresses.length ? Math.max(...activeProgresses) : 0;
+
+    const normalizeState = (
+        state: ArtifactState | undefined,
+        fallbackStatus: ArtifactStage | undefined,
+        fallbackProgress: number | undefined,
+        fallbackVersion: string | undefined,
+    ): ArtifactState => ({
+        status: state?.status ?? fallbackStatus ?? "not_built",
+        progress: state?.progress ?? fallbackProgress,
+        item_count: state?.item_count,
+        error: state?.error,
+        corpus_version: state?.corpus_version ?? fallbackVersion,
+        started_at: state?.started_at,
+        completed_at: state?.completed_at,
+    });
 
     const fetchStatus = async () => {
         const controller = new AbortController();
@@ -73,19 +113,24 @@ export function EnterpriseStatusPanel({ baseUrl }: EnterpriseStatusProps) {
             });
             clearTimeout(timeoutId);
             if (res.ok) {
-                const data = await res.json();
-                setArtifactStatus({
-                    graph_rag: data.graph_rag_status || "not_built",
-                    raptor: data.raptor_status || "not_built",
-                    graph_build_progress: data.graph_build_progress,
-                    raptor_build_progress: data.raptor_build_progress,
-                    graph_version: data.graph_version,
-                    raptor_version: data.raptor_version,
-                });
-                setCorpusVersion(data.corpus_version || "—");
+                const data = await res.json() as ArtifactStatusPayload;
+                const graph = normalizeState(
+                    data.graph_rag,
+                    data.graph_rag_status,
+                    data.graph_build_progress,
+                    data.graph_version,
+                );
+                const raptor = normalizeState(
+                    data.raptor,
+                    data.raptor_status,
+                    data.raptor_build_progress,
+                    data.raptor_version,
+                );
+                setArtifactStatus({ graph_rag: graph, raptor });
+                setCorpusVersion(data.corpus_version || graph.corpus_version || raptor.corpus_version || "—");
 
                 // Start polling if building
-                if (data.graph_rag_status === "building" || data.raptor_status === "building") {
+                if (graph.status === "building" || raptor.status === "building") {
                     if (!isPolling) setIsPolling(true);
                 } else if (isPolling) {
                     setIsPolling(false);
@@ -229,8 +274,8 @@ export function EnterpriseStatusPanel({ baseUrl }: EnterpriseStatusProps) {
                                     <span className="text-xs font-medium">GraphRAG</span>
                                 </div>
                                 <div className="flex items-center gap-2">
-                                    <StatusBadge status={artifactStatus.graph_rag} />
-                                    {artifactStatus.graph_rag === "not_built" && (
+                                    <StatusBadge status={artifactStatus.graph_rag.status} />
+                                    {artifactStatus.graph_rag.status === "not_built" && (
                                         <Button
                                             variant="ghost"
                                             size="icon"
@@ -251,8 +296,8 @@ export function EnterpriseStatusPanel({ baseUrl }: EnterpriseStatusProps) {
                                     <span className="text-xs font-medium">RAPTOR</span>
                                 </div>
                                 <div className="flex items-center gap-2">
-                                    <StatusBadge status={artifactStatus.raptor} />
-                                    {artifactStatus.raptor === "not_built" && (
+                                    <StatusBadge status={artifactStatus.raptor.status} />
+                                    {artifactStatus.raptor.status === "not_built" && (
                                         <Button
                                             variant="ghost"
                                             size="icon"
@@ -268,23 +313,20 @@ export function EnterpriseStatusPanel({ baseUrl }: EnterpriseStatusProps) {
                             </div>
                         </div>
 
-                        {(artifactStatus.graph_rag === "building" || artifactStatus.raptor === "building") && (
+                        {(artifactStatus.graph_rag.status === "building" || artifactStatus.raptor.status === "building") && (
                             <div className="mt-3 space-y-1.5 animate-in fade-in slide-in-from-top-1">
                                 <div className="flex justify-between text-[10px] text-muted-foreground">
                                     <span className="flex items-center gap-1.5">
                                         <Loader2 className="h-2.5 w-2.5 animate-spin" />
                                         Building index...
                                     </span>
-                                    <span className="font-mono">{Math.max(artifactStatus.graph_build_progress || 0, artifactStatus.raptor_build_progress || 0)}%</span>
+                                    <span className="font-mono">{activeProgress}%</span>
                                 </div>
                                 <div className="h-1 bg-muted/40 rounded-full overflow-hidden">
                                     <div
                                         className="h-full bg-primary transition-all duration-300 ease-out rounded-full relative overflow-hidden"
                                         style={{
-                                            width: `${Math.max(
-                                                artifactStatus.graph_build_progress || 0,
-                                                artifactStatus.raptor_build_progress || 0
-                                            )}%`
+                                            width: `${activeProgress}%`
                                         }}
                                     >
                                         <div className="absolute inset-0 bg-white/20 animate-[shimmer_1s_infinite]" />

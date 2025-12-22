@@ -284,6 +284,53 @@ class HybridRetrievalEngine:
                     print(f"⚠️ Warning: Could not load reranker model: {e}")
                     self._reranker = None
                     self._reranker_failed = True
+
+    def _requires_rebuild(self, config: "HybridConfig") -> bool:
+        """Check if config changes require index rebuild."""
+        fields = ("embedding_model", "chunking_strategy", "chunk_size", "chunk_overlap")
+        return any(getattr(self._config, f) != getattr(config, f) for f in fields)
+
+    def reconfigure(self, config: "HybridConfig", rebuild: bool | None = None) -> bool:
+        """Apply a new retrieval config and rebuild indexes if needed.
+
+        Returns True if a rebuild was triggered.
+        """
+        previous = self._config
+        rebuild_needed = self._requires_rebuild(config)
+        graph_enabled = config.graph and not previous.graph
+        raptor_enabled = config.raptor and not previous.raptor
+
+        self._config = config
+
+        if previous.embedding_model != config.embedding_model:
+            self._embedder = None
+            self._embedder_failed = False
+        if (
+            previous.reranker_model != config.reranker_model
+            or previous.use_reranking != config.use_reranking
+        ):
+            self._reranker = None
+            self._reranker_failed = False
+        if previous.use_colbert != config.use_colbert or previous.colbert_model != config.colbert_model:
+            self._colbert_model = None
+            self._colbert_tokenizer = None
+            self._colbert_failed = False
+
+        self._init_models()
+
+        if rebuild is True or (rebuild is None and rebuild_needed):
+            if not self.load_index():
+                self.build()
+            return True
+
+        if graph_enabled:
+            self.build()
+            return True
+
+        if raptor_enabled and self._chunks:
+            self._rebuild_trees_parallel()
+
+        return False
     
     def _tokenize(self, text: str) -> list[str]:
         """Simple tokenization for BM25."""
@@ -817,6 +864,143 @@ class HybridRetrievalEngine:
             emit("saving_index", 0, 1)
             self.save_index()
             emit("saving_index", 1, 1)
+
+    def index_documents(self, docs: list[Document]) -> None:
+        """Incrementally index new/updated documents without full rebuild."""
+        if not docs:
+            return
+
+        doc_ids = {doc.id for doc in docs if doc.id}
+        if doc_ids and self._chunks:
+            keep_indices = [i for i, (doc_id, _) in enumerate(self._chunks) if doc_id not in doc_ids]
+            if len(keep_indices) != len(self._chunks):
+                self._chunks = [self._chunks[i] for i in keep_indices]
+                if self._embeddings is not None:
+                    try:
+                        self._embeddings = self._embeddings[keep_indices]
+                    except Exception:
+                        self._embeddings = None
+                if self._tokenized_corpus:
+                    self._tokenized_corpus = [self._tokenized_corpus[i] for i in keep_indices]
+                BM25Class = _get_bm25()
+                if BM25Class and self._tokenized_corpus:
+                    try:
+                        self._bm25 = BM25Class(self._tokenized_corpus)
+                    except Exception as e:
+                        print(f"Warning: BM25 rebuild failed after doc removal: {e}")
+                        self._bm25 = None
+                else:
+                    self._bm25 = None
+                self._graph = {}
+                for i, tokens in enumerate(self._tokenized_corpus):
+                    for token in set(tokens):
+                        if len(token) > 4:
+                            self._graph.setdefault(token, set()).add(i)
+                for doc_id in doc_ids:
+                    self._trees.pop(doc_id, None)
+                    self._doc_timestamps.pop(doc_id, None)
+                    self._doc_content_hashes.pop(doc_id, None)
+                self._chunk_heading_tokens = {}
+
+        self._init_models()
+        chunker = get_chunker(
+            strategy=self._config.chunking_strategy,
+            embedder=self._embedder,
+            target_size=self._config.chunk_size,
+            overlap=self._config.chunk_overlap,
+        )
+
+        new_chunks: list[tuple[str, Chunk]] = []
+        new_texts: list[str] = []
+
+        for doc in docs:
+            if not doc.text.strip():
+                continue
+            chunks = chunker.chunk(doc.text)
+            for chunk in chunks:
+                self._chunks.append((doc.id, chunk))
+                new_chunks.append((doc.id, chunk))
+                new_texts.append(chunk.text)
+
+        if not new_texts:
+            return
+
+        # Dense embeddings (append-only)
+        if self._embedder:
+            try:
+                batch_embeddings = self._embedder.encode(
+                    new_texts,
+                    convert_to_numpy=True,
+                    show_progress_bar=False,
+                )
+                if self._embeddings is None or len(self._embeddings) == 0:
+                    self._embeddings = np.array(batch_embeddings)
+                else:
+                    self._embeddings = np.vstack([self._embeddings, batch_embeddings])
+            except Exception as e:
+                print(f"Warning: Incremental embedding failed: {e}")
+                self._embeddings = None
+        else:
+            self._embeddings = None
+
+        # Sparse index update
+        new_tokenized = [self._tokenize(text) for text in new_texts]
+        start_index = len(self._tokenized_corpus)
+        self._tokenized_corpus.extend(new_tokenized)
+
+        BM25Class = _get_bm25()
+        if BM25Class:
+            try:
+                self._bm25 = BM25Class(self._tokenized_corpus)
+            except Exception as e:
+                print(f"Warning: BM25 incremental rebuild failed: {e}")
+                self._bm25 = None
+        else:
+            self._bm25 = None
+
+        # Update keyword graph for context expansion
+        if self._tokenized_corpus:
+            if not self._graph:
+                self._graph = {}
+            for offset, tokens in enumerate(new_tokenized):
+                idx = start_index + offset
+                for token in set(tokens):
+                    if len(token) > 4:
+                        self._graph.setdefault(token, set()).add(idx)
+
+        # Update hierarchical trees if enabled
+        if self._config.raptor or self._config.chunking_strategy != ChunkingStrategy.FIXED:
+            from .hierarchy import HierarchyBuilder
+
+            hb = HierarchyBuilder()
+            for doc in docs:
+                if not doc.text.strip():
+                    continue
+                tree = hb.build(doc.text, doc.id, doc.title)
+                doc_chunks = [c for did, c in new_chunks if did == doc.id]
+                hb.associate_chunks(tree, doc_chunks, doc.text)
+                self._trees[doc.id] = tree
+
+        # Mark GraphRAG as stale if enabled
+        if self._config.graph:
+            self._graph_ready = False
+            self._graph_rag = None
+            self._graph_failed = False
+
+        # Update metadata caches
+        for doc in docs:
+            ts = self._extract_doc_timestamp(doc.metadata or {})
+            if ts:
+                self._doc_timestamps[doc.id] = ts
+            content_hash = (doc.metadata or {}).get("content_hash")
+            if content_hash:
+                self.register_doc_hash(doc.id, content_hash)
+
+        self._build_field_tokens(self._docs.list())
+        self.increment_corpus_version()
+
+        if self._persist_path and self._chunks:
+            self.save_index()
     
     def _get_persistence(self):
         """Lazy-load persistence manager."""
@@ -959,6 +1143,11 @@ class HybridRetrievalEngine:
                 self._bm25 = bm25
                 self._tokenized_corpus = tokenized
                 print("HybridRetrievalEngine: Loaded sparse index")
+                if len(self._tokenized_corpus) != len(self._chunks):
+                    print("HybridRetrievalEngine: Sparse index size mismatch; rebuilding")
+                    self._tokenized_corpus = [self._tokenize(c.text) for _, c in self._chunks]
+                    BM25Class = _get_bm25()
+                    self._bm25 = BM25Class(self._tokenized_corpus) if BM25Class else None
         except Exception as e:
             print(f"HybridRetrievalEngine: Failed to load sparse index: {e}")
             # Rebuild BM25 if load fails but chunks exist
@@ -1089,8 +1278,10 @@ class HybridRetrievalEngine:
                 heading_boost=heading_boost,
             )
             if proximity_weight > 0 and query_terms:
-                chunk_terms = self._tokenize_terms(self._chunks[int(idx)][1].text)
-                base_score += proximity_weight * self._term_proximity(query_terms, chunk_terms)
+                chunk_idx = int(idx)
+                if chunk_idx < len(self._chunks):
+                    chunk_terms = self._tokenize_terms(self._chunks[chunk_idx][1].text)
+                    base_score += proximity_weight * self._term_proximity(query_terms, chunk_terms)
             adjusted.append((int(idx), base_score))
         return adjusted
 
@@ -1121,8 +1312,9 @@ class HybridRetrievalEngine:
                     heading_boost=heading_boost,
                 )
                 if proximity_weight > 0 and query_terms:
-                    chunk_terms = self._tokenize_terms(self._chunks[idx][1].text)
-                    base_score += proximity_weight * self._term_proximity(query_terms, chunk_terms)
+                    if idx < len(self._chunks):
+                        chunk_terms = self._tokenize_terms(self._chunks[idx][1].text)
+                        base_score += proximity_weight * self._term_proximity(query_terms, chunk_terms)
                 scores.append((idx, base_score))
         if not scores:
             return []

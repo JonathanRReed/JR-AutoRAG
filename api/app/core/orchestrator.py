@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import re
 import time
 from datetime import datetime
@@ -55,6 +56,8 @@ from .trace_export import create_trace_bundle, TraceBundle
 from .artifact_builder import get_artifact_builder, ArtifactStatus
 from .cache import RetrievalMode
 from .hyde import HyDEGenerator, get_hyde_generator
+
+logger = logging.getLogger("autorag.pipeline")
 
 
 class Orchestrator:
@@ -498,6 +501,58 @@ class Orchestrator:
         gen_details["flare_steps"] = len(flare_result.steps)
         return flare_result.answer
 
+    async def _build_thinking_outline(
+        self,
+        *,
+        query: str,
+        context_text: str | None,
+        provider: LLMProvider | None,
+        citations_count: int,
+        allow_query_only: bool = False,
+    ) -> tuple[str | None, dict[str, Any], str]:
+        """Create a short, user-visible outline without chain-of-thought."""
+        details: dict[str, Any] = {
+            "mode": "outline",
+            "sources": citations_count,
+            "context_tokens": len(context_text.split()) if context_text else 0,
+        }
+        if provider is None:
+            details["reason"] = "no_provider"
+            return None, details, "skipped"
+
+        context_available = bool(context_text and context_text.strip())
+        if not context_available and not allow_query_only:
+            details["reason"] = "no_context"
+            return None, details, "skipped"
+
+        system_prompt = (
+            "You create a concise answer outline for users. "
+            "Do NOT reveal chain-of-thought or step-by-step reasoning. "
+            "Return 3-6 bullet points with short phrases, no citations."
+        )
+        context_excerpt = (context_text or "").strip()
+        if context_excerpt:
+            context_excerpt = context_excerpt[:2400] + ("..." if len(context_excerpt) > 2400 else "")
+        user_prompt = (
+            f"User question:\n{query}\n\n"
+            f"Context excerpt:\n{context_excerpt or '[none]'}\n\n"
+            "Output only a short bullet outline."
+        )
+        try:
+            outline = await provider.chat([
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ])
+        except ProviderError as exc:
+            details["error"] = str(exc)
+            return None, details, "skipped"
+
+        outline = outline.strip()
+        if len(outline) > 1400:
+            outline = outline[:1400] + "..."
+        details["outline"] = outline
+        return outline, details, "completed"
+
     def _make_step(
         self,
         name: str,
@@ -545,12 +600,15 @@ class Orchestrator:
         "retrieval_iteration": "Refining search scope...",
         "evaluation": "Analyzing evidence relevance...",
         "compression": "Optimizing context windows...",
+        "thinking": "Drafting a concise answer outline...",
         "generation": "Crafting your answer...",
         "conflict_detection": "Checking for factual consistency...",
         "citation_verification": "Validating citations and sources...",
         "reflection": "Quality checking final answer...",
         "hallucination_check": "Running hallucination firewall...",
         "evidence_contract": "Ensuring evidence coverage...",
+        "graph_build": "Building GraphRAG context...",
+        "graph_retrieval": "Retrieving graph summaries...",
         "extracting_graph": "Building knowledge graph...",
         "summarizing_communities": "Thematizing communities...",
         "building_hierarchy": "Building document hierarchy...",
@@ -637,6 +695,17 @@ class Orchestrator:
             pipeline_steps.append(step)
             if on_step:
                 on_step(step)
+            try:
+                logger.info(json.dumps({
+                    "event": "pipeline_step",
+                    "trace_id": trace_id,
+                    "name": step.name,
+                    "duration_ms": step.duration_ms,
+                    "status": step.status,
+                    "details": step.details,
+                }))
+            except Exception:
+                logger.info("pipeline_step trace_id=%s name=%s", trace_id, step.name)
 
         def dedupe_chunks(chunk_list: list) -> list:
             """Deduplicate chunks by ID, keeping the highest score."""
@@ -779,6 +848,8 @@ class Orchestrator:
         routing_start_time = datetime.utcnow()
         routing_start = time.perf_counter()
         stage_start_time = routing_start
+
+        rerank_enabled = False
         
         learned_route = self._learned_router.route(query)
         
@@ -853,12 +924,52 @@ class Orchestrator:
                 force=False,
                 on_progress=lambda s, c, t: emit_progress(s, items_done=c, items_total=t)
             )
-        
-        if base_use_graph and not self._graph_ready:
-            await self._ensure_graph_context(
-                force=False,
-                on_progress=lambda s, c, t: emit_progress(s, items_done=c, items_total=t)
-            )
+
+        if base_use_graph:
+            graph_build_details = {
+                "enabled": True,
+                "already_ready": self._graph_ready,
+                "chunks_available": len(self._chunk_records),
+            }
+            if self._graph_ready:
+                record_step(PipelineStep(
+                    name="graph_build",
+                    started_at=datetime.utcnow(),
+                    completed_at=datetime.utcnow(),
+                    duration_ms=0.0,
+                    details=graph_build_details,
+                    status="skipped",
+                ))
+            elif self._provider is None or not self._chunk_records:
+                graph_build_details["reason"] = "no_provider" if self._provider is None else "no_chunks"
+                record_step(PipelineStep(
+                    name="graph_build",
+                    started_at=datetime.utcnow(),
+                    completed_at=datetime.utcnow(),
+                    duration_ms=0.0,
+                    details=graph_build_details,
+                    status="skipped",
+                ))
+            else:
+                if on_stage:
+                    on_stage("graph_build")
+                emit_progress("graph_build", detail="Preparing GraphRAG context")
+                graph_build_start_time = datetime.utcnow()
+                graph_build_start = time.perf_counter()
+                await self._ensure_graph_context(
+                    force=False,
+                    on_progress=lambda s, c, t: emit_progress(s, items_done=c, items_total=t)
+                )
+                graph_build_details["graph_ready"] = self._graph_ready
+                graph_build_details["entity_count"] = len(self._graph_rag.entities) if self._graph_rag else 0
+                status = "completed" if self._graph_ready else "failed"
+                record_step(self._make_step(
+                    "graph_build",
+                    graph_build_start,
+                    graph_build_start_time,
+                    graph_build_details,
+                    status=status,
+                ))
         
         # Enable high precision mode if budget allows
         emit_progress("routing", detail="Configuring retrieval engine...")
@@ -897,6 +1008,7 @@ class Orchestrator:
         }
         total_raptor_chunks = 0
         total_graph_chunks = 0
+        graph_retrieval_ms = 0.0
         embedding_cache_hits = 0
         embedding_cache_misses = 0
         
@@ -1082,7 +1194,11 @@ class Orchestrator:
                         print(f"RAPTOR corrective retrieval failed: {e}")
                 if self._graph_rag is not None and iteration_details.get("graph_chunks_added") is None:
                     try:
+                        if on_stage:
+                            on_stage("graph_retrieval")
+                        graph_start = time.perf_counter()
                         graph_chunks = await self._retrieve_with_graph(current_query, document_ids)
+                        graph_retrieval_ms += (time.perf_counter() - graph_start) * 1000
                         if graph_chunks:
                             iteration_chunks.extend(graph_chunks)
                             iteration_details["graph_chunks_added"] = len(graph_chunks)
@@ -1182,7 +1298,11 @@ class Orchestrator:
             # GraphRAG: Add community summaries if enabled on first hop
             if use_graph and self._graph_rag is not None and iteration == 0:
                 try:
+                    if on_stage:
+                        on_stage("graph_retrieval")
+                    graph_start = time.perf_counter()
                     graph_chunks = await self._retrieve_with_graph(current_query, document_ids)
+                    graph_retrieval_ms += (time.perf_counter() - graph_start) * 1000
                     if graph_chunks:
                         iteration_chunks.extend(graph_chunks)
                         iteration_details["graph_chunks_added"] = len(graph_chunks)
@@ -1246,6 +1366,22 @@ class Orchestrator:
         gatherer_details["graph_total"] = total_graph_chunks
         record_step(self._make_step("gatherer", gatherer_start, gatherer_start_time, gatherer_details))
 
+        if cfg_use_graph:
+            graph_status = "completed" if total_graph_chunks > 0 else "skipped"
+            graph_step = PipelineStep(
+                name="graph_retrieval",
+                started_at=datetime.utcnow(),
+                completed_at=datetime.utcnow(),
+                duration_ms=round(graph_retrieval_ms, 2),
+                details={
+                    "graph_ready": bool(self._graph_rag),
+                    "chunks_added": total_graph_chunks,
+                    "duration_ms": round(graph_retrieval_ms, 2),
+                },
+                status=graph_status,
+            )
+            record_step(graph_step)
+
         # Step 3: Retrieval (aggregation + dedupe)
         if on_stage:
             on_stage("retrieval")
@@ -1258,7 +1394,6 @@ class Orchestrator:
         }
         precision_stats: dict[str, Any] = {}
         colbert_enabled = False
-        rerank_enabled = False
 
         # Deduplicate chunks by ID, keeping highest score
         seen: dict[str, Any] = {}
@@ -1301,6 +1436,10 @@ class Orchestrator:
             retrieval_details["graph_chunks_total"] = total_graph_chunks
         if hasattr(self._retrieval, "model_status"):
             retrieval_details.update(self._retrieval.model_status())
+        if hasattr(self._retrieval, "get_model_status"):
+            retrieval_details.update(self._retrieval.get_model_status())
+        retrieval_details["rerank_enabled"] = rerank_enabled
+        retrieval_details["reranked"] = rerank_enabled
         if isinstance(self._retrieval, HybridRetrievalEngine):
             try:
                 retrieval_details["precision_stats"] = self._retrieval.precision_stats()
@@ -1564,6 +1703,27 @@ The retrieved evidence contains some conflicting information. When you encounter
         
         record_step(self._make_step("conflict_detection", conflict_start, conflict_start_time, conflict_details))
 
+        # Step 3.75: Thinking / Outline (user-visible, no chain-of-thought)
+        if on_stage:
+            on_stage("thinking")
+        emit_progress("thinking", detail="Drafting a concise outline")
+        thinking_start_time = datetime.utcnow()
+        thinking_start = time.perf_counter()
+        _, thinking_details, thinking_status = await self._build_thinking_outline(
+            query=query,
+            context_text=context,
+            provider=self._provider,
+            citations_count=len(citations),
+            allow_query_only=False,
+        )
+        record_step(self._make_step(
+            "thinking",
+            thinking_start,
+            thinking_start_time,
+            thinking_details,
+            status=thinking_status,
+        ))
+
         # Step 4: Generation (with optional FLARE mid-generation retrieval)
         answer, gen_details = await run_generation_step(
             "generation",
@@ -1604,11 +1764,14 @@ The retrieved evidence contains some conflicting information. When you encounter
 
         # Step 4.5: Hallucination Firewall (SOTA enhancement)
         # Wrapped in try/except to ensure responses always complete
+        firewall_passed: bool | None = None
         try:
             answer, firewall_details = run_firewall_step("verification", answer, chunks)
         except Exception as fw_err:
             print(f"⚠️ Hallucination firewall error (non-blocking): {fw_err}")
             firewall_details = {"pass_rate": 1.0, "skipped": True, "error": str(fw_err)}
+        else:
+            firewall_passed = firewall_details.get("meets_threshold", True)
 
         # Step 4.5b: Firewall-driven corrective retry is DISABLED to improve response times
         # The retry mechanism was causing 20+ minute delays. If pass rate is low, we now
@@ -1630,6 +1793,7 @@ The retrieved evidence contains some conflicting information. When you encounter
         contract_result = None
         contract_checks = 0
         contract_retries = 0
+        contract_passed: bool | None = None
         if enforce_evidence_contract:
             while True:
                 contract_checks += 1
@@ -1704,6 +1868,7 @@ The retrieved evidence contains some conflicting information. When you encounter
                 # Loop continues for another contract check
                 if contract_retries >= max_evidence_contract_retries:
                     break
+            contract_passed = contract_result.pass_threshold if contract_result else None
 
         # Step 4.7: Citation Verification (G1 Guarantee - vNext Expansion)
         # Ensures every citation maps to a retrieved chunk ID or gets repaired/marked
@@ -1802,7 +1967,7 @@ The retrieved evidence contains some conflicting information. When you encounter
                 # Training signal is best-effort and should not block responses
                 pass
 
-        if reflection_result.should_retry and provider is not None:
+        if reflection_result.should_retry and self._provider is not None:
             retry_top_k = max(6, int(plan.steps[0].dense_k * 1.5)) if plan.steps else 6
             if on_stage:
                 on_stage("retrieval_retry")
@@ -1849,18 +2014,34 @@ The retrieved evidence contains some conflicting information. When you encounter
             coverage = len(chunks) / plan.steps[0].dense_k
 
         total_duration_ms = sum(s.duration_ms for s in pipeline_steps)
+        retrieval_mode = "standard"
+        if total_graph_chunks and total_raptor_chunks:
+            retrieval_mode = "combined"
+        elif total_graph_chunks:
+            retrieval_mode = "graph"
+        elif total_raptor_chunks:
+            retrieval_mode = "raptor"
+        flare_retrievals = int(gen_details.get("flare_retrievals", 0)) if gen_details else 0
+        firewall_pass_rate = firewall_details.get("pass_rate", 1.0)
 
         trace = self._telemetry.record(
             prompt=query,
             answer=answer,
             metrics={
                 "chunks": len(chunks),
+                "context_chunks": len(chunks),
                 "coverage": coverage,
                 "coverage_ratio": final_coverage_ratio,
                 "coverage_target": target_coverage,
                 "tokens": total_tokens,
                 "duration_ms": total_duration_ms,
                 "cache_hit": False,
+                "embedding_cache_hits": embedding_cache_hits,
+                "embedding_cache_misses": embedding_cache_misses,
+                "retrieval_mode": retrieval_mode,
+                "flare_retrievals": flare_retrievals,
+                "firewall_pass_rate": firewall_pass_rate,
+                "quality_rating": reflection_result.quality.value if reflection_result else "unknown",
                 "answer_quality": reflection_result.quality.value if reflection_result else "unknown",
                 "answer_confidence": reflection_result.confidence if reflection_result else 0.0,
                 "ragas": ragas_metrics.to_dict(),
@@ -1901,6 +2082,7 @@ The retrieved evidence contains some conflicting information. When you encounter
             "trace_id": trace.id,
             "metrics": {
                 "chunks": len(chunks),
+                "context_chunks": len(chunks),
                 "coverage": coverage,
                 "coverage_ratio": final_coverage_ratio,
                 "coverage_target": target_coverage,
@@ -1908,6 +2090,12 @@ The retrieved evidence contains some conflicting information. When you encounter
                 "duration_ms": total_duration_ms,
                 "query_type": str(query_type),
                 "cache_hit": False,
+                "embedding_cache_hits": embedding_cache_hits,
+                "embedding_cache_misses": embedding_cache_misses,
+                "retrieval_mode": retrieval_mode,
+                "flare_retrievals": flare_retrievals,
+                "firewall_pass_rate": firewall_pass_rate,
+                "quality_rating": reflection_result.quality.value if reflection_result else "unknown",
                 "answer_quality": reflection_result.quality.value if reflection_result else "unknown",
                 "answer_confidence": reflection_result.confidence if reflection_result else 0.0,
                 "ragas": ragas_metrics.to_dict(),
@@ -1976,6 +2164,25 @@ The retrieved evidence contains some conflicting information. When you encounter
         record_step: Callable[[PipelineStep], None],
     ) -> dict:
         """Generate answer directly without retrieval (for simple queries LLM can handle)."""
+        if on_stage:
+            on_stage("thinking")
+        thinking_start_time = datetime.utcnow()
+        thinking_start = time.perf_counter()
+        _, thinking_details, thinking_status = await self._build_thinking_outline(
+            query=query,
+            context_text=None,
+            provider=self._provider,
+            citations_count=0,
+            allow_query_only=True,
+        )
+        record_step(self._make_step(
+            "thinking",
+            thinking_start,
+            thinking_start_time,
+            thinking_details,
+            status=thinking_status,
+        ))
+
         if on_stage:
             on_stage("generation")
         
@@ -2166,6 +2373,10 @@ Be helpful, accurate, and concise."""
             return {"status": "error", "message": "No documents ingested yet"}
             
         try:
+            provider = self._provider or self._providers.get_default_provider()
+            corpus_version = ""
+            if hasattr(self._retrieval, "get_corpus_version"):
+                corpus_version = self._retrieval.get_corpus_version()
             # Create evidence chunks from records
             evidence_chunks = []
             for doc_id, chunk in self._chunk_records:
@@ -2175,12 +2386,13 @@ Be helpful, accurate, and concise."""
                     title=f"Document {doc_id}",
                     snippet=chunk.text,
                     score=1.0, 
+                    doc_id=doc_id,
                 ))
                 
             asyncio.create_task(self._artifact_builder.build_all_async(
                 evidence_chunks,
-                self._provider,
-                corpus_version="manual_trigger",
+                provider,
+                corpus_version=corpus_version or "manual_trigger",
                 force_rebuild=force
             ))
             
@@ -2198,7 +2410,19 @@ Be helpful, accurate, and concise."""
         Returns:
             Dict with graph_rag and raptor build status
         """
-        return self._artifact_builder.progress.to_dict()
+        progress = self._artifact_builder.progress
+        payload = progress.to_dict()
+        payload.update({
+            "graph_rag_status": progress.graph_rag.status.value,
+            "raptor_status": progress.raptor.status.value,
+            "graph_build_progress": progress.graph_rag.progress,
+            "raptor_build_progress": progress.raptor.progress,
+            "graph_version": progress.graph_rag.corpus_version,
+            "raptor_version": progress.raptor.corpus_version,
+        })
+        if hasattr(self._retrieval, "get_corpus_version"):
+            payload["corpus_version"] = self._retrieval.get_corpus_version()
+        return payload
 
     def get_graph_data(self) -> dict[str, Any]:
         """Get detailed GraphRAG data for visualization."""

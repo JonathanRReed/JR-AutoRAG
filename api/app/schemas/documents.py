@@ -16,6 +16,7 @@ class IngestTextRequest(BaseModel):
     title: str
     text: str
     metadata: dict[str, str] | None = None
+    sync: bool = False
 
 
 class IngestResponse(BaseModel):

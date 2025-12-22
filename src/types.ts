@@ -16,6 +16,8 @@ export type RetrievalDefaults = {
     hybrid: boolean;
     dense_k: number;
     sparse_k: number;
+    dense_weight?: number;
+    sparse_weight?: number;
     rerank_pool: number;
     top_n: number;
     compression: boolean;
@@ -29,9 +31,22 @@ export type RetrievalDefaults = {
     embedding_model: string;
     reranker_model: string;
     use_reranking: boolean;
+    use_colbert?: boolean;
+    colbert_model?: string;
+    colbert_top_k?: number;
     chunk_size: number;
     chunk_overlap: number;
     planner_mode: "simple" | "smart";
+    flare_generation?: boolean;
+    enforce_evidence_contract?: boolean;
+    multi_resolution?: boolean;
+    recency_weight?: number;
+    recency_half_life_days?: number;
+    title_boost?: number;
+    heading_boost?: number;
+    proximity_weight?: number;
+    diversity?: number;
+    use_hyde?: boolean;
 };
 
 export type AppConfig = {
@@ -104,6 +119,8 @@ export type QueryResponse = {
         hallucination_pass?: boolean;
         evidence_contract_pass?: boolean;
     };
+    trace_bundle_available?: boolean;
+    needs_clarification?: boolean;
 };
 
 export type TraceOut = {

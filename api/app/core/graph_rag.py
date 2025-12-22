@@ -388,6 +388,14 @@ STRICT FORMATTING RULES:
         async def summarize_community(community: Community) -> None:
             nonlocal processed_communities
             
+            if not community.entities:
+                summary = "Empty community"
+                community.summary = summary
+                summaries[community.id] = summary
+                processed_communities += 1
+                if on_progress:
+                    on_progress("summarizing_communities", processed_communities, total_communities)
+                return
             if len(community.entities) < 2:
                 summary = f"Single entity: {community.entities[0]}"
                 community.summary = summary

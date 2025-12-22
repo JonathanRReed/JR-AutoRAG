@@ -323,10 +323,11 @@ class TestPlanningStage:
 
 class TestGathererStage:
     """Tests for the evidence gathering stage."""
+    pytestmark = pytest.mark.asyncio
 
-    def test_gatherer_collects_evidence(self, sample_documents):
+    async def test_gatherer_collects_evidence(self, sample_documents, tmp_path):
         """Test Gatherer collects evidence from retrieval engine."""
-        doc_store = DocumentStore()
+        doc_store = DocumentStore(path=tmp_path / "documents.db")
         for doc in sample_documents:
             doc_store.upsert(doc)
         
@@ -337,16 +338,16 @@ class TestGathererStage:
         retrieval.build()
         
         gatherer = Gatherer(retrieval)
-        evidence = gatherer.gather("What is Python?", top_k=3)
+        evidence = await gatherer.gather("What is Python?", top_k=3)
         
         assert isinstance(evidence, EvidenceBundle)
         assert len(evidence.chunks) <= 3
         assert evidence.coverage >= 0.0
         assert evidence.token_estimate >= 0
 
-    def test_gatherer_returns_evidence_chunks(self, sample_documents):
+    async def test_gatherer_returns_evidence_chunks(self, sample_documents, tmp_path):
         """Test gathered evidence has correct structure."""
-        doc_store = DocumentStore()
+        doc_store = DocumentStore(path=tmp_path / "documents.db")
         for doc in sample_documents:
             doc_store.upsert(doc)
         
@@ -357,7 +358,7 @@ class TestGathererStage:
         retrieval.build()
         
         gatherer = Gatherer(retrieval)
-        evidence = gatherer.gather("programming language", top_k=5)
+        evidence = await gatherer.gather("programming language", top_k=5)
         
         for chunk in evidence.chunks:
             assert isinstance(chunk, EvidenceChunk)
@@ -366,9 +367,9 @@ class TestGathererStage:
             assert chunk.snippet is not None
             assert isinstance(chunk.score, float)
 
-    def test_gatherer_with_document_filter(self, sample_documents):
+    async def test_gatherer_with_document_filter(self, sample_documents, tmp_path):
         """Test Gatherer respects document ID filter."""
-        doc_store = DocumentStore()
+        doc_store = DocumentStore(path=tmp_path / "documents.db")
         for doc in sample_documents:
             doc_store.upsert(doc)
         
@@ -379,7 +380,7 @@ class TestGathererStage:
         retrieval.build()
         
         gatherer = Gatherer(retrieval)
-        evidence = gatherer.gather(
+        evidence = await gatherer.gather(
             "programming",
             top_k=5,
             document_ids=["doc1"]
@@ -389,9 +390,9 @@ class TestGathererStage:
         for chunk in evidence.chunks:
             assert "doc1" in chunk.id
 
-    def test_gatherer_cache_info(self, sample_documents):
+    async def test_gatherer_cache_info(self, sample_documents, tmp_path):
         """Test Gatherer provides cache info."""
-        doc_store = DocumentStore()
+        doc_store = DocumentStore(path=tmp_path / "documents.db")
         for doc in sample_documents:
             doc_store.upsert(doc)
         
@@ -402,7 +403,7 @@ class TestGathererStage:
         retrieval.build()
         
         gatherer = Gatherer(retrieval)
-        evidence = gatherer.gather("Python", top_k=3)
+        evidence = await gatherer.gather("Python", top_k=3)
         
         assert isinstance(evidence.cache_info, dict)
 
@@ -413,10 +414,11 @@ class TestGathererStage:
 
 class TestRetrievalStage:
     """Tests for the hybrid retrieval stage."""
+    pytestmark = pytest.mark.asyncio
 
-    def test_retrieval_engine_basic_query(self, sample_documents):
+    async def test_retrieval_engine_basic_query(self, sample_documents, tmp_path):
         """Test basic retrieval query."""
-        doc_store = DocumentStore()
+        doc_store = DocumentStore(path=tmp_path / "documents.db")
         for doc in sample_documents:
             doc_store.upsert(doc)
         
@@ -426,14 +428,14 @@ class TestRetrievalStage:
         )
         engine.build()
         
-        results = engine.query("What is Python?", top_k=3)
+        results = await engine.query("What is Python?", top_k=3)
         
         assert len(results) <= 3
         assert all(isinstance(r, RetrievalResult) for r in results)
 
-    def test_retrieval_result_structure(self, sample_documents):
+    async def test_retrieval_result_structure(self, sample_documents, tmp_path):
         """Test retrieval results have correct structure."""
-        doc_store = DocumentStore()
+        doc_store = DocumentStore(path=tmp_path / "documents.db")
         for doc in sample_documents:
             doc_store.upsert(doc)
         
@@ -443,7 +445,7 @@ class TestRetrievalStage:
         )
         engine.build()
         
-        results = engine.query("programming", top_k=5)
+        results = await engine.query("programming", top_k=5)
         
         for result in results:
             assert hasattr(result, "document")
@@ -452,9 +454,9 @@ class TestRetrievalStage:
             assert hasattr(result, "retrieval_method")
             assert isinstance(result.score, float)
 
-    def test_retrieval_scores_sorted(self, sample_documents):
+    async def test_retrieval_scores_sorted(self, sample_documents, tmp_path):
         """Test retrieval results are sorted by score."""
-        doc_store = DocumentStore()
+        doc_store = DocumentStore(path=tmp_path / "documents.db")
         for doc in sample_documents:
             doc_store.upsert(doc)
         
@@ -464,15 +466,15 @@ class TestRetrievalStage:
         )
         engine.build()
         
-        results = engine.query("machine learning", top_k=5)
+        results = await engine.query("machine learning", top_k=5)
         
         if len(results) > 1:
             scores = [r.score for r in results]
             assert scores == sorted(scores, reverse=True)
 
-    def test_retrieval_with_document_filter(self, sample_documents):
+    async def test_retrieval_with_document_filter(self, sample_documents, tmp_path):
         """Test retrieval respects document ID filter."""
-        doc_store = DocumentStore()
+        doc_store = DocumentStore(path=tmp_path / "documents.db")
         for doc in sample_documents:
             doc_store.upsert(doc)
         
@@ -482,7 +484,7 @@ class TestRetrievalStage:
         )
         engine.build()
         
-        results = engine.query(
+        results = await engine.query(
             "programming",
             top_k=5,
             document_ids=["doc2"]
@@ -491,9 +493,9 @@ class TestRetrievalStage:
         for result in results:
             assert "doc2" in result.document.id
 
-    def test_retrieval_empty_query(self, sample_documents):
+    async def test_retrieval_empty_query(self, sample_documents, tmp_path):
         """Test retrieval handles empty query gracefully."""
-        doc_store = DocumentStore()
+        doc_store = DocumentStore(path=tmp_path / "documents.db")
         for doc in sample_documents:
             doc_store.upsert(doc)
         
@@ -503,20 +505,20 @@ class TestRetrievalStage:
         )
         engine.build()
         
-        results = engine.query("", top_k=5)
+        results = await engine.query("", top_k=5)
         assert results == []
 
-    def test_retrieval_no_documents(self, tmp_path):
+    async def test_retrieval_no_documents(self, tmp_path):
         """Test retrieval handles empty document store."""
         # Use temp path to ensure isolated empty store
-        doc_store = DocumentStore(path=tmp_path / "empty_docs.json")
+        doc_store = DocumentStore(path=tmp_path / "empty_docs.db")
         engine = HybridRetrievalEngine(
             doc_store,
             HybridConfig(use_reranking=False)
         )
         engine.build()
         
-        results = engine.query("test query", top_k=5)
+        results = await engine.query("test query", top_k=5)
         assert results == []
 
 
@@ -802,11 +804,12 @@ class TestReflectionStage:
 
 class TestPipelineIntegration:
     """Integration tests for the full pipeline."""
+    pytestmark = pytest.mark.asyncio
 
-    def test_full_pipeline_flow(self, app_config, sample_documents):
+    async def test_full_pipeline_flow(self, app_config, sample_documents, tmp_path):
         """Test complete pipeline flow from query to reflection."""
         # 1. Setup
-        doc_store = DocumentStore()
+        doc_store = DocumentStore(path=tmp_path / "documents.db")
         for doc in sample_documents:
             doc_store.upsert(doc)
         
@@ -824,7 +827,7 @@ class TestPipelineIntegration:
         
         # 4. Gathering
         gatherer = Gatherer(retrieval)
-        evidence = gatherer.gather(plan.steps[0].query, top_k=5)
+        evidence = await gatherer.gather(plan.steps[0].query, top_k=5)
         assert len(evidence.chunks) >= 0
         
         # 5. Compression

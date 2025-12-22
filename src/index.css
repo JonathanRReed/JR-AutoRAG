@@ -412,6 +412,21 @@ button[class*="bg-primary"]:hover:not(:disabled) {
   border-color: var(--primary);
 }
 
+.timeline-dot.passed {
+  background: #10b981;
+  border-color: #10b981;
+}
+
+.timeline-dot.repaired {
+  background: #f59e0b;
+  border-color: #f59e0b;
+}
+
+.timeline-dot.failed {
+  background: #ef4444;
+  border-color: #ef4444;
+}
+
 .timeline-dot.running {
   background: var(--secondary);
   border-color: var(--secondary);
@@ -583,6 +598,18 @@ button[class*="bg-primary"]:hover:not(:disabled) {
 
 .step-card.completed::before {
   background: var(--primary);
+}
+
+.step-card.passed::before {
+  background: #10b981;
+}
+
+.step-card.repaired::before {
+  background: #f59e0b;
+}
+
+.step-card.failed::before {
+  background: #ef4444;
 }
 
 .step-card.running::before {

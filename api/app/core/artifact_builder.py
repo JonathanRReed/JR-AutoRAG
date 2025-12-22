@@ -186,7 +186,7 @@ class ArtifactBuilder:
     async def build_all_async(
         self,
         chunks: list["EvidenceChunk"],
-        provider: "LLMProvider",
+        provider: "LLMProvider | None",
         corpus_version: str,
         force_rebuild: bool = False,
     ) -> None:
@@ -220,7 +220,7 @@ class ArtifactBuilder:
     async def _run_builds(
         self,
         chunks: list["EvidenceChunk"],
-        provider: "LLMProvider",
+        provider: "LLMProvider | None",
         corpus_version: str,
     ) -> None:
         """Run both builds in parallel."""
@@ -233,7 +233,7 @@ class ArtifactBuilder:
     async def _build_graph_async(
         self,
         chunks: list["EvidenceChunk"],
-        provider: "LLMProvider",
+        provider: "LLMProvider | None",
         corpus_version: str,
     ) -> None:
         """Build GraphRAG artifact in background."""
@@ -266,6 +266,8 @@ class ArtifactBuilder:
             self._notify_progress()
         
         try:
+            if provider is None:
+                raise RuntimeError("No LLM provider configured for GraphRAG build")
             from .graph_rag import GraphRAG
             
             graph = GraphRAG()
@@ -301,7 +303,7 @@ class ArtifactBuilder:
     async def _build_hierarchy_async(
         self,
         chunks: list["EvidenceChunk"],
-        provider: "LLMProvider",
+        provider: "LLMProvider | None",
         corpus_version: str,
     ) -> None:
         """Build RAPTOR hierarchy in background."""
@@ -309,6 +311,7 @@ class ArtifactBuilder:
         self._progress.raptor.started_at = time.time()
         self._progress.raptor.corpus_version = corpus_version
         self._progress.raptor.error = None
+        self._progress.raptor.progress = 0.0
         self._notify_progress()
         
         try:
@@ -326,6 +329,8 @@ class ArtifactBuilder:
             
             # Build tree for each document
             trees: dict[str, Any] = {}
+            total_docs = len(doc_chunks)
+            completed = 0
             for doc_id, doc_chunk_list in doc_chunks.items():
                 # Combine chunk texts for hierarchy building
                 text = "\n\n".join(
@@ -335,6 +340,10 @@ class ArtifactBuilder:
                     builder.build, text, doc_id, doc_id
                 )
                 trees[doc_id] = tree
+                completed += 1
+                if total_docs:
+                    self._progress.raptor.progress = min(99.9, (completed / total_docs) * 100.0)
+                    self._notify_progress()
             
             # Persist to disk
             hierarchy_path = self._persist_path / f"hierarchy_{corpus_version}.json"
@@ -350,6 +359,7 @@ class ArtifactBuilder:
             
             self._progress.raptor.status = ArtifactStatus.READY
             self._progress.raptor.completed_at = time.time()
+            self._progress.raptor.progress = 100.0
             self._progress.raptor.item_count = sum(
                 len(getattr(t, 'nodes', {})) for t in trees.values()
             )

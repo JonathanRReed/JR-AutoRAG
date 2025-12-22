@@ -33,6 +33,8 @@ interface IngestPanelProps {
     setIngestText: (value: string) => void;
     isIngesting: boolean;
     handleIngest: () => void;
+    ingestSync: boolean;
+    setIngestSync: (value: boolean) => void;
     documents: DocumentOut[];
     handleDeleteDocument: (id: string, title: string) => void;
     handleDeleteAllDocuments: () => void;
@@ -62,6 +64,8 @@ export function IngestPanel({
     setIngestText,
     isIngesting,
     handleIngest,
+    ingestSync,
+    setIngestSync,
     documents,
     handleDeleteDocument,
     handleDeleteAllDocuments,
@@ -171,6 +175,24 @@ export function IngestPanel({
             <CardContent className="space-y-6 pt-6">
                 {/* Premium setup checklist */}
 
+
+                <div className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/40 px-4 py-3">
+                    <div className="space-y-1">
+                        <Label htmlFor="sync-ingest" className="text-sm font-medium text-foreground">
+                            Index immediately
+                        </Label>
+                        <p className="text-xs text-muted-foreground">
+                            Wait for indexing to finish before returning (recommended for local runs).
+                        </p>
+                    </div>
+                    <input
+                        id="sync-ingest"
+                        type="checkbox"
+                        checked={ingestSync}
+                        onChange={event => setIngestSync(event.target.checked)}
+                        className="h-4 w-4 accent-primary"
+                    />
+                </div>
 
                 {/* Upload Zone */}
                 <div

@@ -21,38 +21,47 @@ from .core import (
     SmartPlanner,  # Phase 2: Smart planning
 )
 
+def _build_retrieval_config(cfg: "AppConfig") -> HybridConfig:
+    return HybridConfig(
+        embedding_model=cfg.retrieval.embedding_model,
+        reranker_model=cfg.retrieval.reranker_model,
+        use_reranking=cfg.retrieval.use_reranking,
+        rerank_top_k=cfg.retrieval.rerank_pool,
+        chunking_strategy=ChunkingStrategy(cfg.retrieval.chunking_strategy),
+        chunk_size=cfg.retrieval.chunk_size,
+        chunk_overlap=cfg.retrieval.chunk_overlap,
+        dense_weight=cfg.retrieval.dense_weight if cfg.retrieval.hybrid else 0.0,
+        sparse_weight=cfg.retrieval.sparse_weight if cfg.retrieval.hybrid else 1.0,
+        raptor=getattr(cfg.retrieval, "raptor", False),
+        graph=getattr(cfg.retrieval, "graph", False),
+        use_colbert=getattr(cfg.retrieval, "use_colbert", False),
+        colbert_model=getattr(cfg.retrieval, "colbert_model", "sentence-transformers/all-MiniLM-L6-v2"),
+        colbert_top_k=getattr(cfg.retrieval, "colbert_top_k", 12),
+        recency_weight=getattr(cfg.retrieval, "recency_weight", 0.1),
+        recency_half_life_days=getattr(cfg.retrieval, "recency_half_life_days", 90.0),
+        title_boost=getattr(cfg.retrieval, "title_boost", 0.6),
+        heading_boost=getattr(cfg.retrieval, "heading_boost", 0.4),
+        proximity_weight=getattr(cfg.retrieval, "proximity_weight", 0.5),
+        diversity=getattr(cfg.retrieval, "diversity", 0.0),
+    )
+
 
 class ServiceContainer:
     def __init__(self, base_path: Path | None = None) -> None:
         data_dir = Path(base_path or os.environ.get("JR_DATA_DIR", Path.cwd() / "data"))
         data_dir.mkdir(parents=True, exist_ok=True)
         self.config_store = ConfigStore(data_dir / "config.json")
-        self.document_store = DocumentStore(data_dir / "documents.json")
+        self.document_store = DocumentStore(
+            data_dir / "documents.db",
+            legacy_json_path=data_dir / "documents.json",
+        )
         self.telemetry = TelemetryStore(data_dir / "traces.json")
         
         # Load config for retrieval settings
         cfg = self.config_store.read()
         
         # Configure hybrid retrieval from app config
-        retrieval_config = HybridConfig(
-            embedding_model=cfg.retrieval.embedding_model,
-            reranker_model=cfg.retrieval.reranker_model,
-            use_reranking=cfg.retrieval.use_reranking,
-            rerank_top_k=cfg.retrieval.rerank_pool,
-            chunking_strategy=ChunkingStrategy(cfg.retrieval.chunking_strategy),
-            chunk_size=cfg.retrieval.chunk_size,
-            chunk_overlap=cfg.retrieval.chunk_overlap,
-            dense_weight=cfg.retrieval.dense_weight if cfg.retrieval.hybrid else 0.0,
-            sparse_weight=cfg.retrieval.sparse_weight if cfg.retrieval.hybrid else 1.0,
-            raptor=getattr(cfg.retrieval, 'raptor', False),
-            graph=getattr(cfg.retrieval, 'graph', False),
-            recency_weight=getattr(cfg.retrieval, "recency_weight", 0.1),
-            recency_half_life_days=getattr(cfg.retrieval, "recency_half_life_days", 90.0),
-            title_boost=getattr(cfg.retrieval, "title_boost", 0.6),
-            heading_boost=getattr(cfg.retrieval, "heading_boost", 0.4),
-            proximity_weight=getattr(cfg.retrieval, "proximity_weight", 0.5),
-            diversity=getattr(cfg.retrieval, "diversity", 0.0),
-        )
+        retrieval_config = _build_retrieval_config(cfg)
         
         self.retrieval_engine = HybridRetrievalEngine(self.document_store, retrieval_config)
         
@@ -86,6 +95,8 @@ class ServiceContainer:
         self.smart_planner.rebuild(cfg)
         self.planner = self.smart_planner if cfg.retrieval.planner_mode != "simple" else self.simple_planner
         self.orchestrator.set_planner(self.planner)
+        retrieval_config = _build_retrieval_config(cfg)
+        self.retrieval_engine.reconfigure(retrieval_config)
         self.orchestrator.rebuild(cfg)
 
 
