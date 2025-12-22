@@ -256,6 +256,300 @@ class DiskEmbeddingCache:
 
 
 # ============================================================================
+# Disk-Backed Query Cache (P0.3)
+# ============================================================================
+
+@dataclass
+class CacheEvent:
+    """Record of a cache operation for tracing."""
+    
+    hit: bool
+    key: str
+    reason: str | None = None  # Why cache missed: "expired", "version_mismatch", etc.
+    corpus_version: str = ""
+    retrieval_mode: int = 1
+    preset_id: str = ""
+    timestamp: float = 0.0
+    
+    def __post_init__(self) -> None:
+        if self.timestamp == 0.0:
+            self.timestamp = time.time()
+    
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "hit": self.hit,
+            "key": self.key[:16] + "..." if len(self.key) > 16 else self.key,
+            "reason": self.reason,
+            "corpus_version": self.corpus_version,
+            "retrieval_mode": self.retrieval_mode,
+            "preset_id": self.preset_id,
+        }
+
+
+@dataclass 
+class QueryCacheConfig:
+    """Configuration for disk query cache."""
+    db_path: Path
+    max_entries: int = 10000
+    ttl_hours: int = 24  # Queries expire faster than embeddings
+
+
+class DiskQueryCache:
+    """SQLite-backed query result cache with versioned keys.
+    
+    Implements P0.3: Cache keys include corpus version, retrieval mode,
+    preset ID, model IDs, and normalized query.
+    
+    Cache persists across sessions to disk.
+    """
+    
+    def __init__(self, config: QueryCacheConfig | None = None) -> None:
+        if config is None:
+            config = QueryCacheConfig(db_path=Path("data/query_cache.db"))
+        
+        self._config = config
+        self._db_path = config.db_path
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._conn: sqlite3.Connection | None = None
+        self._last_event: CacheEvent | None = None
+        self._init_db()
+    
+    def _init_db(self) -> None:
+        """Initialize database schema."""
+        conn = self._get_conn()
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS query_cache (
+                key TEXT PRIMARY KEY,
+                query_normalized TEXT NOT NULL,
+                corpus_version TEXT NOT NULL,
+                retrieval_mode INTEGER NOT NULL,
+                preset_id TEXT NOT NULL,
+                model_ids TEXT NOT NULL,
+                result BLOB NOT NULL,
+                created_at REAL NOT NULL,
+                hit_count INTEGER DEFAULT 0
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_query_corpus 
+            ON query_cache(query_normalized, corpus_version)
+        """)
+        conn.commit()
+    
+    def _get_conn(self) -> sqlite3.Connection:
+        """Get or create database connection."""
+        if self._conn is None:
+            self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
+        return self._conn
+    
+    def _normalize_query(self, query: str) -> str:
+        """Normalize query for cache key generation."""
+        # Lowercase, strip, collapse whitespace
+        normalized = " ".join(query.lower().strip().split())
+        return normalized
+    
+    def _make_key(
+        self,
+        query: str,
+        corpus_version: str,
+        retrieval_mode: int,
+        preset_id: str,
+        model_ids: dict[str, str] | None = None,
+    ) -> str:
+        """Create versioned cache key."""
+        normalized = self._normalize_query(query)
+        model_str = json.dumps(model_ids or {}, sort_keys=True)
+        
+        combined = f"{normalized}|v{corpus_version}|m{retrieval_mode}|p{preset_id}|{model_str}"
+        return hashlib.sha256(combined.encode()).hexdigest()[:32]
+    
+    def get(
+        self,
+        query: str,
+        corpus_version: str = "",
+        retrieval_mode: int = 1,
+        preset_id: str = "balanced",
+        model_ids: dict[str, str] | None = None,
+    ) -> dict[str, Any] | None:
+        """Get cached query result.
+        
+        Returns None on miss. Records cache event for tracing.
+        """
+        key = self._make_key(query, corpus_version, retrieval_mode, preset_id, model_ids)
+        conn = self._get_conn()
+        
+        cursor = conn.execute(
+            """SELECT result, created_at, corpus_version, retrieval_mode, preset_id 
+               FROM query_cache WHERE key = ?""",
+            (key,)
+        )
+        row = cursor.fetchone()
+        
+        if row is None:
+            self._last_event = CacheEvent(
+                hit=False,
+                key=key,
+                reason="not_found",
+                corpus_version=corpus_version,
+                retrieval_mode=retrieval_mode,
+                preset_id=preset_id,
+            )
+            return None
+        
+        result_bytes, created_at, stored_version, stored_mode, stored_preset = row
+        
+        # Check TTL
+        if time.time() - created_at > self._config.ttl_hours * 3600:
+            conn.execute("DELETE FROM query_cache WHERE key = ?", (key,))
+            conn.commit()
+            self._last_event = CacheEvent(
+                hit=False,
+                key=key,
+                reason="expired",
+                corpus_version=corpus_version,
+                retrieval_mode=retrieval_mode,
+                preset_id=preset_id,
+            )
+            return None
+        
+        # Verify version match (defense in depth)
+        if stored_version != corpus_version:
+            self._last_event = CacheEvent(
+                hit=False,
+                key=key,
+                reason="version_mismatch",
+                corpus_version=corpus_version,
+                retrieval_mode=retrieval_mode,
+                preset_id=preset_id,
+            )
+            return None
+        
+        # Update hit count
+        conn.execute(
+            "UPDATE query_cache SET hit_count = hit_count + 1 WHERE key = ?",
+            (key,)
+        )
+        
+        self._last_event = CacheEvent(
+            hit=True,
+            key=key,
+            corpus_version=corpus_version,
+            retrieval_mode=retrieval_mode,
+            preset_id=preset_id,
+        )
+        
+        return pickle.loads(result_bytes)
+    
+    def set(
+        self,
+        query: str,
+        result: dict[str, Any],
+        corpus_version: str = "",
+        retrieval_mode: int = 1,
+        preset_id: str = "balanced",
+        model_ids: dict[str, str] | None = None,
+    ) -> None:
+        """Cache query result."""
+        key = self._make_key(query, corpus_version, retrieval_mode, preset_id, model_ids)
+        normalized = self._normalize_query(query)
+        model_str = json.dumps(model_ids or {}, sort_keys=True)
+        conn = self._get_conn()
+        
+        # Enforce max entries
+        cursor = conn.execute("SELECT COUNT(*) FROM query_cache")
+        count = cursor.fetchone()[0]
+        
+        if count >= self._config.max_entries:
+            # Remove oldest 10%
+            to_remove = int(self._config.max_entries * 0.1)
+            conn.execute("""
+                DELETE FROM query_cache WHERE key IN (
+                    SELECT key FROM query_cache 
+                    ORDER BY created_at ASC 
+                    LIMIT ?
+                )
+            """, (to_remove,))
+        
+        result_bytes = pickle.dumps(result)
+        conn.execute("""
+            INSERT OR REPLACE INTO query_cache 
+            (key, query_normalized, corpus_version, retrieval_mode, preset_id, model_ids, result, created_at, hit_count)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
+        """, (key, normalized, corpus_version, retrieval_mode, preset_id, model_str, result_bytes, time.time()))
+        conn.commit()
+    
+    def get_last_event(self) -> CacheEvent | None:
+        """Get the last cache event for tracing."""
+        return self._last_event
+    
+    def invalidate_by_corpus(self, corpus_version: str) -> int:
+        """Invalidate all entries for a corpus version."""
+        conn = self._get_conn()
+        cursor = conn.execute(
+            "DELETE FROM query_cache WHERE corpus_version = ?",
+            (corpus_version,)
+        )
+        conn.commit()
+        return cursor.rowcount
+    
+    def clear(self) -> None:
+        """Clear all cached queries."""
+        conn = self._get_conn()
+        conn.execute("DELETE FROM query_cache")
+        conn.commit()
+    
+    def stats(self) -> dict[str, Any]:
+        """Get cache statistics."""
+        conn = self._get_conn()
+        cursor = conn.execute("""
+            SELECT 
+                COUNT(*) as total,
+                SUM(hit_count) as total_hits,
+                COUNT(DISTINCT corpus_version) as versions,
+                COUNT(DISTINCT preset_id) as presets
+            FROM query_cache
+        """)
+        row = cursor.fetchone()
+        
+        return {
+            "total_entries": row[0],
+            "total_hits": row[1] or 0,
+            "corpus_versions": row[2],
+            "presets": row[3],
+            "db_path": str(self._db_path),
+            "max_entries": self._config.max_entries,
+            "ttl_hours": self._config.ttl_hours,
+        }
+    
+    def close(self) -> None:
+        """Close database connection."""
+        if self._conn:
+            self._conn.close()
+            self._conn = None
+
+
+# Global instances
+_disk_embedding_cache: DiskEmbeddingCache | None = None
+_disk_query_cache: DiskQueryCache | None = None
+
+
+def get_disk_embedding_cache() -> DiskEmbeddingCache:
+    """Get or create global disk embedding cache."""
+    global _disk_embedding_cache
+    if _disk_embedding_cache is None:
+        _disk_embedding_cache = DiskEmbeddingCache()
+    return _disk_embedding_cache
+
+
+def get_disk_query_cache() -> DiskQueryCache:
+    """Get or create global disk query cache."""
+    global _disk_query_cache
+    if _disk_query_cache is None:
+        _disk_query_cache = DiskQueryCache()
+    return _disk_query_cache
+
+
+# ============================================================================
 # Index Persistence
 # ============================================================================
 
@@ -520,7 +814,12 @@ class IndexPersistence:
 
 __all__ = [
     "CacheConfig",
+    "CacheEvent",
     "DiskEmbeddingCache",
+    "DiskQueryCache",
+    "QueryCacheConfig",
     "IndexMetadata",
     "IndexPersistence",
+    "get_disk_embedding_cache",
+    "get_disk_query_cache",
 ]

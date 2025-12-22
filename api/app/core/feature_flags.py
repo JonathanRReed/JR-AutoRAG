@@ -141,6 +141,43 @@ V2_FEATURE_FLAGS: dict[str, FeatureFlag] = {
         risk_level=RiskLevel.CRITICAL,
         env_var="FF_TOOL_USE",
     ),
+    
+    # v3.0 Feature Flags
+    "FF_GROUNDED_MODE": FeatureFlag(
+        name="FF_GROUNDED_MODE",
+        description="Default to grounded mode (refuse to answer without evidence)",
+        default=True,
+        risk_level=RiskLevel.LOW,
+        env_var="FF_GROUNDED_MODE",
+    ),
+    "FF_DISK_CACHE": FeatureFlag(
+        name="FF_DISK_CACHE",
+        description="Use disk-backed query cache for persistence",
+        default=True,
+        risk_level=RiskLevel.LOW,
+        env_var="FF_DISK_CACHE",
+    ),
+    "FF_CORPUS_CLASSIFIER": FeatureFlag(
+        name="FF_CORPUS_CLASSIFIER",
+        description="Skip RAG for chitchat and meta queries",
+        default=True,
+        risk_level=RiskLevel.MEDIUM,
+        env_var="FF_CORPUS_CLASSIFIER",
+    ),
+    "FF_STAGE_BUDGETS": FeatureFlag(
+        name="FF_STAGE_BUDGETS",
+        description="Enforce per-stage timeouts and token budgets",
+        default=False,  # Off by default until fully tested
+        risk_level=RiskLevel.MEDIUM,
+        env_var="FF_STAGE_BUDGETS",
+    ),
+    "FF_MODEL_ROLES": FeatureFlag(
+        name="FF_MODEL_ROLES",
+        description="Use role-specialized model recommendations",
+        default=True,
+        risk_level=RiskLevel.LOW,
+        env_var="FF_MODEL_ROLES",
+    ),
 }
 
 

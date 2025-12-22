@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .services import get_container
-from .routers import artifact_routes, cache_routes, config, documents, evaluation, health, monitoring, providers, query, traces
+from .routers import artifact_routes, cache_routes, config, documents, evaluation, health, monitoring, providers, query, traces, metrics_routes
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -42,6 +42,7 @@ app.include_router(providers.router)
 app.include_router(traces.router, prefix="/api", tags=["traces"])
 app.include_router(artifact_routes.router)
 app.include_router(cache_routes.router)
+app.include_router(metrics_routes.router)
 
 
 @app.get("/")

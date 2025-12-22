@@ -59,6 +59,10 @@ from .hyde import HyDEGenerator, get_hyde_generator
 from .abstention import AbstentionRules, AbstentionConfig, get_abstention_rules
 # Self-RAG critic for v2.0
 from .self_rag import SelfRAGCritic, SelfRAGConfig, get_self_rag_critic
+# 3.0 Enhancements
+from .query_mode import QueryMode, build_no_evidence_answer
+from .stage_budgets import StageBudgetConfig, StageBudgetEnforcer, get_budget_enforcer
+from .persistence import get_disk_query_cache, CacheEvent
 
 logger = logging.getLogger("autorag.pipeline")
 
@@ -634,6 +638,7 @@ class Orchestrator:
         on_progress: Callable[[dict], None] | None = None,
         history: list[dict[str, str]] | None = None,
         trace_id: str | None = None,
+        query_mode: QueryMode | None = None,  # P0.1: Grounded vs Open Domain
     ) -> dict:
         if trace_id is None:
             trace_id = hashlib.md5(f"{query}{time.time()}".encode()).hexdigest()[:12]
@@ -735,25 +740,72 @@ class Orchestrator:
         if hasattr(self._retrieval, 'get_retrieval_mode_flags'):
             cache_retrieval_mode = self._retrieval.get_retrieval_mode_flags()
         
+        # P0.1: Resolve query mode from parameter or config
+        effective_query_mode = query_mode
+        if effective_query_mode is None:
+            config_mode = getattr(self._config, "query_mode", "grounded")
+            effective_query_mode = QueryMode(config_mode) if config_mode in ("grounded", "open_domain") else QueryMode.GROUNDED
+        
+        # P0.3: Get current preset ID for cache key
+        current_preset_id = getattr(self._config.retrieval, "_preset_level", "balanced") if self._config else "balanced"
+        if not current_preset_id or current_preset_id == "balanced":
+            # Try to infer from config
+            current_preset_id = "balanced"
+        
+        # P0.3: Get model IDs for cache key
+        provider_config = self._config.provider if self._config else None
+        model_ids = {
+            "planner": getattr(provider_config, "planner_model", "") or "",
+            "gatherer": getattr(provider_config, "gatherer_model", "") or "",
+            "generator": getattr(provider_config, "generator_model", "") or "",
+        } if provider_config else {}
+        
         cache_start_time = datetime.utcnow()
         cache_start = time.perf_counter()
         if on_stage:
             on_stage("cache")
         emit_progress("cache", detail="Checking index freshness")
         
-        # NOTE: Full query-level cache is disabled - each query runs the full pipeline.
-        # Intermediate caching (embeddings, chunks) still works via the retrieval engine.
-        # This ensures users always see the pipeline stages run.
-        cached_result = None  # Disabled: cache_manager.queries.get(...)
+        # P0.3: Use disk-backed query cache with versioned keys
+        disk_cache = get_disk_query_cache()
+        cached_result = disk_cache.get(
+            query=query,
+            corpus_version=cache_corpus_version,
+            retrieval_mode=int(cache_retrieval_mode),
+            preset_id=current_preset_id,
+            model_ids=model_ids,
+        )
+        cache_event = disk_cache.get_last_event()
         
+        cache_step_details: dict[str, Any] = {
+            "query_cache": "enabled",
+            "disk_backed": True,
+            "cache_event": cache_event.to_dict() if cache_event else None,
+            "corpus_version": cache_corpus_version,
+            "retrieval_mode": int(cache_retrieval_mode),
+            "preset_id": current_preset_id,
+        }
+        
+        if cached_result is not None:
+            cache_step_details["cache_hit"] = True
+            cache_step = self._make_step(
+                "cache",
+                cache_start,
+                cache_start_time,
+                cache_step_details,
+            )
+            record_step(cache_step)
+            # Return cached result with updated trace
+            cached_result["steps"] = [step.__dict__ if hasattr(step, '__dict__') else step for step in pipeline_steps]
+            cached_result["from_cache"] = True
+            return cached_result
+        
+        cache_step_details["cache_hit"] = False
         cache_step = self._make_step(
             "cache",
             cache_start,
             cache_start_time,
-            {
-                "query_cache": "disabled", 
-                "note": "Full-query cache disabled, intermediate caching active",
-            },
+            cache_step_details,
         )
         record_step(cache_step)
 
@@ -1458,6 +1510,42 @@ class Orchestrator:
             rerank_enabled = retrieval_details.get("rerank_enabled", rerank_enabled)
         record_step(self._make_step("retrieval", retrieval_start, retrieval_start_time, retrieval_details))
 
+        # P0.1: Grounded mode no-evidence check
+        # If grounded mode is active and no chunks found, return structured response
+        if effective_query_mode == QueryMode.GROUNDED and not chunks:
+            no_evidence_response = build_no_evidence_answer(
+                query=query,
+                corpus_doc_count=len(getattr(self._retrieval, '_document_store', {}) or []),
+                corpus_chunk_count=len(getattr(self._retrieval, '_chunks', []) or []),
+                search_terms_tried=[s.query for s in plan.steps] if hasattr(plan, 'steps') else [query],
+            )
+            no_evidence_response["trace_id"] = trace_id
+            no_evidence_response["steps"] = [
+                step.__dict__ if hasattr(step, '__dict__') else step 
+                for step in pipeline_steps
+            ]
+            no_evidence_response["metrics"]["total_duration_ms"] = round(
+                (datetime.utcnow() - pipeline_start).total_seconds() * 1000, 2
+            )
+            
+            # Record the no-evidence step
+            no_evidence_step = PipelineStep(
+                name="no_evidence",
+                started_at=datetime.utcnow(),
+                completed_at=datetime.utcnow(),
+                duration_ms=0.0,
+                details={
+                    "mode": "grounded",
+                    "reason": "no_supporting_documents",
+                    "chunks_found": 0,
+                    "suggested_actions": len(no_evidence_response.get("grounding", {}).get("no_evidence_response", {}).get("suggested_actions", [])),
+                },
+                status="no_evidence",
+            )
+            record_step(no_evidence_step)
+            
+            return no_evidence_response
+
         # Abstention check: Should we refuse to answer due to insufficient evidence?
         cfg_abstain = getattr(cfg_retrieval, "abstain_when_unverified", False)
         if cfg_abstain:
@@ -1924,10 +2012,10 @@ The retrieved evidence contains some conflicting information. When you encounter
         citation_details = citation_result.to_trace_dict()
         
         # If citations are invalid and we have a provider, attempt repair
-        if not citation_result.all_valid and provider is not None:
+        if not citation_result.all_valid and self._provider is not None:
             try:
                 citation_result = await self._citation_verifier.verify_and_repair(
-                    answer, chunks, provider
+                    answer, chunks, self._provider
                 )
                 answer = citation_result.verified_answer
                 citation_details = citation_result.to_trace_dict()
@@ -2211,7 +2299,7 @@ The retrieved evidence contains some conflicting information. When you encounter
         )
         result["trace_bundle_available"] = True
         
-        # G3: Use versioned cache keys
+        # G3: Use versioned cache keys (in-memory)
         cacheable = {**result, "steps": [s for s in steps_out if s["name"] != "cache"]}
         cache_manager.queries.set(
             query, 
@@ -2220,6 +2308,18 @@ The retrieved evidence contains some conflicting information. When you encounter
             corpus_version=corpus_version,
             retrieval_mode=retrieval_mode_flags,
         )
+        
+        # P0.3: Store to disk cache for persistence across sessions
+        disk_cache = get_disk_query_cache()
+        disk_cache.set(
+            query=query,
+            result=cacheable,
+            corpus_version=corpus_version,
+            retrieval_mode=int(retrieval_mode_flags),
+            preset_id=current_preset_id,
+            model_ids=model_ids,
+        )
+        
         return result
     
     async def _generate_direct_answer(
