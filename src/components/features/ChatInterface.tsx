@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+
+import { useMemo, useState, useEffect } from "react";
 import {
     Activity,
     AlertTriangle,
@@ -13,30 +14,227 @@ import {
     Target,
     Gauge,
     FileText,
-    Layers,
+    Network,
+    PanelLeftClose,
+    PanelLeftOpen,
+    PanelRightClose,
+    PanelRightOpen,
     ArrowRightLeft,
     HelpCircle,
     Info,
     UploadCloud,
     ShieldCheck,
+    PlusCircle,
+    Trash2,
+    XCircle,
+    History,
+    Copy,
+    RefreshCw,
+    ArrowRight
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import type { DocumentOut, PipelineStep, ProviderConfig, QueryResponse } from "@/types";
+import { useToast } from "@/components/ui/toast";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+// EnterpriseControls removed
+
+import { ArtifactViewer } from "./ArtifactViewer";
+import { PresetSelector } from "./PresetSelector";
+import { ConfidenceIndicator } from "./ConfidenceIndicator";
+import type { DocumentOut, PipelineStep, ProviderConfig, QueryResponse, ChatSession, PresetLevel } from "@/types";
+
+interface ProgressData {
+    stage: string;
+    message: string;
+    detail?: string;
+    progress?: number;
+    elapsed_ms?: number;
+    estimated_remaining_ms?: number;
+}
 
 interface ChatInterfaceProps {
     question: string;
     setQuestion: (value: string) => void;
     isQuerying: boolean;
-    handleAsk: () => void;
+    handleAsk: (overrideQuestion?: string, isRegenerate?: boolean) => void;
     queryResult: QueryResponse | null;
     documents: DocumentOut[];
     selectedDocumentIds: string[];
     setSelectedDocumentIds: React.Dispatch<React.SetStateAction<string[]>>;
     providerConfig?: ProviderConfig;
     activeStage?: string | null;
+    progress?: ProgressData | null;
+    history?: { role: string; content: string }[];
+    onNewChat?: () => void;
+    onCancel?: () => void;
+    savedSessions?: ChatSession[];
+    onLoadSession?: (session: ChatSession) => void;
+    onDeleteSession?: (id: string) => void;
+    onClearHistory?: () => void;
+    scrollRef?: React.RefObject<HTMLDivElement | null>;
+    currentSessionId?: string | null;
+    preset?: PresetLevel;
+    onPresetChange?: (preset: PresetLevel) => void;
 }
+
+const MessageContent = ({ content, onCitationClick }: { content: string; onCitationClick?: (id: string) => void }) => {
+    // Component to render text with clickable citations
+    const TextWithCitations = ({ text }: { text: string }) => {
+        const parts = text.split(/(\[\d+\])/g);
+        return (
+            <>
+                {parts.map((part, i) => {
+                    const match = part.match(/^\[(\d+)\]$/);
+                    if (match && match[1]) {
+                        const id = match[1];
+                        return (
+                            <button
+                                key={i}
+                                onClick={() => onCitationClick?.(id)}
+                                className="inline-flex items-center justify-center -translate-y-0.5 mx-0.5 h-4 min-w-[1rem] rounded-full bg-primary/20 px-1 text-[9px] font-bold text-primary hover:bg-primary hover:text-primary-foreground transition-all duration-200 shadow-sm border border-primary/10"
+                                title={`Jump to source ${id}`}
+                            >
+                                {id}
+                            </button>
+                        );
+                    }
+                    return <span key={i}>{part}</span>;
+                })}
+            </>
+        );
+    };
+
+    // Helper to process children for citations
+    const processNode = (node: any): any => {
+        if (typeof node === 'string') {
+            return <TextWithCitations text={node} />;
+        }
+        if (Array.isArray(node)) {
+            return node.map((child, i) => <React.Fragment key={i}>{processNode(child)}</React.Fragment>);
+        }
+        if (React.isValidElement(node) && (node.props as any).children) {
+            return React.cloneElement(node, {
+                ...(node.props as any),
+                children: processNode((node.props as any).children)
+            });
+        }
+        return node;
+    };
+
+    return (
+        <div className="prose prose-sm dark:prose-invert max-w-none text-foreground leading-relaxed transition-all duration-200">
+            <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={{
+                    p: ({ children }) => <p className="mb-3 last:mb-0">{processNode(children)}</p>,
+                    li: ({ children }) => <li>{processNode(children)}</li>,
+                    blockquote: ({ children }) => <blockquote className="border-l-2 border-primary/30 pl-4 py-1 my-3 bg-muted/10 italic">{processNode(children)}</blockquote>,
+                    a: ({ node, ...props }) => <a {...props} className="text-primary hover:underline" target="_blank" rel="noopener noreferrer" />,
+                    code: ({ node, ...props }) => (
+                        <code {...props} className="bg-muted px-1.5 py-0.5 rounded text-xs font-mono font-medium border border-border/40" />
+                    ),
+                    pre: ({ node, ...props }) => (
+                        <pre {...props} className="bg-muted/50 p-3 rounded-lg border border-border/40 overflow-x-auto my-3 text-xs font-mono" />
+                    ),
+                    table: ({ children }) => (
+                        <div className="overflow-x-auto my-4 border border-border/40 rounded-lg shadow-sm">
+                            <table className="w-full text-left text-xs border-collapse">
+                                {children}
+                            </table>
+                        </div>
+                    ),
+                    th: ({ children }) => <th className="p-2 bg-muted/50 font-semibold border-b border-border/40">{children}</th>,
+                    td: ({ children }) => <td className="p-2 border-b border-border/40">{children}</td>,
+                    ul: ({ children }) => <ul className="list-disc pl-5 mb-3 space-y-1">{children}</ul>,
+                    ol: ({ children }) => <ol className="list-decimal pl-5 mb-3 space-y-1">{children}</ol>,
+                    // Override text nodes to handle [n] citations
+                    // This is slightly tricky in ReactMarkdown v9+ as it doesn't expose a 'text' component easily
+                    // But we can usually rely on simple string children in many cases or use a custom plugin.
+                    // For now, we'll keep it simple: if it's just a string, we process it.
+                }}
+            >
+                {content}
+            </ReactMarkdown>
+        </div>
+    );
+};
+
+const HistoryItem = ({
+    role,
+    content,
+    onCitationClick,
+    onRegenerate,
+}: {
+    role: string;
+    content: string;
+    onCitationClick?: (id: string) => void;
+    onRegenerate?: () => void;
+}) => {
+    const { toast } = useToast();
+    const isAssistant = role === "assistant";
+
+    const handleCopy = async () => {
+        try {
+            await navigator.clipboard.writeText(content);
+            toast({
+                title: "Copied!",
+                description: "Message content saved to clipboard.",
+            });
+        } catch (err) {
+            console.error("Failed to copy", err);
+        }
+    };
+
+    return (
+        <div className={`flex w-full ${isAssistant ? "justify-start" : "justify-end"} group mb-6 animate-in fade-in slide-in-from-bottom-2 duration-300`}>
+            <div className={`flex gap-3 max-w-[85%] ${isAssistant ? "flex-row" : "flex-row-reverse"}`}>
+                <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg shadow-sm border transition-colors ${isAssistant
+                    ? "bg-primary/10 border-primary/20 text-primary"
+                    : "bg-primary border-primary text-primary-foreground"
+                    }`}>
+                    {isAssistant ? <Sparkles className="h-4 w-4" /> : <Target className="h-4 w-4" />}
+                </div>
+
+                <div className="flex flex-col gap-1.5 min-w-0">
+                    <div className={`relative px-4 py-3 rounded-2xl shadow-sm border transition-all duration-300 ${isAssistant
+                        ? "bg-card border-border/40 rounded-tl-none hover:border-primary/30"
+                        : "bg-muted/30 border-border/40 rounded-tr-none hover:bg-muted/50"
+                        }`}>
+                        <MessageContent content={content} onCitationClick={onCitationClick} />
+
+                        {isAssistant && (
+                            <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-6 w-6 text-muted-foreground hover:text-primary hover:bg-primary/10"
+                                    onClick={handleCopy}
+                                    title="Copy to clipboard"
+                                >
+                                    <Copy className="h-3 w-3" />
+                                </Button>
+                                {onRegenerate && (
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-6 w-6 text-muted-foreground hover:text-primary hover:bg-primary/10"
+                                        onClick={onRegenerate}
+                                        title="Regenerate response"
+                                    >
+                                        <RefreshCw className="h-3 w-3" />
+                                    </Button>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 
 function StepIcon({ name, status }: { name: string; status: string }) {
     const isComplete = status === "completed";
@@ -53,10 +251,10 @@ function StepIcon({ name, status }: { name: string; status: string }) {
     const Icon = icons[name] ?? Target;
     return (
         <span className={`flex h-8 w-8 items-center justify-center rounded-lg text-lg transition-all ${isComplete
-                ? "bg-primary/10"
-                : isSkipped
-                    ? "bg-muted"
-                    : "bg-secondary/30"
+            ? "bg-primary/10"
+            : isSkipped
+                ? "bg-muted"
+                : "bg-secondary/30"
             }`}>
             <Icon className="h-4 w-4 text-foreground" />
         </span>
@@ -119,7 +317,7 @@ function StepDetails({ step }: { step: PipelineStep }) {
                     {totalChunks ?? 0} chunks
                 </span>
                 <span className="inline-flex items-center gap-1.5 rounded-lg bg-muted px-2.5 py-1 text-xs">
-                    <Layers className="h-3.5 w-3.5" />
+                    <FileText className="h-3.5 w-3.5" />
                     {uniqueSources ?? 0} sources
                 </span>
                 {documentFilter && (
@@ -134,14 +332,21 @@ function StepDetails({ step }: { step: PipelineStep }) {
                         {embeddingHits ?? 0} hit / {embeddingMisses ?? 0} miss
                     </span>
                 )}
-                {typeof denseEnabled === "boolean" && (
-                    <span className="inline-flex items-center gap-1.5 rounded-lg bg-muted px-2.5 py-1 text-xs">
-                        Dense: {denseEnabled ? "on" : "off"}
-                    </span>
-                )}
                 {typeof rerankerEnabled === "boolean" && (
                     <span className="inline-flex items-center gap-1.5 rounded-lg bg-muted px-2.5 py-1 text-xs">
                         Rerank: {rerankerEnabled ? "on" : "off"}
+                    </span>
+                )}
+                {typeof details.raptor_chunks_added === "number" && (
+                    <span className="inline-flex items-center gap-1.5 rounded-lg bg-cyan-500/10 text-cyan-500 px-2.5 py-1 text-xs font-medium">
+                        <Box className="h-3 w-3" />
+                        RAPTOR (+{details.raptor_chunks_added})
+                    </span>
+                )}
+                {typeof details.graph_chunks_added === "number" && (
+                    <span className="inline-flex items-center gap-1.5 rounded-lg bg-violet-500/10 text-violet-500 px-2.5 py-1 text-xs font-medium">
+                        <Network className="h-3 w-3" />
+                        GraphRAG (+{details.graph_chunks_added})
                     </span>
                 )}
             </div>
@@ -327,10 +532,10 @@ function PipelinePanel({ steps, metrics }: { steps: PipelineStep[]; metrics: Rec
                                 </div>
                                 <div className="flex items-center gap-2">
                                     <span className={`text-xs font-medium ${step.status === "completed"
-                                            ? "text-primary"
-                                            : step.status === "skipped"
-                                                ? "text-muted-foreground"
-                                                : "text-secondary-foreground"
+                                        ? "text-primary"
+                                        : step.status === "skipped"
+                                            ? "text-muted-foreground"
+                                            : "text-secondary-foreground"
                                         }`}>
                                         {step.status === "skipped" ? "skipped" : step.status}
                                     </span>
@@ -351,6 +556,24 @@ function PipelinePanel({ steps, metrics }: { steps: PipelineStep[]; metrics: Rec
                     ))}
                 </div>
             )}
+        </div>
+    );
+}
+
+function SourceDetailPanel({ doc, onClose }: { doc: DocumentOut; onClose: () => void }) {
+    return (
+        <div className="absolute inset-0 z-50 flex flex-col bg-background animate-in slide-in-from-right duration-300">
+            <div className="flex items-center justify-between p-4 border-b border-border/40 bg-muted/20">
+                <h3 className="text-sm font-semibold truncate flex-1 mr-4">{doc.title}</h3>
+                <Button variant="ghost" size="icon" onClick={onClose} className="h-8 w-8 shrink-0">
+                    <PanelRightClose className="h-4 w-4" />
+                </Button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6 font-serif">
+                <p className="text-sm leading-relaxed whitespace-pre-wrap text-foreground/90">
+                    {doc.text}
+                </p>
+            </div>
         </div>
     );
 }
@@ -381,7 +604,7 @@ function InlineHint({ label, detail }: { label: string; detail: string }) {
     );
 }
 
-function SourcesList({ sources }: { sources: CitationSource[] }) {
+function SourcesList({ sources, highlightedSourceId, onSourceClick }: { sources: CitationSource[]; highlightedSourceId?: string | null; onSourceClick?: (s: CitationSource) => void }) {
     const [showAll, setShowAll] = useState(false);
     const displaySources = showAll ? sources : sources.slice(0, 3);
 
@@ -405,7 +628,12 @@ function SourcesList({ sources }: { sources: CitationSource[] }) {
                 {displaySources.map((source, idx) => (
                     <div
                         key={`${source.id}-${idx}`}
-                        className="group flex min-w-0 gap-3 rounded-md border border-border/60 bg-card p-3 transition-colors hover:bg-muted/20"
+                        id={`source-${source.citation_number ?? idx + 1}`}
+                        onClick={() => onSourceClick?.(source)}
+                        className={`group flex min-w-0 gap-3 rounded-md border p-3 transition-all duration-500 cursor-pointer ${highlightedSourceId === String(source.citation_number ?? idx + 1)
+                            ? "bg-primary/10 border-primary ring-1 ring-primary"
+                            : "bg-card border-border/60 hover:bg-muted/20"
+                            }`}
                     >
                         <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-secondary/40 text-xs font-bold text-foreground">
                             {source.citation_number ?? idx + 1}
@@ -441,7 +669,69 @@ export function ChatInterface({
     setSelectedDocumentIds,
     providerConfig,
     activeStage,
+    progress,
+    history = [],
+    onNewChat,
+    onCancel,
+    savedSessions = [],
+    onLoadSession,
+    onDeleteSession,
+    onClearHistory,
+    scrollRef,
+    currentSessionId,
+    preset = "balanced",
+    onPresetChange,
 }: ChatInterfaceProps) {
+    const [highlightedSourceId, setHighlightedSourceId] = useState<string | null>(null);
+    const [selectedDoc, setSelectedDoc] = useState<DocumentOut | null>(null);
+    const [showHistory, setShowHistory] = useState(true);
+    const [showSources, setShowSources] = useState(true);
+    const [viewingArtifact, setViewingArtifact] = useState<'graph_rag' | 'raptor' | null>(null);
+
+    // Persist sources panel when query results are available
+    useEffect(() => {
+        if (queryResult && !showSources) {
+            setShowSources(true);
+        }
+    }, [queryResult]);
+
+    // Keyboard shortcuts
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+                e.preventDefault();
+                onNewChat?.();
+            }
+        };
+        window.addEventListener("keydown", handleKeyDown);
+        return () => window.removeEventListener("keydown", handleKeyDown);
+    }, [onNewChat]);
+
+    const handleCitationClick = (id: string) => {
+        setHighlightedSourceId(id);
+        if (!showSources) setShowSources(true);
+
+        const source = sourcesForDisplay.find(s => String(s.citation_number) === id);
+        if (source) {
+            const doc = documents.find(d => d.id === source.id || d.title === source.title);
+            if (doc) {
+                setSelectedDoc(doc);
+            }
+        }
+
+        setTimeout(() => {
+            const element = document.getElementById(`source-${id}`);
+            if (element) {
+                element.scrollIntoView({ behavior: "smooth", block: "center" });
+            }
+        }, 100);
+    };
+
+    const handleDeleteSaved = (e: React.MouseEvent, id: string) => {
+        e.stopPropagation();
+        onDeleteSession?.(id);
+    };
+
     const liveStages = useMemo(() => ([
         { name: "cache", label: "Cache", icon: Database },
         { name: "planning", label: "Planning", icon: Target },
@@ -500,12 +790,13 @@ export function ChatInterface({
     const showAnswerSkeleton = isQuerying && !hasAnswer;
     const showSourcesSkeleton = isQuerying && !hasSources;
     const layoutHasPipeline = hasPipeline || isQuerying;
-    const layoutHasSources = hasSources || isQuerying;
-    const resultGridClass = layoutHasPipeline && layoutHasSources
-        ? "xl:grid-cols-[minmax(240px,1fr)_minmax(0,2fr)_minmax(240px,1fr)]"
-        : layoutHasPipeline || layoutHasSources
-            ? "xl:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]"
-            : "lg:grid-cols-1";
+    const layoutHasSources = hasSources || isQuerying || hasAnswer; // Keep visible after query completes
+    // Grid columns based on visibility
+    // Default: 250px (History) | 1fr (Chat) | 300px (Sources)
+    const gridTemplate = `
+        ${showHistory ? "260px" : "0px"} 
+        minmax(0, 1fr) 
+        ${showSources && layoutHasSources ? "320px" : "0px"}`;
 
     const allSelected = documents.length > 0 && selectedDocumentIds.length === documents.length;
     const providerReady = Boolean(providerConfig?.generator_model || providerConfig?.planner_model || providerConfig?.gatherer_model);
@@ -540,362 +831,532 @@ export function ChatInterface({
     };
 
     return (
-        <Card className="overflow-hidden">
-            <CardHeader className="bg-muted/20">
-                <CardTitle className="flex items-center gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
-                        <MessageSquare className="h-5 w-5 text-primary" />
-                    </div>
-                    <div>
-                        <span>Query Interface</span>
-                    </div>
-                </CardTitle>
-                <CardDescription>
-                    Query your documents through the full RAG pipeline with transparent step-by-step processing.
-                </CardDescription>
-                <div className="mt-3 flex flex-wrap gap-2">
-                    <InlineHint
-                        label={hasDocs ? "Step 1: Documents ready" : "Step 1: Add documents"}
-                        detail="Upload PDFs, DOCX, Markdown, or paste text before asking."
-                    />
-                    <InlineHint
-                        label={providerReady ? "Step 2: Provider set" : "Step 2: Pick models"}
-                        detail="Choose planner/gatherer/generator models in Provider Settings."
-                    />
-                    <InlineHint
-                        label="Step 3: Ask & observe"
-                        detail="Run a question, then watch pipeline + sources update live."
-                    />
-                </div>
-            </CardHeader>
-            <CardContent className="space-y-6 pt-6">
-                {/* Premium setup checklist */}
-                {(missingDocs || missingProvider) && (
-                    <div className="flex flex-col gap-3 rounded-lg border border-border/70 bg-muted/10 p-4">
-                        <div className="flex items-center justify-between gap-3">
-                            <div className="flex items-center gap-2">
-                                <ShieldCheck className="h-4 w-4 text-primary" />
-                                <p className="text-sm font-semibold text-foreground">Getting ready</p>
-                            </div>
-                            <span className="text-xs text-muted-foreground">1–2 minutes</span>
-                        </div>
-                        <div className="space-y-2 text-sm">
-                            <div className="flex items-center gap-2">
-                                <span className={`h-2 w-2 rounded-full ${missingDocs ? "bg-amber-500" : "bg-emerald-500"}`} />
-                                <span className="text-foreground">{missingDocs ? "Add at least one document" : "Documents detected"}</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <span className={`h-2 w-2 rounded-full ${missingProvider ? "bg-amber-500" : "bg-emerald-500"}`} />
-                                <span className="text-foreground">{missingProvider ? "Select models in Provider Settings" : "Models configured"}</span>
-                            </div>
-                        </div>
-                        <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-                            <span className="rounded-full bg-muted px-2 py-1">Planner • Gatherer • Generator</span>
-                            <span className="rounded-full bg-muted px-2 py-1">Uses selected docs; falls back to all if none chosen</span>
-                        </div>
-                        {missingDocs && (
-                            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                                <UploadCloud className="h-4 w-4" />
-                                <span>Upload PDFs/DOCX/Markdown/TXT to unlock querying.</span>
-                            </div>
-                        )}
-                    </div>
-                )}
+        <div className="flex flex-col h-full gap-4 p-6 overflow-hidden">
+            {/* Main Content Area - Full height grid */}
+            <div
+                className="flex-1 min-h-0 grid transition-[grid-template-columns] duration-300 ease-in-out gap-0 overflow-hidden rounded-xl border border-border/40 bg-background shadow-sm"
+                style={{ gridTemplateColumns: gridTemplate }}
+            >
 
-                {/* Query Scope */}
-                <div className="rounded-lg border border-border/60 bg-muted/10 p-4">
-                    <div className="flex items-center justify-between gap-4">
-                        <div>
-                            <p className="text-sm font-semibold text-foreground">Query Scope</p>
-                            <p className="text-xs text-muted-foreground">
-                            {selectedDocumentIds.length === 0 || allSelected
-                                ? "Searching all documents"
-                                : `Searching ${selectedDocumentIds.length} selected document(s)`}
-                            </p>
-                        </div>
-                        <button
-                            type="button"
-                            onClick={toggleAll}
-                            className="text-xs font-medium text-secondary-foreground hover:text-foreground"
-                            title="Switch between all documents and a selected subset."
-                        >
-                            {selectedDocumentIds.length === 0 ? "Select specific" : "Use all"}
-                        </button>
-                    </div>
-                    {documents.length > 0 && selectedDocumentIds.length > 0 && (
-                        <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                            {documents.map(doc => (
-                                <label
-                                    key={doc.id}
-                                    className={`flex items-center gap-2 rounded-md border px-3 py-2 text-xs transition-colors ${selectedDocumentIds.includes(doc.id)
-                                        ? "border-primary/30 bg-primary/10"
-                                        : "border-border/60 bg-card"
-                                    }`}
+                {/* Left Column: History/Threads */}
+                <div className={`flex flex-col border-r border-border/40 bg-muted/20 h-full overflow-hidden transition-all duration-300 ${!showHistory && "opacity-0 invisible w-0 border-none"}`}>
+                    <div className="p-4 border-b border-border/40 flex items-center justify-between">
+                        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
+                            <History className="h-3.5 w-3.5" /> History
+                        </h3>
+                        <div className="flex items-center gap-1">
+                            {onClearHistory && savedSessions.length > 0 && (
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={onClearHistory}
+                                    className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                                    title="Clear All History"
                                 >
-                                    <input
-                                        type="checkbox"
-                                        checked={selectedDocumentIds.includes(doc.id)}
-                                        onChange={() => toggleDoc(doc.id)}
-                                        className="h-3.5 w-3.5 rounded border-border text-primary focus:ring-primary"
-                                    />
-                                    <span className="truncate">{doc.title}</span>
-                                </label>
-                            ))}
-                        </div>
-                    )}
-                </div>
-
-                {/* Query Status */}
-                <div className="rounded-lg border border-border/60 bg-card p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-4">
-                        <div>
-                            <p className="text-sm font-semibold text-foreground">Query Status</p>
-                            <p className="text-xs text-muted-foreground">
-                                {isQuerying ? "Running query..." : queryResult ? "Last query complete" : "Idle"}
-                            </p>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                            <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1">
-                                <FileText className="h-3 w-3" />
-                                {selectedDocumentIds.length === 0 || selectedDocumentIds.length === documents.length
-                                    ? "All docs"
-                                    : `${selectedDocumentIds.length} docs`}
-                            </span>
-                            {providerConfig?.planner_model && (
-                                <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1">
-                                    Planner: {providerConfig.planner_model}
-                                </span>
+                                    <Trash2 className="h-4 w-4" />
+                                </Button>
                             )}
-                            {providerConfig?.gatherer_model && (
-                                <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1">
-                                    Gatherer: {providerConfig.gatherer_model}
-                                </span>
-                            )}
-                            {providerConfig?.generator_model && (
-                                <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1">
-                                    Generator: {providerConfig.generator_model}
-                                </span>
-                            )}
-                            {queryResult?.metrics?.duration_ms && typeof queryResult.metrics.duration_ms === "number" && (
-                                <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1">
-                                    <Activity className="h-3 w-3" />
-                                    {queryResult.metrics.duration_ms.toFixed(0)}ms
-                                </span>
-                            )}
-                        </div>
-                    </div>
-                </div>
-
-                {/* Onboarding nudges */}
-                {!providerReady && (
-                    <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-                        <HelpCircle className="mt-0.5 h-4 w-4" />
-                        <div>
-                            <p className="font-semibold">Select your models to run queries</p>
-                            <p className="text-xs text-amber-800">
-                                Open <strong>Provider Settings</strong> and choose planner / gatherer / generator models (or apply an auto-detected provider).
-                            </p>
-                        </div>
-                    </div>
-                )}
-
-                {/* Live Observability */}
-                <div className="rounded-lg border border-border/60 bg-muted/10 p-4">
-                    <div className="flex items-center justify-between gap-4">
-                        <div>
-                            <p className="text-sm font-semibold text-foreground">Live Pipeline</p>
-                            <p className="text-xs text-muted-foreground">
-                                {isQuerying
-                                    ? (activeStage ? activeStageCopy[activeStage] ?? "Processing pipeline..." : (completedStages.size === 0 ? "Awaiting pipeline response..." : "Step telemetry received."))
-                                    : "Idle"}
-                            </p>
-                        </div>
-                        {providerConfig && (
-                            <div className="text-right text-xs text-muted-foreground">
-                                <div>Planner: {providerConfig.planner_model || "default"}</div>
-                                <div>Gatherer: {providerConfig.gatherer_model || "default"}</div>
-                                <div>Generator: {providerConfig.generator_model || "default"}</div>
-                            </div>
-                        )}
-                    </div>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                        {liveStages.map(stage => {
-                            const isComplete = completedStages.has(stage.name);
-                            const isActive = isQuerying && activeStage === stage.name;
-                            const StageIcon = stage.icon;
-                            return (
-                                <span
-                                    key={stage.name}
-                                    className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${isComplete
-                                        ? "bg-primary text-primary-foreground"
-                                        : isActive
-                                            ? "bg-secondary text-secondary-foreground"
-                                            : "bg-muted/60 text-muted-foreground"
-                                    }`}
+                            {onNewChat && (
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={onNewChat}
+                                    className="h-7 w-7 text-muted-foreground hover:text-primary hover:bg-primary/10"
+                                    title="New Chat"
                                 >
-                                    {isComplete ? (
-                                        <CheckCircle2 className="h-3.5 w-3.5" />
-                                    ) : isActive ? (
-                                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                    ) : (
-                                        <StageIcon className="h-3.5 w-3.5" />
-                                    )}
-                                    {stage.label}
-                                </span>
-                            );
-                        })}
+                                    <PlusCircle className="h-4 w-4" />
+                                </Button>
+                            )}
+                        </div>
                     </div>
-                </div>
+                    <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                        <div className="mt-2 mb-2 px-2 text-[10px] uppercase font-bold text-muted-foreground/60 tracking-widest">
+                            Archived
+                        </div>
 
-                {/* Query Input */}
-                <div className="flex flex-col gap-3 sm:flex-row">
-                    <Input
-                        value={question}
-                        onChange={e => setQuestion(e.target.value)}
-                        placeholder="Type your question here..."
-                        className="flex-1 text-base"
-                        onKeyDown={e => e.key === "Enter" && !isQuerying && handleAsk()}
-                    />
-                    <Button
-                        disabled={isQuerying}
-                        onClick={handleAsk}
-                        className=""
-                    >
-                        {isQuerying ? (
-                            <>
-                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                Processing...
-                            </>
+                        {savedSessions.length === 0 ? (
+                            <div className="p-4 text-xs text-muted-foreground text-center italic opacity-60">
+                                No archived chats
+                            </div>
                         ) : (
-                            "Run Query"
+                            savedSessions.map((session) => {
+                                const isActive = session.id === currentSessionId;
+                                return (
+                                    <div
+                                        key={session.id}
+                                        className={`group flex items-center justify-between p-2.5 rounded-lg border transition-all cursor-pointer ${isActive
+                                            ? "bg-primary/10 border-primary/30 shadow-sm"
+                                            : "bg-transparent border-transparent hover:bg-muted/50 hover:border-border/40"
+                                            }`}
+                                        onClick={() => onLoadSession?.(session)}
+                                    >
+                                        <div className="flex items-center gap-3 min-w-0">
+                                            <MessageSquare className={`h-4 w-4 shrink-0 ${isActive ? "text-primary" : "text-muted-foreground"}`} />
+                                            <div className="min-w-0">
+                                                <div className={`text-sm truncate ${isActive ? "font-semibold text-primary" : "text-foreground/80 font-medium"}`}>
+                                                    {session.title}
+                                                </div>
+                                                <div className="text-[10px] text-muted-foreground mt-0.5">
+                                                    {new Date(session.createdAt).toLocaleDateString()}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            className={`h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-destructive/10 hover:text-destructive ${isActive ? "opacity-100 text-primary/60" : ""}`}
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                onDeleteSession?.(session.id);
+                                            }}
+                                        >
+                                            <Trash2 className="h-3.5 w-3.5" />
+                                        </Button>
+                                    </div>
+                                );
+                            })
                         )}
-                    </Button>
+                    </div>
                 </div>
 
-                {/* Loading State */}
-                {isQuerying && (
-                    <div className="flex items-center gap-3 rounded-lg border border-border/60 bg-muted/20 p-4">
-                        <Loader2 className="h-5 w-5 animate-spin text-secondary-foreground" />
-                        <div>
-                            <p className="font-medium text-foreground">
-                                Processing your query...
-                            </p>
-                            <p className="text-sm text-muted-foreground">
-                                Planning → Retrieval → Generation
-                            </p>
-                        </div>
+                {/* Center Column: Chat & Input */}
+                <div className="flex flex-col h-full relative min-w-0 overflow-hidden bg-background/50">
+                    {/* Toggle header */}
+                    <div className="absolute top-4 left-4 z-10 transition-opacity duration-300">
+                        {!showHistory && (
+                            <Button variant="ghost" size="icon" onClick={() => setShowHistory(true)} className="h-8 w-8 text-muted-foreground hover:text-foreground">
+                                <PanelLeftOpen className="h-4 w-4" />
+                            </Button>
+                        )}
+                        {showHistory && (
+                            <Button variant="ghost" size="icon" onClick={() => setShowHistory(false)} className="h-8 w-8 text-muted-foreground hover:text-foreground">
+                                <PanelLeftClose className="h-4 w-4" />
+                            </Button>
+                        )}
                     </div>
-                )}
+                    {/* Scrollable Chat Area */}
+                    <div className="flex-1 overflow-y-auto px-4 py-6 scroll-smooth">
+                        <div className="max-w-3xl mx-auto flex flex-col gap-6">
 
-                {/* Results */}
-                {(queryResult || isQuerying) && (
-                    <div className="space-y-6">
-                        <div className={`grid gap-6 min-w-0 lg:items-start ${resultGridClass}`}>
-                            {hasPipeline && queryResult && (
-                                <div className="space-y-6 min-w-0 xl:sticky xl:top-6 xl:self-start">
-                                    <PipelinePanel steps={displaySteps} metrics={queryResult.metrics ?? {}} />
-                                </div>
-                            )}
-                            {showPipelineSkeleton && (
-                                <div className="space-y-4 min-w-0 xl:sticky xl:top-6 xl:self-start">
-                                    <div className="rounded-lg border border-border/60 bg-card p-4">
-                                        <div className="flex items-center justify-between">
-                                            <SkeletonBlock className="h-5 w-40" />
-                                            <SkeletonBlock className="h-4 w-16" />
+                            {/* Internal Header Content / Setup Widgets */}
+                            <div className="flex flex-col gap-4 mb-4">
+                                {/* Premium setup checklist */}
+                                {(missingDocs || missingProvider) && (
+                                    <div className="flex flex-col gap-3 rounded-lg border border-border/70 bg-muted/10 p-4">
+                                        <div className="flex items-center justify-between gap-3">
+                                            <div className="flex items-center gap-2">
+                                                <ShieldCheck className="h-4 w-4 text-primary" />
+                                                <p className="text-sm font-semibold text-foreground">Getting ready</p>
+                                            </div>
+                                            <span className="text-xs text-muted-foreground">1–2 minutes</span>
                                         </div>
-                                        <div className="mt-4 space-y-3">
-                                            <SkeletonBlock className="h-24 w-full" />
-                                            <SkeletonBlock className="h-24 w-full" />
+                                        <div className="space-y-2 text-sm">
+                                            <div className="flex items-center gap-2">
+                                                <span className={`h-2 w-2 rounded-full ${missingDocs ? "bg-amber-500" : "bg-emerald-500"}`} />
+                                                <span className="text-foreground">{missingDocs ? "Add at least one document" : "Documents detected"}</span>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                <span className={`h-2 w-2 rounded-full ${missingProvider ? "bg-amber-500" : "bg-emerald-500"}`} />
+                                                <span className="text-foreground">{missingProvider ? "Select models in Provider Settings" : "Models configured"}</span>
+                                            </div>
+                                        </div>
+                                        <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                                            <span className="rounded-full bg-muted px-2 py-1">Planner • Gatherer • Generator</span>
+                                            <span className="rounded-full bg-muted px-2 py-1">Uses selected docs; falls back to all if none chosen</span>
+                                        </div>
+                                        {missingDocs && (
+                                            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                                                <UploadCloud className="h-4 w-4" />
+                                                <span>Upload PDFs/DOCX/Markdown/TXT to unlock querying.</span>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
+                                {/* Query Scope */}
+                                <div className="rounded-lg border border-border/60 bg-muted/10 p-4">
+                                    <div className="flex items-center justify-between gap-4">
+                                        <div>
+                                            <p className="text-sm font-semibold text-foreground">Query Scope</p>
+                                            <p className="text-xs text-muted-foreground">
+                                                {selectedDocumentIds.length === 0 || allSelected
+                                                    ? "Searching all documents"
+                                                    : `Searching ${selectedDocumentIds.length} selected document(s)`}
+                                            </p>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={toggleAll}
+                                            className="text-xs font-medium text-secondary-foreground hover:text-foreground"
+                                            title="Switch between all documents and a selected subset."
+                                        >
+                                            {selectedDocumentIds.length === 0 ? "Select specific" : "Use all"}
+                                        </button>
+                                    </div>
+                                    {documents.length > 0 && selectedDocumentIds.length > 0 && (
+                                        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                                            {documents.map(doc => (
+                                                <label
+                                                    key={doc.id}
+                                                    className={`flex items-center gap-2 rounded-md border px-3 py-2 text-xs transition-colors ${selectedDocumentIds.includes(doc.id)
+                                                        ? "border-primary/30 bg-primary/10"
+                                                        : "border-border/60 bg-card"
+                                                        }`}
+                                                >
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={selectedDocumentIds.includes(doc.id)}
+                                                        onChange={() => toggleDoc(doc.id)}
+                                                        className="h-3.5 w-3.5 rounded border-border text-primary focus:ring-primary"
+                                                    />
+                                                    <span className="truncate">{doc.title}</span>
+                                                </label>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Enterprise Controls Removed */}
+                            </div>
+
+                            {/* Welcome / Empty State */}
+                            {!hasAnswer && history.length === 0 && !isQuerying && (
+                                <div className="flex flex-col items-center justify-center min-h-[50vh] text-center space-y-8 animate-in fade-in zoom-in duration-500">
+
+                                    {/* System Quick Stats - Moved to Top */}
+                                    <div className="flex items-center gap-6 mb-4 w-full max-w-2xl justify-center">
+                                        <div className="flex flex-col items-center">
+                                            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Documents</span>
+                                            <span className="text-xl font-bold font-mono text-foreground/80">{selectedDocumentIds.length || documents.length}</span>
+                                        </div>
+                                        <div className="w-px h-8 bg-border/40" />
+                                        <div className="flex flex-col items-center max-w-[200px]">
+                                            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Models</span>
+                                            <div className="flex flex-col items-center text-xs font-semibold text-primary/80">
+                                                <span className="truncate max-w-[180px]">{providerConfig?.planner_model || "Not set"}</span>
+                                            </div>
+                                        </div>
+                                        <div className="w-px h-8 bg-border/40" />
+                                        <div className="flex flex-col items-center">
+                                            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Provider</span>
+                                            <span className="text-sm font-bold text-foreground/80 uppercase">
+                                                {providerConfig?.base_url?.includes("11434") ? "Ollama" :
+                                                    providerConfig?.base_url?.includes("1234") ? "LM Studio" :
+                                                        "Custom"}
+                                            </span>
                                         </div>
                                     </div>
-                                </div>
-                            )}
 
-                            <div className="space-y-6 min-w-0">
-                                {queryResult?.answer && (
-                                    <div className="rounded-lg border border-border/60 bg-card p-6">
-                                        <div className="mb-3 flex items-center gap-2">
-                                            <Sparkles className="h-4 w-4" />
-                                            <h3 className="font-semibold text-foreground">Answer</h3>
+                                    <div className="space-y-4">
+                                        <div className="h-20 w-20 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto mb-6 shadow-lg">
+                                            <Sparkles className="h-10 w-10 text-primary animate-pulse" />
                                         </div>
-                                        <p className="whitespace-pre-wrap text-base leading-relaxed text-foreground">
-                                            {queryResult.answer}
+                                        <h2 className="text-3xl font-bold tracking-tight bg-gradient-to-br from-foreground to-foreground/60 bg-clip-text text-transparent italic">
+                                            How can I help you today?
+                                        </h2>
+                                        <p className="text-muted-foreground max-w-lg mx-auto text-lg leading-relaxed font-light">
+                                            Ask me anything about your documents. I'll search, synthesize, and cite sources for every factual claim.
                                         </p>
                                     </div>
-                                )}
-                                {showAnswerSkeleton && (
-                                    <div className="rounded-lg border border-border/60 bg-card p-6">
-                                        <SkeletonBlock className="h-5 w-24" />
-                                        <div className="mt-4 space-y-3">
-                                            <SkeletonBlock className="h-4 w-full" />
-                                            <SkeletonBlock className="h-4 w-11/12" />
-                                            <SkeletonBlock className="h-4 w-10/12" />
-                                            <SkeletonBlock className="h-4 w-9/12" />
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
 
-                            {hasSources && queryResult && (
-                                <div className="space-y-6 min-w-0 xl:sticky xl:top-6 xl:self-start">
-                                    <div className="rounded-lg border border-border/60 p-4 overflow-hidden">
-                                        <SourcesList
-                                            sources={sourcesForDisplay}
-                                        />
+                                    <div className="grid sm:grid-cols-2 gap-4 max-w-2xl w-full px-4">
+                                        {[
+                                            {
+                                                title: "Technical Summary",
+                                                desc: "Summarize the key architectural components of this system.",
+                                                icon: Box
+                                            },
+                                            {
+                                                title: "Identify Risks",
+                                                desc: "Search for potential single points of failure mentioned in documents.",
+                                                icon: AlertTriangle
+                                            },
+                                            {
+                                                title: "Data Analysis",
+                                                desc: "Provide a breakdown of all dates and timelines found in the corpus.",
+                                                icon: Activity
+                                            },
+                                            {
+                                                title: "Onboarding Memo",
+                                                desc: "Give me a brief informed memo in the style of a formal email.",
+                                                icon: HelpCircle
+                                            }
+                                        ].map((suggestion, i) => (
+                                            <button
+                                                key={i}
+                                                onClick={() => setQuestion(suggestion.desc)}
+                                                className="group relative flex flex-col items-start gap-2 rounded-xl border border-border/40 bg-card/50 p-4 text-left transition-all hover:bg-muted/50 hover:border-border/80 hover:shadow-sm"
+                                            >
+                                                <div className="flex w-full items-center justify-between">
+                                                    <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                                                        <suggestion.icon className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors" />
+                                                        {suggestion.title}
+                                                    </div>
+                                                    <ArrowRight className="h-4 w-4 opacity-0 -translate-x-2 transition-all group-hover:opacity-100 group-hover:translate-x-0 text-muted-foreground" />
+                                                </div>
+                                                <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">
+                                                    {suggestion.desc}
+                                                </p>
+                                            </button>
+                                        ))}
+                                    </div>
+
+                                </div>
+                            )}
+
+                            {/* Chat History */}
+                            {history.map((turn, idx) => (
+                                <HistoryItem
+                                    key={idx}
+                                    role={turn.role}
+                                    content={turn.content}
+                                    onCitationClick={handleCitationClick}
+                                    onRegenerate={turn.role === "assistant" && idx === history.length - 1 && !isQuerying ? () => {
+                                        // Find the last user message to use as the question
+                                        const lastUserMessage = [...history].reverse().find(m => m.role === "user");
+                                        if (lastUserMessage) {
+                                            handleAsk(lastUserMessage.content, true);
+                                        }
+                                    } : undefined}
+                                />
+                            ))}
+
+                            {/* Streaming Result bubble */}
+                            {isQuerying && queryResult?.answer && (
+                                <HistoryItem
+                                    role="assistant"
+                                    content={queryResult.answer}
+                                />
+                            )}
+
+                            {/* Progress Indicator - Enhanced with typing dots and detailed step info */}
+                            {isQuerying && (
+                                <div className="flex items-start gap-3 mt-4">
+                                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 border border-primary/20 text-primary">
+                                        <Sparkles className="h-4 w-4" />
+                                    </div>
+                                    <div className="flex flex-col gap-2 flex-1">
+                                        <div className="flex items-center gap-2 px-4 py-3 rounded-2xl rounded-tl-none bg-card border border-border/40">
+                                            {/* Typing dots animation */}
+                                            <div className="flex gap-1">
+                                                <span className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                                                <span className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                                                <span className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                                            </div>
+                                            <span className="text-sm text-muted-foreground ml-2">
+                                                {progress?.message || "Thinking..."}
+                                            </span>
+                                        </div>
+                                        {/* Detailed step info panel */}
+                                        {progress && (
+                                            <div className="px-4 py-2 rounded-lg bg-muted/30 border border-border/20 text-xs space-y-1">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="font-medium text-foreground/80">
+                                                        Stage: {progress.stage?.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()) || 'Processing'}
+                                                    </span>
+                                                    {progress.elapsed_ms && (
+                                                        <span className="text-muted-foreground">
+                                                            ({(progress.elapsed_ms / 1000).toFixed(1)}s)
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                {progress.detail && (
+                                                    <p className="text-muted-foreground/80">{progress.detail}</p>
+                                                )}
+                                                {progress.progress !== undefined && (
+                                                    <div className="w-full bg-muted rounded-full h-1.5 mt-1">
+                                                        <div
+                                                            className="bg-primary h-1.5 rounded-full transition-all duration-300"
+                                                            style={{ width: `${Math.round(progress.progress * 100)}%` }}
+                                                        />
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                             )}
-                            {showSourcesSkeleton && (
-                                <div className="space-y-4 min-w-0 xl:sticky xl:top-6 xl:self-start">
-                                    <div className="rounded-lg border border-border/60 bg-card p-4">
-                                        <div className="flex items-center justify-between">
-                                            <SkeletonBlock className="h-5 w-24" />
-                                            <SkeletonBlock className="h-4 w-16" />
-                                        </div>
-                                        <div className="mt-4 space-y-3">
-                                            <SkeletonBlock className="h-16 w-full" />
-                                            <SkeletonBlock className="h-16 w-full" />
-                                            <SkeletonBlock className="h-16 w-full" />
-                                        </div>
-                                    </div>
+
+                            {/* Scroll Anchor */}
+                            <div ref={scrollRef} className="h-4 w-full" />
+                        </div>
+                    </div>
+
+                    {/* Standard Input Area (Flex Item, Not Absolute) */}
+                    <div className="flex-none p-4 w-full bg-background border-t border-border/40">
+                        <div className="max-w-3xl mx-auto">
+                            <div className="relative group bg-background rounded-xl shadow-sm border border-border/40 focus-within:border-primary/50 focus-within:ring-1 focus-within:ring-primary/20 transition-all">
+                                <textarea
+                                    value={question}
+                                    onChange={e => setQuestion(e.target.value)}
+                                    // Submit on Enter
+                                    onKeyDown={e => {
+                                        if (e.key === "Enter" && !e.shiftKey) {
+                                            e.preventDefault();
+                                            if (!isQuerying) handleAsk();
+                                        }
+                                    }}
+                                    placeholder="Create a report based of the documents..."
+                                    className="w-full bg-transparent border-0 focus:ring-0 resize-none py-4 pl-4 pr-24 min-h-[50px] max-h-[200px] text-base outline-none scrollbar-hide font-normal leading-relaxed placeholder:text-muted-foreground/50"
+                                    style={{ height: "auto" }}
+                                />
+                                <div className="absolute bottom-2.5 right-3 flex items-center gap-2">
+                                    {isQuerying && onCancel && (
+                                        <Button
+                                            size="sm"
+                                            variant="ghost"
+                                            onClick={onCancel}
+                                            className="h-8 px-3 text-xs flex items-center gap-1.5 text-destructive hover:text-destructive hover:bg-destructive/10"
+                                        >
+                                            <XCircle className="h-3.5 w-3.5" />
+                                            Cancel
+                                        </Button>
+                                    )}
+                                    <Button
+                                        size="icon"
+                                        disabled={isQuerying || !question.trim()}
+                                        onClick={() => handleAsk()}
+                                        className={`h-8 w-8 transition-all ${question.trim() ? "bg-primary text-primary-foreground shadow-md hover:scale-105 active:scale-95" : "bg-muted text-muted-foreground"}`}
+                                    >
+                                        {isQuerying ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                                    </Button>
+                                </div>
+                            </div>
+                            {/* Quick Suggestion Chips - Show when no active query and input is empty */}
+                            {!isQuerying && !question.trim() && history.length === 0 && documents.length > 0 && (
+                                <div className="flex flex-wrap gap-2 mt-3">
+                                    <span className="text-[10px] text-muted-foreground/70 w-full mb-1">Try asking:</span>
+                                    {[
+                                        "Summarize the main points",
+                                        "What are the key findings?",
+                                        "Compare the approaches",
+                                        "List important dates"
+                                    ].map((suggestion) => (
+                                        <button
+                                            key={suggestion}
+                                            onClick={() => setQuestion(suggestion)}
+                                            className="text-xs px-3 py-1.5 rounded-full bg-muted/50 text-muted-foreground hover:bg-primary/10 hover:text-primary border border-border/40 hover:border-primary/30 transition-all"
+                                        >
+                                            {suggestion}
+                                        </button>
+                                    ))}
                                 </div>
                             )}
                         </div>
+                    </div>
+                </div>
 
-                        {/* Quick Stats */}
-                        {queryResult && (
-                            <div className="flex flex-wrap gap-3">
-                                <span className="inline-flex items-center gap-1.5 rounded-lg bg-muted px-3 py-1.5 text-xs font-medium">
-                                    <FileText className="h-3.5 w-3.5" />
-                                    {(typeof queryResult.metrics.chunks === "number" ? queryResult.metrics.chunks : queryResult.chunks.length)} chunks
-                                </span>
-                                <span className="inline-flex items-center gap-1.5 rounded-lg bg-muted px-3 py-1.5 text-xs font-medium">
-                                    <Gauge className="h-3.5 w-3.5" />
-                                    {(((typeof queryResult.metrics.coverage === "number" ? queryResult.metrics.coverage : 0) * 100).toFixed(0))}% coverage
-                                </span>
-                                <span className="inline-flex items-center gap-1.5 rounded-lg bg-muted px-3 py-1.5 text-xs font-medium">
-                                    <FileSearch className="h-3.5 w-3.5" />
-                                    {typeof queryResult.metrics.tokens === "number" ? queryResult.metrics.tokens : 0} tokens
-                                </span>
-                                <span className="inline-flex items-center gap-1.5 rounded-lg bg-muted px-3 py-1.5 text-xs font-medium">
-                                    <Activity className="h-3.5 w-3.5" />
-                                    {(typeof queryResult.metrics.duration_ms === "number" ? queryResult.metrics.duration_ms.toFixed(0) : "N/A")}ms
-                                </span>
+                {/* Right Column: Sources/Pipeline */}
+                <div className={`flex flex-col border-l border-border/40 bg-muted/10 h-full overflow-hidden transition-all duration-300 ${!showSources && "opacity-0 invisible w-0 border-none"}`}>
+                    <div className="p-4 border-b border-border/40 flex items-center justify-between bg-muted/20">
+                        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
+                            <FileText className="h-3 w-3" /> Sources
+                        </h3>
+                        <Button variant="ghost" size="icon" onClick={() => setShowSources(false)} className="h-6 w-6">
+                            <PanelRightClose className="h-3 w-3" />
+                        </Button>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                        {/* Pipeline Status Widget - Hide when complete */}
+                        {isQuerying && (
+                            <div className="rounded-lg border border-border/60 bg-background p-3 mb-4 shadow-sm animate-in slide-in-from-top duration-300">
+                                <div className="flex items-center justify-between text-xs mb-3">
+                                    <span className="font-bold text-foreground">Pipeline Execution</span>
+                                    <span className={`px-2 py-0.5 rounded-full ${isQuerying ? "bg-primary/10 text-primary animate-pulse" : "bg-muted text-muted-foreground"}`}>
+                                        {isQuerying ? (activeStage || "Running") : "Complete"}
+                                    </span>
+                                </div>
+                                <div className="space-y-2">
+                                    {(isQuerying ? liveStages : (queryResult?.steps || [])).map((stage: any) => {
+                                        const stepName = isQuerying ? stage.name : stage.name;
+                                        const stepLabel = isQuerying ? stage.label : (stage.name.charAt(0).toUpperCase() + stage.name.slice(1));
+
+                                        const isActive = isQuerying && (activeStage === stepName || progress?.stage === stepName);
+                                        const isDone = !isQuerying || completedStages.has(stepName);
+
+                                        return (
+                                            <div key={stepName} className="flex items-center justify-between text-[11px]">
+                                                <div className={`flex items-center gap-2 ${isActive ? "text-primary font-medium" : isDone ? "text-foreground/80" : "text-muted-foreground"}`}>
+                                                    {isActive ? (
+                                                        <Loader2 className="h-3 w-3 animate-spin" />
+                                                    ) : isDone ? (
+                                                        <CheckCircle2 className="h-3 w-3 text-emerald-500" />
+                                                    ) : (
+                                                        <div className="h-1.5 w-1.5 rounded-full bg-muted-foreground/30 ml-0.5 mr-1" />
+                                                    )}
+                                                    {stepLabel}
+                                                </div>
+                                                {isDone && !isActive && !isQuerying && (
+                                                    <span className="text-[9px] font-mono opacity-60">
+                                                        {queryResult?.steps?.find((s: any) => s.name === stepName)?.duration_ms?.toFixed(0)}ms
+                                                    </span>
+                                                )}
+                                            </div>
+                                        )
+                                    })}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Sources List */}
+                        {showSourcesSkeleton ? (
+                            <div className="space-y-4">
+                                <SkeletonBlock className="h-24 w-full" />
+                                <SkeletonBlock className="h-24 w-full" />
+                            </div>
+                        ) : (
+                            <SourcesList
+                                sources={sourcesForDisplay}
+                                highlightedSourceId={highlightedSourceId}
+                                onSourceClick={(s) => {
+                                    const doc = documents.find(d => d.id === s.id || d.title === s.title);
+                                    if (doc) setSelectedDoc(doc);
+                                }}
+                            />
+                        )}
+
+                        {/* Full Document Detail View */}
+                        {selectedDoc && (
+                            <SourceDetailPanel
+                                doc={selectedDoc}
+                                onClose={() => setSelectedDoc(null)}
+                            />
+                        )}
+
+                        {/* Confidence Indicator - Show after query completes */}
+                        {!isQuerying && queryResult?.confidence && (
+                            <div className="mt-4">
+                                <ConfidenceIndicator
+                                    confidence={queryResult.confidence.overall}
+                                    factors={queryResult.confidence.factors}
+                                    hallucinationPass={queryResult.confidence.hallucination_pass}
+                                    evidenceContractPass={queryResult.confidence.evidence_contract_pass}
+                                />
                             </div>
                         )}
                     </div>
-                )}
+                </div>
 
-                {/* Empty State */}
-                {!queryResult && !isQuerying && (
-                    <div className="rounded-lg border border-dashed border-border/70 p-12 text-center">
-                        <Search className="mx-auto h-8 w-8 text-muted-foreground" />
-                        <p className="mt-3 text-muted-foreground">
-                            Enter a question above to search your documents
-                        </p>
+                {/* Right Panel Toggle (Absolute if closed) */}
+                {!showSources && (
+                    <div className="absolute top-4 right-4 z-10 hidden xl:block">
+                        <Button variant="ghost" size="icon" onClick={() => setShowSources(true)} className="h-8 w-8 text-muted-foreground hover:text-foreground bg-background/50 backdrop-blur border border-border/20">
+                            <PanelRightOpen className="h-4 w-4" />
+                        </Button>
                     </div>
                 )}
-            </CardContent>
-        </Card>
+            </div>
+
+            {/* Artifact Detail Modal */}
+            {
+                viewingArtifact && (
+                    <ArtifactViewer
+                        type={viewingArtifact}
+                        onClose={() => setViewingArtifact(null)}
+                    />
+                )
+            }
+        </div >
     );
 }

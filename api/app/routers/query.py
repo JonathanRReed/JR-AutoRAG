@@ -49,6 +49,10 @@ async def ask_stream(payload: QueryRequest, container: ServiceContainer = Depend
     def on_stage(stage: str) -> None:
         queue.put_nowait({"type": "stage", "data": {"name": stage}})
 
+    def on_progress(progress: dict) -> None:
+        """Enhanced progress callback with human-readable messages."""
+        queue.put_nowait({"type": "progress", "data": progress})
+
     async def run_query() -> None:
         try:
             result = await container.orchestrator.answer(
@@ -57,6 +61,8 @@ async def ask_stream(payload: QueryRequest, container: ServiceContainer = Depend
                 on_step=on_step,
                 on_token=on_token,
                 on_stage=on_stage,
+                on_progress=on_progress,
+                history=payload.history,
             )
             await queue.put({"type": "result", "data": result})
         except Exception as exc:
@@ -74,6 +80,7 @@ async def ask_stream(payload: QueryRequest, container: ServiceContainer = Depend
             yield f"data: {json.dumps(item)}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
 
 
 @router.get("/traces", response_model=list[TraceOut])
@@ -99,3 +106,7 @@ def list_traces(container: ServiceContainer = Depends(get_container)):
         )
         for trace in traces
     ]
+@router.post("/cancel")
+async def cancel_trace(trace_id: str, container: ServiceContainer = Depends(get_container)):
+    container.orchestrator.cancel_trace(trace_id)
+    return {"status": "cancelled", "trace_id": trace_id}

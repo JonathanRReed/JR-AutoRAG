@@ -451,11 +451,69 @@ class IndexPersistence:
             if path.exists():
                 path.unlink()
     
+    def save_graph(self, index_name: str, graph_data: dict[str, Any], metadata: IndexMetadata) -> Path:
+        """Save GraphRAG data to disk."""
+        path = self._base_path / f"{index_name}_graph.pkl"
+        with open(path, "wb") as f:
+            pickle.dump(graph_data, f)
+        
+        # Save metadata for graph
+        metadata_path = self._metadata_path(f"{index_name}_graph")
+        with open(metadata_path, "w") as f:
+            json.dump(metadata.to_dict(), f, indent=2)
+        
+        return path
+
+    def load_graph(self, index_name: str) -> tuple[dict[str, Any] | None, IndexMetadata | None]:
+        """Load GraphRAG data from disk."""
+        path = self._base_path / f"{index_name}_graph.pkl"
+        metadata_path = self._metadata_path(f"{index_name}_graph")
+        
+        if not path.exists() or not metadata_path.exists():
+            return None, None
+            
+        with open(path, "rb") as f:
+            data = pickle.load(f)
+        
+        with open(metadata_path, "r") as f:
+            metadata = IndexMetadata.from_dict(json.load(f))
+            
+        return data, metadata
+
+    def save_trees(self, index_name: str, trees: dict[str, Any], metadata: IndexMetadata) -> Path:
+        """Save RAPTOR hierarchical trees to disk."""
+        path = self._base_path / f"{index_name}_trees.pkl"
+        with open(path, "wb") as f:
+            pickle.dump(trees, f)
+            
+        # Save metadata for trees
+        metadata_path = self._metadata_path(f"{index_name}_trees")
+        with open(metadata_path, "w") as f:
+            json.dump(metadata.to_dict(), f, indent=2)
+            
+        return path
+
+    def load_trees(self, index_name: str) -> tuple[dict[str, Any] | None, IndexMetadata | None]:
+        """Load RAPTOR hierarchical trees from disk."""
+        path = self._base_path / f"{index_name}_trees.pkl"
+        metadata_path = self._metadata_path(f"{index_name}_trees")
+        
+        if not path.exists() or not metadata_path.exists():
+            return None, None
+            
+        with open(path, "rb") as f:
+            trees = pickle.load(f)
+            
+        with open(metadata_path, "r") as f:
+            metadata = IndexMetadata.from_dict(json.load(f))
+            
+        return trees, metadata
+
     def list_indexes(self) -> list[str]:
         """List all saved indexes."""
         indexes = set()
         for path in self._base_path.glob("*_metadata.json"):
-            name = path.stem.replace("_metadata", "").replace("_sparse", "")
+            name = path.stem.replace("_metadata", "").replace("_sparse", "").replace("_graph", "").replace("_trees", "")
             indexes.add(name)
         return sorted(indexes)
 

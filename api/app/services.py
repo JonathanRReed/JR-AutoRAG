@@ -55,7 +55,13 @@ class ServiceContainer:
         )
         
         self.retrieval_engine = HybridRetrievalEngine(self.document_store, retrieval_config)
-        self.retrieval_engine.build()
+        
+        # Try loading cached index first - only rebuild if invalid/stale
+        if not self.retrieval_engine.load_index():
+            print("HybridRetrievalEngine: No valid cached index, building fresh...")
+            self.retrieval_engine.build()
+        else:
+            print("HybridRetrievalEngine: Loaded cached index successfully!")
         self.ingest = IngestPipeline(self.document_store, self.retrieval_engine)
         self.gatherer = Gatherer(self.retrieval_engine)
         self.simple_planner = Planner(cfg)
@@ -70,6 +76,10 @@ class ServiceContainer:
             telemetry=self.telemetry,
         )
         self.orchestrator.rebuild(cfg)
+        
+        # Register orchestrator in global state for traces.py access
+        from .state import set_orchestrator
+        set_orchestrator(self.orchestrator)
 
     def apply_config(self, cfg: AppConfig) -> None:
         self.simple_planner.rebuild(cfg)

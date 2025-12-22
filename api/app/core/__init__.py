@@ -42,6 +42,13 @@ from .rate_limiter import RateLimiter, TokenBucket, RateLimitConfig, get_rate_li
 from .citation_formatter import RichCitation, format_rich_context, generate_reference_section, validate_answer_citations
 from .evidence_validator import EvidenceValidator, ValidationResult, create_strict_validator
 from .structured_generator import ClaimType, ClaimSlot, StructuredPick, StructuredMemo, StructuredGenerator
+# vNext Expansion modules (Guarantees G1-G4)
+from .cache import RetrievalMode
+from .citation_verifier import CitationVerifier, CitationCheck, VerificationResult
+from .trace_export import TraceBundle, create_trace_bundle, summarize_steps
+from .artifact_builder import (
+    ArtifactBuilder, ArtifactStatus, ArtifactState, BuildProgress, get_artifact_builder
+)
 
 __all__ = [
     "ConfigStore",
@@ -174,4 +181,18 @@ __all__ = [
     "StructuredPick",
     "StructuredMemo",
     "StructuredGenerator",
+    # vNext Expansion (G1-G4 Guarantees)
+    "RetrievalMode",
+    "CitationVerifier",
+    "CitationCheck",
+    "VerificationResult",
+    "TraceBundle",
+    "create_trace_bundle",
+    "summarize_steps",
+    "ArtifactBuilder",
+    "ArtifactStatus",
+    "ArtifactState",
+    "BuildProgress",
+    "get_artifact_builder",
 ]
+

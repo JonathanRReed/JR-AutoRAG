@@ -2,9 +2,12 @@
 
 This module provides:
 - LRU cache for embeddings
-- Query result caching
+- Query result caching with corpus version + retrieval mode awareness
 - TTL-based expiration
 - Memory-efficient storage
+
+Guarantee G3: Cache is never silently stale - all query cache keys include
+corpus_version and retrieval-mode bitmask to prevent stale hits.
 """
 
 from __future__ import annotations
@@ -13,10 +16,40 @@ import hashlib
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
+from enum import IntFlag
 from typing import Any, Generic, TypeVar
 
 
 T = TypeVar("T")
+
+
+class RetrievalMode(IntFlag):
+    """Retrieval mode flags for cache key generation.
+    
+    Used as a bitmask to ensure cache keys differentiate between
+    different retrieval configurations. This prevents stale cache
+    hits when switching retrieval modes.
+    """
+    STANDARD = 1
+    RAPTOR = 2
+    GRAPH = 4
+    RERANK = 8
+    COLBERT = 16
+    
+    @classmethod
+    def from_config(cls, *, raptor: bool = False, graph: bool = False, 
+                    rerank: bool = False, colbert: bool = False) -> "RetrievalMode":
+        """Create mode flags from config booleans."""
+        mode = cls.STANDARD
+        if raptor:
+            mode |= cls.RAPTOR
+        if graph:
+            mode |= cls.GRAPH
+        if rerank:
+            mode |= cls.RERANK
+        if colbert:
+            mode |= cls.COLBERT
+        return mode
 
 
 @dataclass
@@ -149,7 +182,7 @@ class EmbeddingCache:
     def __init__(
         self,
         max_size: int = 5000,
-        ttl_seconds: float = 86400,  # 24 hours
+        ttl_seconds: float = 604800,  # 7 days - embeddings are stable per 2025 best practices
     ) -> None:
         self._cache: LRUCache[list[float]] = LRUCache(
             max_size=max_size,
@@ -187,7 +220,11 @@ class EmbeddingCache:
 
 
 class QueryCache:
-    """Cache for query results."""
+    """Cache for query results with corpus version and retrieval mode awareness.
+    
+    Implements Guarantee G3: Cache keys include corpus_version and retrieval-mode
+    bitmask to ensure changing retrieval configurations never reuse stale results.
+    """
     
     def __init__(
         self,
@@ -199,14 +236,39 @@ class QueryCache:
             default_ttl=ttl_seconds,
         )
     
-    def _make_key(self, query: str, config_hash: str = "") -> str:
-        """Create cache key from query and config."""
-        combined = f"{query}:{config_hash}"
+    def _make_key(
+        self, 
+        query: str, 
+        config_hash: str = "",
+        corpus_version: str = "",
+        retrieval_mode: int = RetrievalMode.STANDARD,
+    ) -> str:
+        """Create cache key from query, config, corpus version, and retrieval mode.
+        
+        Args:
+            query: The user's query string
+            config_hash: Hash of the retrieval configuration
+            corpus_version: Version identifier for the corpus (increments on ingest/delete)
+            retrieval_mode: Bitmask of RetrievalMode flags
+            
+        Returns:
+            A unique cache key that changes when any component changes
+        """
+        combined = f"{query}:{config_hash}:v{corpus_version}:m{retrieval_mode}"
         return hashlib.sha256(combined.encode()).hexdigest()[:16]
     
-    def get(self, query: str, config_hash: str = "") -> dict[str, Any] | None:
-        """Get cached query result."""
-        key = self._make_key(query, config_hash)
+    def get(
+        self, 
+        query: str, 
+        config_hash: str = "",
+        corpus_version: str = "",
+        retrieval_mode: int = RetrievalMode.STANDARD,
+    ) -> dict[str, Any] | None:
+        """Get cached query result.
+        
+        Returns None (cache miss) if corpus_version or retrieval_mode don't match.
+        """
+        key = self._make_key(query, config_hash, corpus_version, retrieval_mode)
         return self._cache.get(key)
     
     def set(
@@ -214,9 +276,11 @@ class QueryCache:
         query: str,
         result: dict[str, Any],
         config_hash: str = "",
+        corpus_version: str = "",
+        retrieval_mode: int = RetrievalMode.STANDARD,
     ) -> None:
-        """Cache query result."""
-        key = self._make_key(query, config_hash)
+        """Cache query result with version and mode metadata."""
+        key = self._make_key(query, config_hash, corpus_version, retrieval_mode)
         self._cache.set(key, result)
     
     def invalidate_all(self) -> None:
@@ -238,7 +302,7 @@ class CacheManager:
         self,
         embedding_cache_size: int = 5000,
         query_cache_size: int = 500,
-        embedding_ttl: float = 86400,
+        embedding_ttl: float = 604800,  # 7 days - embeddings are stable
         query_ttl: float = 1800,
     ) -> None:
         self.embeddings = EmbeddingCache(
@@ -287,5 +351,6 @@ __all__ = [
     "EmbeddingCache",
     "QueryCache",
     "CacheManager",
+    "RetrievalMode",
     "get_cache_manager",
 ]

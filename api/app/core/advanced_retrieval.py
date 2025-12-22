@@ -108,7 +108,7 @@ class AdvancedRetriever:
         
         return AdvancedRetrievalMode.STANDARD
     
-    def retrieve(
+    async def retrieve(
         self,
         query: str,
         top_k: int = 5,
@@ -138,7 +138,7 @@ class AdvancedRetriever:
         # Always get base chunks from hybrid retriever
         if self._hybrid:
             from .hybrid_retrieval import RetrievalResult
-            hybrid_results = self._hybrid.query(query, top_k=top_k, document_ids=document_ids)
+            hybrid_results = await self._hybrid.query(query, top_k=top_k, document_ids=document_ids)
             
             # Convert to EvidenceChunk format
             from .gatherer import EvidenceChunk

@@ -167,3 +167,88 @@ class TelemetryStore:
             if used_rerank:
                 advanced_count += 1
         return advanced_count / len(self._traces) if self._traces else 0.0
+
+    def get_stage_latency_breakdown(self) -> dict[str, float]:
+        """Get average latency per pipeline stage.
+        
+        Returns a dict mapping stage name to average duration in ms.
+        Useful for identifying bottlenecks.
+        """
+        with self._lock:
+            stage_totals: dict[str, float] = {}
+            stage_counts: dict[str, int] = {}
+            
+            for trace in self._traces:
+                for step in trace.steps:
+                    name = step.name
+                    stage_totals[name] = stage_totals.get(name, 0) + step.duration_ms
+                    stage_counts[name] = stage_counts.get(name, 0) + 1
+            
+            return {
+                name: stage_totals[name] / stage_counts[name]
+                for name in stage_totals
+                if stage_counts[name] > 0
+            }
+
+    def get_retrieval_mode_distribution(self) -> dict[str, int]:
+        """Distribution of retrieval modes used (standard, RAPTOR, GraphRAG)."""
+        with self._lock:
+            dist = {"standard": 0, "raptor": 0, "graph": 0, "combined": 0}
+            
+            for trace in self._traces:
+                mode = trace.metrics.get("retrieval_mode", "standard")
+                if mode in dist:
+                    dist[mode] += 1
+                else:
+                    dist["standard"] += 1
+            
+            return dist
+
+    def get_flare_trigger_rate(self) -> float:
+        """Percentage of queries where FLARE triggered mid-generation retrieval."""
+        with self._lock:
+            if not self._traces:
+                return 0.0
+            
+            flare_count = 0
+            for trace in self._traces:
+                # Check if any FLARE step triggered retrieval
+                for step in trace.steps:
+                    if step.name == "flare" and step.details.get("retrievals_triggered", 0) > 0:
+                        flare_count += 1
+                        break
+                    # Also check metrics
+                    if trace.metrics.get("flare_retrievals", 0) > 0:
+                        flare_count += 1
+                        break
+            
+            return flare_count / len(self._traces)
+
+    def get_hallucination_pass_rate(self) -> float:
+        """Average hallucination firewall pass rate."""
+        with self._lock:
+            if not self._traces:
+                return 0.0
+            
+            pass_rates = []
+            for trace in self._traces:
+                rate = trace.metrics.get("firewall_pass_rate")
+                if rate is not None:
+                    pass_rates.append(rate)
+            
+            return sum(pass_rates) / len(pass_rates) if pass_rates else 0.0
+
+    def get_full_metrics_export(self) -> dict:
+        """Export all metrics for comprehensive dashboard.
+        
+        Combines export_metrics with additional stage and feature metrics.
+        """
+        base = self.export_metrics()
+        base.update({
+            "stage_latency_breakdown": self.get_stage_latency_breakdown(),
+            "retrieval_mode_distribution": self.get_retrieval_mode_distribution(),
+            "flare_trigger_rate": self.get_flare_trigger_rate(),
+            "hallucination_pass_rate": self.get_hallucination_pass_rate(),
+        })
+        return base
+

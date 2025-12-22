@@ -170,27 +170,7 @@ export function IngestPanel({
             </CardHeader>
             <CardContent className="space-y-6 pt-6">
                 {/* Premium setup checklist */}
-                {documents.length === 0 && (
-                    <div className="flex flex-col gap-3 rounded-lg border border-border/70 bg-muted/10 p-4">
-                        <div className="flex items-center gap-2">
-                            <ShieldCheck className="h-4 w-4 text-primary" />
-                            <p className="text-sm font-semibold text-foreground">Getting ready to ingest</p>
-                        </div>
-                        <div className="space-y-2 text-sm">
-                            <div className="flex items-center gap-2">
-                                <span className="h-2 w-2 rounded-full bg-amber-500" />
-                                <span className="text-foreground">Add at least one document or text snippet</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                                <span className="text-foreground">Automatic OCR + indexing will start on upload</span>
-                            </div>
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                            Drag and drop multiple files at once; we’ll queue, parse, and confirm readiness.
-                        </div>
-                    </div>
-                )}
+
 
                 {/* Upload Zone */}
                 <div
@@ -307,130 +287,26 @@ export function IngestPanel({
                     </div>
                 </div>
 
-                {/* Document List */}
-                <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                        <h4 className="text-sm font-semibold text-foreground">
-                            Knowledge Base
-                            <span className="ml-2 rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
-                                {documents.length}
-                            </span>
-                        </h4>
-                        {documents.length > 0 && (
-                            <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={handleDeleteAllDocuments}
-                                className="h-8 text-[10px] font-bold uppercase tracking-wider text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-                            >
-                                <Trash2 className="mr-1 h-3.5 w-3.5" />
-                                Clear All
-                            </Button>
-                        )}
-                    </div>
-                </div>
-
-                {documents.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border/70 bg-muted/10 p-12 text-center">
-                        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
-                            <Inbox className="h-6 w-6 text-muted-foreground" />
+                {/* Premium setup checklist */}
+                {documents.length === 0 && (
+                    <div className="flex flex-col gap-3 rounded-lg border border-border/70 bg-muted/10 p-4">
+                        <div className="flex items-center gap-2">
+                            <ShieldCheck className="h-4 w-4 text-primary" />
+                            <p className="text-sm font-semibold text-foreground">Getting ready to ingest</p>
                         </div>
-                        <h3 className="mt-4 font-medium text-foreground">No documents yet</h3>
-                        <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-                            Upload files or paste text to start building your knowledge base.
-                        </p>
-                        <div className="mt-4">
-                            <Button
-                                variant="secondary"
-                                onClick={() => fileInputRef.current?.click()}
-                                className="px-6"
-                            >
-                                Add documents
-                            </Button>
+                        <div className="space-y-2 text-sm">
+                            <div className="flex items-center gap-2">
+                                <span className="h-2 w-2 rounded-full bg-amber-500" />
+                                <span className="text-foreground">Add at least one document or text snippet</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                                <span className="text-foreground">Automatic OCR + indexing will start on upload</span>
+                            </div>
                         </div>
-                    </div>
-                ) : (
-                    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                        {documents.map(doc => {
-                            const uploadedAt = formatDateTime(doc.metadata?.uploaded_at);
-                            const processingStatus = doc.metadata?.processing_status;
-                            const statusLabel = processingStatus === "ready"
-                                ? "Ready"
-                                : processingStatus === "processing"
-                                    ? "Processing"
-                                    : processingStatus === "error"
-                                        ? "Error"
-                                        : "Unknown";
-                            const statusTone = processingStatus === "ready"
-                                ? "text-primary bg-primary/10"
-                                : processingStatus === "processing"
-                                    ? "text-secondary-foreground bg-secondary/30"
-                                    : processingStatus === "error"
-                                        ? "text-destructive bg-destructive/20"
-                                        : "text-muted-foreground bg-muted";
-                            const filesize = doc.metadata?.filesize
-                                ? `${(Number(doc.metadata.filesize) / (1024 * 1024)).toFixed(2)} MB`
-                                : undefined;
-                            const filename = doc.metadata?.original_filename || doc.metadata?.filename;
-                            const contentType = doc.metadata?.content_type;
-                            const processedAt = formatDateTime(doc.metadata?.processed_at);
-
-                            return (
-                                <div
-                                    key={doc.id}
-                                    className="group flex flex-col justify-between rounded-lg border border-border/60 bg-card p-4 transition-colors hover:border-border"
-                                >
-                                    <div>
-                                        <div className="flex items-start justify-between gap-2">
-                                            <div className="min-w-0">
-                                                <p className="font-bold text-foreground truncate">
-                                                    {doc.title || filename || "Untitled"}
-                                                </p>
-                                                {filename && <p className="text-[10px] text-muted-foreground truncate uppercase tracking-tighter">{filename}</p>}
-                                            </div>
-                                            <Button
-                                                variant="ghost"
-                                                size="icon"
-                                                className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted"
-                                                onClick={() => void handleDeleteDocument(doc.id, doc.title || filename || "document")}
-                                            >
-                                                <Trash2 className="h-4 w-4" />
-                                            </Button>
-                                        </div>
-                                        <p className="mt-3 text-xs text-muted-foreground line-clamp-3 leading-relaxed">
-                                            {doc.text.slice(0, 180) || "(Empty document)"}…
-                                        </p>
-                                    </div>
-
-                                    <div className="mt-4 flex flex-wrap gap-2">
-                                        <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${statusTone}`}>
-                                            {statusLabel}
-                                        </span>
-                                        <span className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                                            <Calendar className="mr-1 h-3 w-3" />
-                                            {uploadedAt.split(",")[0]}
-                                        </span>
-                                        {processingStatus === "ready" && (
-                                            <span className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                                                <Calendar className="mr-1 h-3 w-3" />
-                                                {processedAt.split(",")[0]}
-                                            </span>
-                                        )}
-                                        {filesize && (
-                                            <span className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                                                <HardDrive className="mr-1 h-3 w-3" />
-                                                {filesize}
-                                            </span>
-                                        )}
-                                        {contentType && (
-                                            <span className="inline-flex items-center rounded bg-secondary/30 px-1.5 py-0.5 text-[10px] text-foreground">
-                                                {contentType.split("/").pop()?.toUpperCase()}
-                                            </span>
-                                        )}
-                                    </div>
-                                </div>
-                            );
-                        })}
+                        <div className="text-xs text-muted-foreground">
+                            Drag and drop multiple files at once; we’ll queue, parse, and confirm readiness.
+                        </div>
                     </div>
                 )}
             </CardContent>

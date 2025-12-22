@@ -82,13 +82,20 @@ class AdaptiveGate:
     
     GATING_PROMPT = """Analyze this query and decide the best retrieval strategy.
 
+IMPORTANT: This is a document Q&A system. ALWAYS retrieve from documents unless the query is:
+- A simple greeting (hi, hello, thanks)
+- A question about this assistant's capabilities (what can you do)
+- A pure math calculation (2+2)
+
 Query: {query}
 
 Options:
-1. NO_RETRIEVAL: You can answer this directly without external documents (e.g., greetings, calculations, common knowledge)
-2. SINGLE: Simple factual query that needs one retrieval pass
+1. NO_RETRIEVAL: ONLY for greetings, meta-questions about the assistant, or pure math. NOT for any factual questions.
+2. SINGLE: Standard query that needs document retrieval (DEFAULT for most questions)
 3. ITERATIVE: Complex query requiring multiple retrieval passes (comparisons, analysis, multi-part questions)
-4. CLARIFY: Query is ambiguous and needs clarification before retrieval
+4. CLARIFY: Query is too ambiguous to understand what documents to search
+
+CRITICAL: If the query asks about any topic, fact, or information - ALWAYS use SINGLE or ITERATIVE, never NO_RETRIEVAL.
 
 Respond with EXACTLY this format:
 DECISION: [NO_RETRIEVAL/SINGLE/ITERATIVE/CLARIFY]

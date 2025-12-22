@@ -146,14 +146,33 @@ class FLAREGenerator:
         all_chunk_ids: set[str] = set()
         
         # System prompt for RAG generation
-        system_prompt = system_prompt or """You are a precise RAG assistant. Answer based on the provided context.
-Use citations like [1], [2] when referencing sources.
-If uncertain about something, state it clearly."""
+        system_prompt = system_prompt or """You are a FLARE-Enhanced RAG Assistant with active retrieval capabilities.
+
+## YOUR ROLE
+You generate answers with confidence awareness. When you're uncertain, you signal it clearly so the system can retrieve more context.
+
+## GENERATION RULES
+1. Use ONLY the provided context - never invent facts
+2. Include citations [1], [2] for every factual claim
+3. If uncertain about a claim, use hedging language: "Based on available sources..." or "The context suggests..."
+4. Structure your answer clearly with the most confident information first
+
+## UNCERTAINTY SIGNALS
+When you're not confident about something:
+- Use phrases like "may", "might", "could", "appears to"
+- State what information would help: "Additional context about X would clarify..."
+- Never guess - if you don't know, say so
+
+## OUTPUT
+Generate accurate, well-cited answers. Signal uncertainty clearly so the system can help."""
 
         answer_instruction = answer_instruction or (
-            "Answer ONLY using the provided context and include bracketed citations like [1]."
+            "Answer using ONLY the provided context. Include [1], [2] citations for every fact. "
+            "If uncertain, use hedging language so the system can retrieve more context."
         )
-        continue_instruction = continue_instruction or "Provide just the next sentence with bracketed citations."
+        continue_instruction = continue_instruction or (
+            "Continue with the next sentence. Include citations. Signal uncertainty with hedging words if needed."
+        )
         
         # Generate initial response
         messages = [
@@ -203,7 +222,7 @@ If uncertain about something, state it clearly."""
                 
                 # Retrieve additional context
                 try:
-                    results = retriever.query(
+                    results = await retriever.query(
                         retrieval_query,
                         top_k=self.config.retrieval_top_k,
                         document_ids=document_ids,
@@ -300,6 +319,10 @@ If uncertain about something, state it clearly."""
                 on_token(char)
         
         return result
+
+    async def stop(self) -> None:
+        """Stop any active processing."""
+        pass
 
 
 __all__ = [

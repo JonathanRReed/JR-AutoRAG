@@ -1,5 +1,6 @@
 """FastAPI routers for JR AutoRAG."""
 
-from . import config, documents, evaluation, health, monitoring, providers, query
+from . import cache_routes, config, documents, evaluation, health, monitoring, providers, query, traces
 
-__all__ = ["health", "config", "documents", "query", "evaluation", "monitoring", "providers"]
+__all__ = ["cache_routes", "health", "config", "documents", "query", "evaluation", "monitoring", "providers", "traces"]
+

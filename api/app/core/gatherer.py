@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Callable
 
 from .retrieval import RetrievalEngine, RetrievalResult
 
@@ -27,18 +28,20 @@ class Gatherer:
     def __init__(self, retrieval: RetrievalEngine) -> None:
         self._retrieval = retrieval
 
-    def gather(
+    async def gather(
         self,
         query: str,
         top_k: int,
         document_ids: list[str] | None = None,
         routing_params: dict | None = None,
+        on_progress: Callable[[str, float], None] | None = None,
     ) -> EvidenceBundle:
-        results: list[RetrievalResult] = self._retrieval.query(
+        results: list[RetrievalResult] = await self._retrieval.query(
             query,
             top_k=top_k,
             document_ids=document_ids,
             routing_params=routing_params,
+            on_progress=on_progress,
         )
         cache_info = {}
         if hasattr(self._retrieval, "get_last_cache_info"):

@@ -53,6 +53,10 @@ export type DocumentOut = {
     title: string;
     text: string;
     metadata: Record<string, string>;
+    created_at?: string;
+    chunk_count?: number;
+    processing_status?: string;
+    processing_error?: string;
 };
 
 export type IngestResponse = {
@@ -90,6 +94,16 @@ export type QueryResponse = {
     trace_id: string;
     metrics: Record<string, number | string>;
     steps: PipelineStep[];
+    confidence?: {
+        overall: number;
+        factors?: {
+            retrieval?: number;
+            generation?: number;
+            citation?: number;
+        };
+        hallucination_pass?: boolean;
+        evidence_contract_pass?: boolean;
+    };
 };
 
 export type TraceOut = {
@@ -123,3 +137,60 @@ export type RoleSelection = {
     gatherer: string;
     generator: string;
 };
+
+export type ChatSession = {
+    id: string;
+    title: string;
+    history: { role: string; content: string }[];
+    queryResult: QueryResponse | null;
+    createdAt: string;
+};
+
+// Preset system types
+export type PresetLevel = "turbo" | "fast" | "balanced" | "thorough" | "ultra_accurate";
+
+export type PresetInfo = {
+    level: PresetLevel;
+    name: string;
+    description: string;
+    icon: string;
+    features: string[];
+};
+
+export const PRESET_DEFINITIONS: PresetInfo[] = [
+    {
+        level: "turbo",
+        name: "Turbo",
+        description: "Fastest responses",
+        icon: "⚡",
+        features: ["Basic retrieval", "No reranking"],
+    },
+    {
+        level: "fast",
+        name: "Fast",
+        description: "Quick & good",
+        icon: "🚀",
+        features: ["Reranking"],
+    },
+    {
+        level: "balanced",
+        name: "Balanced",
+        description: "Speed & accuracy",
+        icon: "⚖️",
+        features: ["Reranking", "Multi-resolution"],
+    },
+    {
+        level: "thorough",
+        name: "Thorough",
+        description: "Deep research",
+        icon: "🔍",
+        features: ["FLARE", "RAPTOR", "Iterative"],
+    },
+    {
+        level: "ultra_accurate",
+        name: "Ultra Accurate",
+        description: "Maximum accuracy",
+        icon: "🎯",
+        features: ["All SOTA features", "Evidence contract", "GraphRAG"],
+    },
+];
