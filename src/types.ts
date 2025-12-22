@@ -51,11 +51,32 @@ export type RetrievalDefaults = {
     self_rag_critic?: boolean;
 };
 
+// 3.0: Stage budget configuration
+export type StageBudgets = {
+    planner_timeout_ms: number;
+    gatherer_timeout_ms: number;
+    rerank_timeout_ms: number;
+    compression_timeout_ms: number;
+    generation_timeout_ms: number;
+    verification_timeout_ms: number;
+    total_timeout_ms: number;
+    retrieval_token_budget: number;
+    rerank_pool_budget: number;
+    compression_token_budget: number;
+    answer_token_budget: number;
+};
+
+// 3.0: Query mode types
+export type QueryMode = "grounded" | "open_domain";
+
 export type AppConfig = {
     profile: string;
     provider?: ProviderConfig;
     provider_profiles: ProviderProfile[];
     retrieval: RetrievalDefaults;
+    // 3.0: Query mode and stage budgets
+    query_mode?: QueryMode;
+    stage_budgets?: StageBudgets;
 };
 
 export type ModelStatus = {
@@ -98,6 +119,34 @@ export type PipelineStep = {
     completed_at?: string;
 };
 
+// 3.0: Grounding info for answers
+export type GroundingInfo = {
+    grounded: boolean;
+    docs_used: number;
+    citations_kept: number;
+    chunks_dropped: number;
+    mode?: QueryMode;
+    no_evidence_response?: {
+        found_evidence: boolean;
+        message: string;
+        suggested_actions: Array<{
+            label: string;
+            description: string;
+            action_type: string;
+        }>;
+    };
+};
+
+// 3.0: Cache event for tracing
+export type CacheEvent = {
+    hit: boolean;
+    key: string;
+    reason?: string; // "not_found" | "expired" | "version_mismatch"
+    corpus_version: string;
+    retrieval_mode: number;
+    preset_id: string;
+};
+
 export type QueryResponse = {
     answer: string;
     chunks: ChunkOut[];
@@ -123,6 +172,10 @@ export type QueryResponse = {
     };
     trace_bundle_available?: boolean;
     needs_clarification?: boolean;
+    // 3.0: New grounding and cache fields
+    grounding?: GroundingInfo;
+    from_cache?: boolean;
+    cache_event?: CacheEvent;
 };
 
 export type TraceOut = {

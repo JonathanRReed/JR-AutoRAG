@@ -45,7 +45,9 @@ import remarkGfm from "remark-gfm";
 import { ArtifactViewer } from "./ArtifactViewer";
 import { PresetSelector } from "./PresetSelector";
 import { ConfidenceIndicator } from "./ConfidenceIndicator";
-import type { DocumentOut, PipelineStep, ProviderConfig, QueryResponse, ChatSession, PresetLevel } from "@/types";
+import { QueryModeToggle } from "./QueryModeToggle";
+import { CacheEventBadge } from "./CacheEventBadge";
+import type { DocumentOut, PipelineStep, ProviderConfig, QueryResponse, ChatSession, PresetLevel, QueryMode } from "@/types";
 
 interface ProgressData {
     stage: string;
@@ -80,6 +82,9 @@ interface ChatInterfaceProps {
     currentSessionId?: string | null;
     preset?: PresetLevel;
     onPresetChange?: (preset: PresetLevel) => void;
+    // 3.0: Query mode toggle
+    queryMode?: QueryMode;
+    onQueryModeChange?: (mode: QueryMode) => void;
 }
 
 const MessageContent = ({ content, onCitationClick }: { content: string; onCitationClick?: (id: string) => void }) => {

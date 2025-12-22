@@ -184,11 +184,36 @@ RETRIEVAL_PRESETS = {
 }
 
 
+class StageBudgetDefaults(BaseModel):
+    """Per-stage timeout and token budget configuration (P0.2)."""
+    
+    # Timeouts (milliseconds)
+    planner_timeout_ms: int = 3000
+    gatherer_timeout_ms: int = 12000
+    rerank_timeout_ms: int = 5000
+    compression_timeout_ms: int = 4000
+    generation_timeout_ms: int = 20000
+    verification_timeout_ms: int = 5000
+    total_timeout_ms: int = 60000
+    
+    # Token budgets
+    retrieval_token_budget: int = 8000
+    rerank_pool_budget: int = 50
+    compression_token_budget: int = 4000
+    answer_token_budget: int = 2000
+
+
 class AppConfig(BaseModel):
     profile: str = "Default"
     provider: ProviderConfig | None = None
     provider_profiles: list[ProviderProfile] = []
     retrieval: RetrievalDefaults = RetrievalDefaults()
+    
+    # P0.1: Query mode switch (grounded = docs only, open_domain = LLM can use knowledge)
+    query_mode: str = "grounded"
+    
+    # P0.2: Stage budgets for timeouts and token limits
+    stage_budgets: StageBudgetDefaults = StageBudgetDefaults()
 
 
 class ProviderKind(str, Enum):
