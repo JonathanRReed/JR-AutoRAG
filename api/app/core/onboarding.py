@@ -145,6 +145,18 @@ class OnboardingFlow:
                 description="See how your query was processed",
                 action="open_trace",
             ),
+            OnboardingStep(
+                id="enable_security",
+                title="Enable Security (Optional)",
+                description="Set AUTORAG_AUTH_ENABLED=true for production",
+                action="open_docs",
+            ),
+            OnboardingStep(
+                id="run_evaluation",
+                title="Run Evaluation Gates (Optional)",
+                description="Test quality with built-in benchmarks",
+                action="open_eval",
+            ),
         ]
         return cls(steps=steps)
     
