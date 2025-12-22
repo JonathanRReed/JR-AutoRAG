@@ -1,5 +1,5 @@
-JR AutoRAG – 5 Minute Onboarding
-================================
+JR AutoRAG – 5 Minute Onboarding (v3.0)
+=======================================
 
 Follow these steps from a fresh clone to your first answered query.
 
@@ -25,7 +25,7 @@ Follow these steps from a fresh clone to your first answered query.
    - UI: `bun dev`
 
 3) Verify connectivity
-   - In the UI header, click **Test** next to API Base URL → expect “API reachable”.
+   - In the UI header, click **Test** next to API Base URL → expect "API reachable".
    - Optional: `curl http://localhost:8000/healthz`
 
 4) Configure providers
@@ -37,10 +37,10 @@ Follow these steps from a fresh clone to your first answered query.
    - Drag a PDF/DOCX/Markdown/TXT file into the drop zone (scans auto-OCR).
    - Or use **Ingest Text** for a quick snippet.
    - Confirm the document card shows filename, time, and size.
-   - If a PDF shows “no text found,” ensure `poppler` + `tesseract` are installed, then restart the API.
+   - If a PDF shows "no text found," ensure `poppler` + `tesseract` are installed, then restart the API.
 
 6) Ask your first question
-   - Prompt: “What is JR AutoRAG?”
+   - Prompt: "What is JR AutoRAG?"
    - Review the answer plus evidence; open **Evaluation & Monitoring** to inspect the trace.
 
 7) Tweak & iterate
@@ -48,4 +48,40 @@ Follow these steps from a fresh clone to your first answered query.
    - Save provider profiles (local vs cloud) for fast swapping.
    - Remove a document card to rebuild the index if you need a clean slate.
 
-Ready for demos.
+---
+
+NEW IN latest version: Production Features
+
+8) Enable Security (for production)
+   - Set environment variables:
+     - `AUTORAG_AUTH_ENABLED=true`
+     - `AUTORAG_API_KEYS=your-secret-key`
+   - Pass API key in requests: `Authorization: Bearer your-secret-key`
+   - See SECURITY.md for TLS, rate limiting, and reverse proxy setup.
+
+9) Run Evaluation Gates (for CI/CD)
+   - Create a golden test set with expected answers
+   - Run `python -c "from app.core.eval_gates import run_eval_gates_cli; exit(run_eval_gates_cli('your_set'))"`
+   - Build fails if quality thresholds not met
+
+10) Extend with Plugins
+    - Create a new retriever in `api/app/plugins/my_retriever.py`
+    - Implement `RetrieverPlugin` ABC with `retrieve()` method
+    - Add `create_plugin()` factory function for auto-discovery
+    - See `plugins/bm25_retriever.py` for example
+
+---
+
+Key Features Checklist:
+[x] Local LLM providers (Ollama/LM Studio)
+[x] Document ingestion (PDF, DOCX, MD, TXT)
+[x] Hybrid retrieval (dense + sparse)
+[x] Full pipeline tracing
+[x] API key authentication
+[x] Rate limiting & request guards
+[x] Evaluation gates with thresholds
+[x] Plugin architecture for extensibility
+[x] PII detection & document ACLs
+[x] Config snapshots for reproducibility
+
+Ready for demos and production!
