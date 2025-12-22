@@ -21,6 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Lock
 
 try:  # pragma: no cover - optional dependency
     from pypdf import PdfReader  # type: ignore
@@ -49,6 +50,9 @@ except ImportError:  # pragma: no cover
 from .documents import DocumentStore
 from .retrieval import RetrievalEngine
 
+_INDEX_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="autorag-index")
+_INDEX_LOCK = Lock()
+
 
 @dataclass
 class IngestResult:
@@ -73,7 +77,13 @@ class IngestPipeline:
         self._store = store
         self._retrieval = retrieval
 
-    def ingest_text(self, title: str, text: str, metadata: dict[str, str] | None = None) -> IngestResult:
+    def ingest_text(
+        self,
+        title: str,
+        text: str,
+        metadata: dict[str, str] | None = None,
+        sync: bool = False,
+    ) -> IngestResult:
         """Ingest text with content hash tracking for change detection."""
         meta = self._prepare_metadata(metadata)
         meta.setdefault("processing_status", "processing")
@@ -89,13 +99,16 @@ class IngestPipeline:
         
         doc = self._store.add(title=title, text=combined, metadata=meta)
         
-        # Run heavy indexing in background thread to keep API responsive
-        def do_build():
+        # Run indexing in a shared background worker to keep API responsive
+        def do_build() -> None:
             try:
-                self._retrieval.build()
-                # Increment corpus version if retrieval engine supports it
-                if hasattr(self._retrieval, 'increment_corpus_version'):
-                    self._retrieval.increment_corpus_version()
+                with _INDEX_LOCK:
+                    if hasattr(self._retrieval, "index_documents"):
+                        self._retrieval.index_documents([doc])
+                    else:
+                        self._retrieval.build()
+                        if hasattr(self._retrieval, "increment_corpus_version"):
+                            self._retrieval.increment_corpus_version()
                 doc.metadata["processing_status"] = "ready"
                 doc.metadata["processed_at"] = datetime.now(timezone.utc).isoformat()
                 self._store.upsert(doc)
@@ -104,10 +117,10 @@ class IngestPipeline:
                 doc.metadata["processing_error"] = str(exc)
                 self._store.upsert(doc)
         
-        # Use a thread pool to avoid blocking the event loop
-        executor = ThreadPoolExecutor(max_workers=1)
-        executor.submit(do_build)
-        executor.shutdown(wait=False)  # Don't block, let it run in background
+        if sync:
+            do_build()
+        else:
+            _INDEX_EXECUTOR.submit(do_build)
         
         return IngestResult(
             document_id=doc.id, 
@@ -117,14 +130,20 @@ class IngestPipeline:
             content_hash=content_hash,
         )
 
-    def ingest_file(self, title: str, content: bytes, metadata: dict[str, str] | None = None) -> IngestResult:
+    def ingest_file(
+        self,
+        title: str,
+        content: bytes,
+        metadata: dict[str, str] | None = None,
+        sync: bool = False,
+    ) -> IngestResult:
         meta = {**(metadata or {})}
         meta.setdefault("filename", title)
         meta.setdefault("original_filename", meta["filename"])
         meta.setdefault("content_type", mimetypes.guess_type(meta["filename"])[0] or "text/plain")
         meta["filesize"] = str(len(content))
         text = self._extract_text(content, meta)
-        return self.ingest_text(title=title, text=text, metadata=meta)
+        return self.ingest_text(title=title, text=text, metadata=meta, sync=sync)
 
     def ingest_incremental(
         self, 
@@ -157,10 +176,8 @@ class IngestPipeline:
                     was_modified=False,
                     content_hash=content_hash,
                 )
-            # Document changed - delete old and re-ingest
-            self._store.delete(existing.id)
         
-        # Proceed with full ingest
+        # Proceed with full ingest (duplicate titles handled in store)
         return self.ingest_text(title=title, text=text, metadata=metadata)
 
     def _compute_content_hash(self, text: str) -> str:

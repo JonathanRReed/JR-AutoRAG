@@ -14,6 +14,7 @@ class EvidenceChunk:
     title: str
     snippet: str
     score: float
+    doc_id: str | None = None
 
 
 @dataclass
@@ -59,6 +60,7 @@ class Gatherer:
                     title=result.document.title,
                     snippet=snippet,
                     score=result.score,
+                    doc_id=result.document.id,
                 )
             )
         coverage = min(1.0, len(chunks) / top_k) if top_k else 0.0

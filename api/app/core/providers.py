@@ -12,6 +12,21 @@ import httpx
 
 from ..schemas.config import LocalProviderInfo, ProviderConfig, ProviderKind
 
+DEFAULT_PROVIDER_TIMEOUT = 300.0
+DEFAULT_STREAM_TIMEOUT = 300.0
+DEFAULT_CLOUD_TIMEOUT = 120.0
+
+
+def _get_timeout(env_key: str, default: float) -> float:
+    raw = os.environ.get(env_key)
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
 
 class ProviderError(RuntimeError):
     """Raised when a provider request fails."""
@@ -47,7 +62,8 @@ class _HTTPProvider(LLMProvider):
     async def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         url = f"{self.base_url}{path}"
         try:
-            async with httpx.AsyncClient(timeout=300.0) as client:
+            timeout = _get_timeout("JR_PROVIDER_TIMEOUT", DEFAULT_PROVIDER_TIMEOUT)
+            async with httpx.AsyncClient(timeout=timeout) as client:
                 response = await client.post(url, json=payload)
             response.raise_for_status()
             return response.json()
@@ -76,22 +92,28 @@ class OllamaProvider(_HTTPProvider):
             "stream": True,
         }
         url = f"{self.base_url}/api/chat"
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            async with client.stream("POST", url, json=payload) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if not line:
-                        continue
-                    try:
-                        data = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    message = data.get("message", {})
-                    content = message.get("content", "")
-                    if content:
-                        yield content
-                    if data.get("done") is True:
-                        break
+        try:
+            timeout = _get_timeout("JR_PROVIDER_STREAM_TIMEOUT", DEFAULT_STREAM_TIMEOUT)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                async with client.stream("POST", url, json=payload) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        if not line:
+                            continue
+                        try:
+                            data = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        message = data.get("message", {})
+                        content = message.get("content", "")
+                        if content:
+                            yield content
+                        if data.get("done") is True:
+                            break
+        except httpx.HTTPStatusError as exc:
+            raise ProviderError(f"Provider error {exc.response.status_code}: {exc}") from exc
+        except httpx.HTTPError as exc:
+            raise ProviderError(f"Provider request failed ({type(exc).__name__}): {exc}") from exc
 
     async def complete(self, prompt: str, **kwargs: Any) -> str:
         model = kwargs.get("model") or self.default_model or "llama3"
@@ -125,7 +147,8 @@ class CloudProvider(_HTTPProvider):
         url = f"{self.base_url}{path}"
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else None
         try:
-            async with httpx.AsyncClient(timeout=30.0, headers=headers) as client:
+            timeout = _get_timeout("JR_PROVIDER_TIMEOUT", DEFAULT_CLOUD_TIMEOUT)
+            async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
                 response = await client.post(url, json=payload)
             response.raise_for_status()
             return response.json()

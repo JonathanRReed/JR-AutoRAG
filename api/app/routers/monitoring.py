@@ -77,6 +77,7 @@ def get_stage_metrics(container: ServiceContainer = Depends(get_container)):
     """
     return {
         "stages": container.telemetry.get_stage_latency_breakdown(),
+        "percentiles": container.telemetry.get_stage_latency_percentiles(),
     }
 
 
@@ -135,4 +136,3 @@ def detailed_health(container: ServiceContainer = Depends(get_container)):
             "models": container.orchestrator.get_model_status(),
         },
     }
-

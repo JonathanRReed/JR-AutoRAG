@@ -119,6 +119,7 @@ export function App() {
   const [localSelections, setLocalSelections] = useState<Record<string, RoleSelection>>({});
   const [isUploadingFile, setIsUploadingFile] = useState(false);
   const [isClearingCache, setIsClearingCache] = useState(false);
+  const [ingestSync, setIngestSync] = useState(true);
   const [activeTab, setActiveTab] = useState<TabId>(() => {
     if (typeof window === "undefined") return "config";
     const saved = localStorage.getItem("activeTab");
@@ -150,7 +151,7 @@ export function App() {
   const headers = useMemo(() => ({ "Content-Type": "application/json" }), []);
   const [activePreset, setActivePreset] = useState<PresetLevel>(() => {
     if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("activePreset") as PresetLevel | null;
+      const saved = localStorage.getItem("jr-autorag-preset") as PresetLevel | null;
       if (saved && ["turbo", "fast", "balanced", "thorough", "ultra_accurate"].includes(saved)) {
         return saved;
       }
@@ -168,7 +169,7 @@ export function App() {
   }, [savedSessions]);
 
   useEffect(() => {
-    localStorage.setItem("activePreset", activePreset);
+    localStorage.setItem("jr-autorag-preset", activePreset);
   }, [activePreset]);
 
   useEffect(() => {
@@ -563,7 +564,7 @@ export function App() {
       const result = await fetchJson<IngestResponse>("/documents/text", {
         method: "POST",
         headers,
-        body: JSON.stringify({ title: ingestTitle, text: ingestText }),
+        body: JSON.stringify({ title: ingestTitle, text: ingestText, sync: ingestSync }),
       });
       setStatus(`Processing ${result.title}...`);
       setIngestText("");
@@ -960,6 +961,7 @@ export function App() {
       const title = file.name.replace(/\.[^.]+$/, "");
       formData.append("title", title || file.name);
       formData.append("file", file);
+      formData.append("sync", String(ingestSync));
       const resp = await fetch(buildUrl("/documents/upload"), {
         method: "POST",
         body: formData,
@@ -1119,7 +1121,6 @@ export function App() {
                       value={activePreset}
                       onChange={async (newPreset: PresetLevel) => {
                         setActivePreset(newPreset);
-                        localStorage.setItem("jr-autorag-preset", newPreset);
                         try {
                           await fetchJson(`/config/presets/${newPreset}`, { method: "POST" });
                           toast({ title: `Applied ${newPreset} preset`, variant: "default" });
@@ -1200,6 +1201,8 @@ export function App() {
                     setIngestText={setIngestText}
                     handleIngest={handleIngest}
                     isIngesting={isIngesting}
+                    ingestSync={ingestSync}
+                    setIngestSync={setIngestSync}
                     uploadFile={uploadFile}
                     isUploadingFile={isUploadingFile}
                     fileInputRef={fileInputRef}
@@ -1288,6 +1291,7 @@ export function App() {
                 activeStage={activeStage}
                 progress={progress ? { ...progress, progress: progress.progress || 0 } : undefined}
                 providerConfig={config?.provider}
+                baseUrl={baseUrl}
                 onNewChat={handleNewChat}
                 onCancel={handleCancelQuery}
                 savedSessions={savedSessions}

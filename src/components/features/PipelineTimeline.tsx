@@ -1,12 +1,18 @@
 import { useMemo } from "react";
 import {
     Activity,
+    AlertTriangle,
+    Brain,
     Box,
     CheckCircle2,
     Database,
     FileSearch,
+    GitMerge,
+    HelpCircle,
     Loader2,
+    Network,
     Search,
+    ShieldCheck,
     Sparkles,
     Target,
     Clock,
@@ -24,18 +30,41 @@ interface PipelineTimelineProps {
 const STEP_ICONS: Record<string, typeof Target> = {
     cache: Database,
     planning: Target,
+    gating: HelpCircle,
+    routing: GitMerge,
+    graph_build: Network,
+    graph_retrieval: GitMerge,
     gatherer: FileSearch,
     retrieval: Search,
     generation: Sparkles,
     compression: Box,
+    conflict_detection: AlertTriangle,
+    thinking: Brain,
+    verification: ShieldCheck,
+    verification_retry: ShieldCheck,
+    evidence_contract: ShieldCheck,
+    citation_verification: ShieldCheck,
+    retrieval_retry: Search,
+    compression_retry: Box,
+    generation_retry: Sparkles,
     reflection: Activity,
 };
 
 const STEP_COLORS: Record<string, { bg: string; border: string; text: string }> = {
     completed: { bg: "bg-primary", border: "border-primary", text: "text-primary" },
+    passed: { bg: "bg-emerald-500", border: "border-emerald-500", text: "text-emerald-600" },
+    repaired: { bg: "bg-amber-500", border: "border-amber-500", text: "text-amber-600" },
+    failed: { bg: "bg-red-500", border: "border-red-500", text: "text-red-600" },
     running: { bg: "bg-secondary", border: "border-secondary", text: "text-secondary-foreground" },
     skipped: { bg: "bg-muted", border: "border-muted", text: "text-muted-foreground" },
     pending: { bg: "bg-muted/50", border: "border-border", text: "text-muted-foreground" },
+};
+
+const normalizeStatus = (status: string) => {
+    if (status === "passed") return "passed";
+    if (status === "repaired") return "repaired";
+    if (status === "failed" || status === "error") return "failed";
+    return status;
 };
 
 function formatDuration(ms: number): string {
@@ -62,18 +91,20 @@ function TimelineStep({
     isActive: boolean;
 }) {
     const Icon = STEP_ICONS[step.name] ?? Target;
-    const status = isActive ? "running" : step.status;
-    const colors = STEP_COLORS[status] || STEP_COLORS.pending;
+    const statusClass = isActive ? "running" : normalizeStatus(step.status);
+    const statusLabel = isActive ? "running" : step.status;
+    const colors = STEP_COLORS[statusClass] || STEP_COLORS.pending;
     const percentage = totalDuration > 0 ? (step.duration_ms / totalDuration) * 100 : 0;
     const durationClass = getDurationClass(step.duration_ms);
+    const isSuccess = ["completed", "passed", "repaired"].includes(statusClass);
 
     return (
         <div className="timeline-step group">
             {/* Timeline dot */}
-            <div className={`timeline-dot ${status}`}>
-                {status === "running" ? (
+            <div className={`timeline-dot ${statusClass}`}>
+                {statusClass === "running" ? (
                     <Loader2 className="h-3 w-3 animate-spin text-primary-foreground" />
-                ) : status === "completed" ? (
+                ) : isSuccess ? (
                     <CheckCircle2 className="h-3 w-3 text-primary-foreground" />
                 ) : (
                     <Icon className="h-3 w-3 text-muted-foreground" />
@@ -81,7 +112,7 @@ function TimelineStep({
             </div>
 
             {/* Step content */}
-            <div className={`step-card ${status} rounded-lg border border-border/60 bg-card p-4 ml-2`}>
+            <div className={`step-card ${statusClass} rounded-lg border border-border/60 bg-card p-4 ml-2`}>
                 {/* Header */}
                 <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2 min-w-0">
@@ -94,7 +125,7 @@ function TimelineStep({
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                         <span className={`text-xs font-medium ${colors.text}`}>
-                            {status === "skipped" ? "skipped" : status}
+                            {statusLabel === "skipped" ? "skipped" : statusLabel}
                         </span>
                         {step.duration_ms > 0 && (
                             <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-foreground">
@@ -106,7 +137,7 @@ function TimelineStep({
                 </div>
 
                 {/* Duration bar */}
-                {step.duration_ms > 0 && status === "completed" && (
+                {step.duration_ms > 0 && ["completed", "passed", "repaired"].includes(statusClass) && (
                     <div className="mt-3">
                         <div className="duration-bar">
                             <div
@@ -215,7 +246,7 @@ export function PipelineTimeline({
             <div className="mt-4 pt-4 border-t border-border/60">
                 <div className="flex items-center justify-between text-xs text-muted-foreground">
                     <span>
-                        {steps.filter(s => s.status === "completed").length} of {steps.length} steps completed
+                        {steps.filter(s => ["completed", "passed", "repaired"].includes(s.status)).length} of {steps.length} steps completed
                     </span>
                     {isRunning && activeStage && (
                         <span className="inline-flex items-center gap-1.5 text-secondary-foreground">

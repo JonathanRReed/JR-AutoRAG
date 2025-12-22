@@ -163,12 +163,14 @@ function TraceCard({ trace, formatNumber }: { trace: TraceOut; formatNumber: (va
                                 {trace.steps.map((step, idx) => (
                                     <div
                                         key={idx}
-                                        className={`step-card ${step.status} rounded-md border border-border/60 bg-card/50 p-3`}
+                                        className={`step-card ${step.status === "error" ? "failed" : step.status} rounded-md border border-border/60 bg-card/50 p-3`}
                                     >
                                         <div className="flex items-center justify-between gap-2">
                                             <div className="flex items-center gap-2">
-                                                {step.status === "completed" ? (
+                                                {["completed", "passed", "repaired"].includes(step.status) ? (
                                                     <CheckCircle2 className="h-4 w-4 text-primary" />
+                                                ) : step.status === "failed" ? (
+                                                    <Activity className="h-4 w-4 text-destructive" />
                                                 ) : (
                                                     <Activity className="h-4 w-4 text-muted-foreground" />
                                                 )}

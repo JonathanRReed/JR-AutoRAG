@@ -36,7 +36,7 @@ def test_config_roundtrip(client: TestClient) -> None:
 
 
 def test_document_ingest_query_and_evaluation(client: TestClient) -> None:
-    payload = {"title": "Intro", "text": "JR AutoRAG lets admins build RAG pipelines."}
+    payload = {"title": "Intro", "text": "JR AutoRAG lets admins build RAG pipelines.", "sync": True}
     ingest = client.post("/documents/text", json=payload)
     assert ingest.status_code == 200
     data = ingest.json()

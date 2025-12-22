@@ -19,7 +19,12 @@ def list_documents(container: ServiceContainer = Depends(get_container)):
 @router.post("/text", response_model=IngestResponse)
 def ingest_text(payload: IngestTextRequest, container: ServiceContainer = Depends(get_container)):
     try:
-        result = container.ingest.ingest_text(title=payload.title, text=payload.text, metadata=payload.metadata)
+        result = container.ingest.ingest_text(
+            title=payload.title,
+            text=payload.text,
+            metadata=payload.metadata,
+            sync=payload.sync,
+        )
         return IngestResponse(document_id=result.document_id, title=result.title, chunk_count=result.chunk_count)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -43,6 +48,7 @@ def delete_all_documents(container: ServiceContainer = Depends(get_container)):
 async def ingest_file(
     file: UploadFile = File(...),
     title: str = Form(...),
+    sync: bool = Form(False),
     container: ServiceContainer = Depends(get_container),
 ):
     try:
@@ -55,6 +61,7 @@ async def ingest_file(
                 "filename": filename,
                 "content_type": file.content_type or "application/octet-stream",
             },
+            sync=sync,
         )
         return IngestResponse(document_id=result.document_id, title=result.title, chunk_count=result.chunk_count)
     except Exception as exc:

@@ -4,9 +4,11 @@ import {
     Activity,
     AlertTriangle,
     Box,
+    Brain,
     CheckCircle2,
     Database,
     FileSearch,
+    GitMerge,
     Loader2,
     MessageSquare,
     Search,
@@ -64,6 +66,7 @@ interface ChatInterfaceProps {
     selectedDocumentIds: string[];
     setSelectedDocumentIds: React.Dispatch<React.SetStateAction<string[]>>;
     providerConfig?: ProviderConfig;
+    baseUrl?: string;
     activeStage?: string | null;
     progress?: ProgressData | null;
     history?: { role: string; content: string }[];
@@ -237,15 +240,29 @@ const HistoryItem = ({
 
 
 function StepIcon({ name, status }: { name: string; status: string }) {
-    const isComplete = status === "completed";
+    const isComplete = ["completed", "passed", "repaired"].includes(status);
     const isSkipped = status === "skipped";
+    const isFailed = status === "failed" || status === "error";
     const icons: Record<string, typeof Target> = {
         cache: Database,
         planning: Target,
+        gating: HelpCircle,
+        routing: GitMerge,
+        graph_build: Network,
+        graph_retrieval: GitMerge,
         gatherer: FileSearch,
         retrieval: Search,
         generation: Sparkles,
         compression: Box,
+        conflict_detection: AlertTriangle,
+        thinking: Brain,
+        verification: ShieldCheck,
+        verification_retry: ShieldCheck,
+        evidence_contract: ShieldCheck,
+        citation_verification: ShieldCheck,
+        retrieval_retry: Search,
+        compression_retry: Box,
+        generation_retry: Sparkles,
         reflection: Activity,
     };
     const Icon = icons[name] ?? Target;
@@ -254,7 +271,9 @@ function StepIcon({ name, status }: { name: string; status: string }) {
             ? "bg-primary/10"
             : isSkipped
                 ? "bg-muted"
-                : "bg-secondary/30"
+                : isFailed
+                    ? "bg-destructive/10"
+                    : "bg-secondary/30"
             }`}>
             <Icon className="h-4 w-4 text-foreground" />
         </span>
@@ -297,6 +316,63 @@ function StepDetails({ step }: { step: PipelineStep }) {
                             ))}
                         </ul>
                     </div>
+                )}
+            </div>
+        );
+    }
+
+    if (step.name === "gating") {
+        const decision = details.decision as string | undefined;
+        const confidence = details.confidence as number | undefined;
+        const reasoning = details.reasoning as string | undefined;
+        const clarification = details.clarification as string | undefined;
+        return (
+            <div className="mt-2 space-y-2 text-sm">
+                {decision && (
+                    <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
+                        Decision: {decision}
+                    </span>
+                )}
+                {typeof confidence === "number" && (
+                    <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
+                        Confidence: {(confidence * 100).toFixed(0)}%
+                    </span>
+                )}
+                {(reasoning || clarification) && (
+                    <p className="text-xs text-muted-foreground">
+                        {clarification ? `Clarification: ${clarification}` : reasoning}
+                    </p>
+                )}
+            </div>
+        );
+    }
+
+    if (step.name === "routing") {
+        const useRaptor = details.use_raptor as boolean | undefined;
+        const useGraph = details.use_graph as boolean | undefined;
+        const useColbert = details.use_colbert as boolean | undefined;
+        const rerankEnabled = details.rerank_enabled as boolean | undefined;
+        return (
+            <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                {typeof useRaptor === "boolean" && (
+                    <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5">
+                        RAPTOR: {useRaptor ? "on" : "off"}
+                    </span>
+                )}
+                {typeof useGraph === "boolean" && (
+                    <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5">
+                        GraphRAG: {useGraph ? "on" : "off"}
+                    </span>
+                )}
+                {typeof useColbert === "boolean" && (
+                    <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5">
+                        ColBERT: {useColbert ? "on" : "off"}
+                    </span>
+                )}
+                {typeof rerankEnabled === "boolean" && (
+                    <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5">
+                        Rerank: {rerankEnabled ? "on" : "off"}
+                    </span>
                 )}
             </div>
         );
@@ -353,6 +429,47 @@ function StepDetails({ step }: { step: PipelineStep }) {
         );
     }
 
+    if (step.name === "graph_build") {
+        const ready = details.graph_ready as boolean | undefined;
+        const entityCount = details.entity_count as number | undefined;
+        const alreadyReady = details.already_ready as boolean | undefined;
+        const reason = details.reason as string | undefined;
+        return (
+            <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5">
+                    {alreadyReady ? "Using cached graph" : ready ? "Graph ready" : "Graph build failed"}
+                </span>
+                {reason && (
+                    <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5">
+                        {reason}
+                    </span>
+                )}
+                {typeof entityCount === "number" && (
+                    <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5">
+                        {entityCount} entities
+                    </span>
+                )}
+            </div>
+        );
+    }
+
+    if (step.name === "graph_retrieval") {
+        const chunksAdded = details.chunks_added as number | undefined;
+        const durationMs = details.duration_ms as number | undefined;
+        return (
+            <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5">
+                    {chunksAdded ?? 0} graph chunks
+                </span>
+                {typeof durationMs === "number" && durationMs > 0 && (
+                    <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5">
+                        {durationMs.toFixed(0)}ms
+                    </span>
+                )}
+            </div>
+        );
+    }
+
     if (step.name === "generation") {
         const provider = details.provider as string | undefined;
         const model = details.model as string | undefined;
@@ -382,6 +499,24 @@ function StepDetails({ step }: { step: PipelineStep }) {
         );
     }
 
+    if (step.name === "thinking") {
+        const outline = details.outline as string | undefined;
+        const reason = details.reason as string | undefined;
+        return (
+            <div className="mt-2 space-y-2 text-sm">
+                {outline ? (
+                    <div className="rounded-md border border-border/60 bg-muted/30 p-2 text-xs text-foreground whitespace-pre-wrap">
+                        {outline}
+                    </div>
+                ) : (
+                    <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5 text-xs text-muted-foreground">
+                        Outline unavailable{reason ? ` (${reason})` : ""}
+                    </span>
+                )}
+            </div>
+        );
+    }
+
     if (step.name === "compression") {
         const enabled = details.enabled as boolean | undefined;
         const chunksUsed = details.chunks_used as number | undefined;
@@ -401,6 +536,80 @@ function StepDetails({ step }: { step: PipelineStep }) {
                     <span className="inline-flex items-center gap-1.5 rounded-lg bg-muted px-2.5 py-1 text-xs">
                         <FileSearch className="h-3.5 w-3.5" />
                         ~{estimatedTokens} tokens
+                    </span>
+                )}
+            </div>
+        );
+    }
+
+    if (step.name === "conflict_detection") {
+        const hasConflicts = details.has_conflicts as boolean | undefined;
+        const conflictCount = details.conflict_count as number | undefined;
+        return (
+            <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5">
+                    {hasConflicts ? "Conflicts detected" : "No conflicts"}
+                </span>
+                {typeof conflictCount === "number" && (
+                    <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5">
+                        {conflictCount} conflicts
+                    </span>
+                )}
+            </div>
+        );
+    }
+
+    if (step.name === "verification" || step.name === "verification_retry") {
+        const passRate = details.pass_rate as number | undefined;
+        const flagged = details.flagged_claims_count as number | undefined;
+        return (
+            <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                {typeof passRate === "number" && (
+                    <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5">
+                        Pass rate: {(passRate * 100).toFixed(0)}%
+                    </span>
+                )}
+                {typeof flagged === "number" && (
+                    <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5">
+                        {flagged} flagged
+                    </span>
+                )}
+            </div>
+        );
+    }
+
+    if (step.name === "evidence_contract") {
+        const coverageRatio = details.coverage_ratio as number | undefined;
+        const passThreshold = details.pass_threshold as number | undefined;
+        return (
+            <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                {typeof coverageRatio === "number" && (
+                    <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5">
+                        Coverage: {(coverageRatio * 100).toFixed(0)}%
+                    </span>
+                )}
+                {typeof passThreshold === "number" && (
+                    <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5">
+                        Target: {(passThreshold * 100).toFixed(0)}%
+                    </span>
+                )}
+            </div>
+        );
+    }
+
+    if (step.name === "citation_verification") {
+        const passRate = details.citation_check_pass_rate as number | undefined;
+        const invalid = details.invalid_citations as Array<{ id: string }> | undefined;
+        return (
+            <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                {typeof passRate === "number" && (
+                    <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5">
+                        Pass rate: {(passRate * 100).toFixed(0)}%
+                    </span>
+                )}
+                {invalid && (
+                    <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5">
+                        {invalid.length} invalid
                     </span>
                 )}
             </div>
@@ -532,10 +741,14 @@ function PipelinePanel({ steps, metrics }: { steps: PipelineStep[]; metrics: Rec
                                 </div>
                                 <div className="flex items-center gap-2">
                                     <span className={`text-xs font-medium ${step.status === "completed"
+                                        || step.status === "passed"
+                                        || step.status === "repaired"
                                         ? "text-primary"
                                         : step.status === "skipped"
                                             ? "text-muted-foreground"
-                                            : "text-secondary-foreground"
+                                            : step.status === "failed"
+                                                ? "text-destructive"
+                                                : "text-secondary-foreground"
                                         }`}>
                                         {step.status === "skipped" ? "skipped" : step.status}
                                     </span>
@@ -668,6 +881,7 @@ export function ChatInterface({
     selectedDocumentIds,
     setSelectedDocumentIds,
     providerConfig,
+    baseUrl,
     activeStage,
     progress,
     history = [],
@@ -735,10 +949,19 @@ export function ChatInterface({
     const liveStages = useMemo(() => ([
         { name: "cache", label: "Cache", icon: Database },
         { name: "planning", label: "Planning", icon: Target },
+        { name: "gating", label: "Gating", icon: HelpCircle },
+        { name: "routing", label: "Routing", icon: GitMerge },
+        { name: "graph_build", label: "Graph Build", icon: Network },
         { name: "gatherer", label: "Gatherer", icon: FileSearch },
+        { name: "graph_retrieval", label: "Graph Retrieval", icon: Network },
         { name: "retrieval", label: "Retrieval", icon: Search },
         { name: "compression", label: "Compression", icon: Box },
+        { name: "conflict_detection", label: "Conflict Check", icon: AlertTriangle },
+        { name: "thinking", label: "Thinking", icon: Brain },
         { name: "generation", label: "Generation", icon: Sparkles },
+        { name: "verification", label: "Verification", icon: ShieldCheck },
+        { name: "evidence_contract", label: "Evidence Contract", icon: ShieldCheck },
+        { name: "citation_verification", label: "Citation Check", icon: ShieldCheck },
         { name: "reflection", label: "Reflection", icon: Activity },
     ]), []);
     const completedStages = useMemo(() => new Set(
@@ -1354,6 +1577,7 @@ export function ChatInterface({
                     <ArtifactViewer
                         type={viewingArtifact}
                         onClose={() => setViewingArtifact(null)}
+                        baseUrl={baseUrl}
                     />
                 )
             }

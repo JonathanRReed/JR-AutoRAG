@@ -5,9 +5,10 @@ import { Button } from '../ui/button';
 interface ArtifactViewerProps {
     type: 'graph_rag' | 'raptor';
     onClose: () => void;
+    baseUrl?: string;
 }
 
-export function ArtifactViewer({ type, onClose }: ArtifactViewerProps) {
+export function ArtifactViewer({ type, onClose, baseUrl }: ArtifactViewerProps) {
     const [data, setData] = useState<any>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -16,8 +17,9 @@ export function ArtifactViewer({ type, onClose }: ArtifactViewerProps) {
         const fetchData = async () => {
             setLoading(true);
             try {
+                const root = baseUrl ? baseUrl.replace(/\/$/, "") : "";
                 const endpoint = type === 'graph_rag' ? '/api/artifacts/graph' : '/api/artifacts/raptor';
-                const res = await fetch(endpoint);
+                const res = await fetch(`${root}${endpoint}`);
                 if (!res.ok) throw new Error("Failed to fetch artifact data");
                 const json = await res.json();
                 setData(json);

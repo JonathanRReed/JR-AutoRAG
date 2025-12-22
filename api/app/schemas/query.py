@@ -36,7 +36,10 @@ class QueryResponse(BaseModel):
     sources: list[dict[str, Any]] = []  # Phase 2: Citation info
     trace_id: str
     metrics: dict[str, Any]  # Allow strings like query_type
+    confidence: dict[str, Any] | None = None
     steps: list[PipelineStepOut] = []
+    trace_bundle_available: bool | None = None
+    needs_clarification: bool | None = None
 
 
 class TraceStepOut(BaseModel):
