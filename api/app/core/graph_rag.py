@@ -115,6 +115,11 @@ STRICT FORMATTING RULES:
         self.communities: list[Community] = []
         self._graph: Any = None  # NetworkX graph
     
+    @property
+    def graph(self) -> Any:
+        """Public accessor for the NetworkX graph."""
+        return self._graph
+    
     def _normalize_name(self, name: str) -> str:
         """Normalize entity name for consistent matching."""
         return name.strip().lower()

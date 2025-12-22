@@ -137,8 +137,8 @@ function TraceCard({ trace, formatNumber }: { trace: TraceOut; formatNumber: (va
                     </span>
                 )}
                 <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${coverage > 0.7 ? "bg-green-500/10 text-green-500" :
-                        coverage > 0.4 ? "bg-yellow-500/10 text-yellow-500" :
-                            "bg-red-500/10 text-red-500"
+                    coverage > 0.4 ? "bg-yellow-500/10 text-yellow-500" :
+                        "bg-red-500/10 text-red-500"
                     }`}>
                     {qualityLabel} quality
                 </span>
@@ -182,6 +182,19 @@ function TraceCard({ trace, formatNumber }: { trace: TraceOut; formatNumber: (va
                                                 {step.duration_ms < 1 ? "<1ms" : `${step.duration_ms.toFixed(0)}ms`}
                                             </span>
                                         </div>
+                                        {/* Step details - why this route */}
+                                        {step.details && Object.keys(step.details).length > 0 && (
+                                            <div className="mt-2 pt-2 border-t border-border/40">
+                                                <div className="flex flex-wrap gap-2">
+                                                    {Object.entries(step.details).slice(0, 4).map(([key, value]) => (
+                                                        <span key={key} className="inline-flex items-center gap-1 text-[10px] text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded">
+                                                            <span className="font-medium">{key}:</span>
+                                                            <span>{typeof value === 'number' ? value.toFixed(2) : String(value).slice(0, 20)}</span>
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
                                 ))}
                             </div>

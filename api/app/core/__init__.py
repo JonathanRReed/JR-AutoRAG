@@ -49,6 +49,22 @@ from .trace_export import TraceBundle, create_trace_bundle, summarize_steps
 from .artifact_builder import (
     ArtifactBuilder, ArtifactStatus, ArtifactState, BuildProgress, get_artifact_builder
 )
+# v2.0 Abstention rules
+from .abstention import AbstentionRules, AbstentionConfig, AbstentionResult, AbstentionReason, get_abstention_rules
+# v2.0 Phase 2: Agentic loops
+from .self_rag import SelfRAGCritic, SelfRAGConfig, CriticResult, get_self_rag_critic
+from .retrieval_cascade import RetrievalCascade, CascadeConfig, CascadeResult, CascadeStage, get_retrieval_cascade
+from .auto_weights import AutoHybridWeights, AutoWeightConfig, WeightProfile, get_auto_weights
+# v2.0 Phase 3: Ingestion enhancements
+from .contextual_enrichment import ContextualEnricher, EnrichmentConfig, EnrichedChunk, get_contextual_enricher
+from .multi_granularity import MultiGranularityIndexer, MultiGranularityConfig, GranularChunk, GranularityLevel, get_multi_granularity_indexer
+from .structured_data_parser import StructuredDataParser, StructuredDataConfig, StructuredRecord, StructuredDataFormat, get_structured_data_parser
+# v2.0 Phase 4: Observability & Security
+from .circuit_breaker import CircuitBreaker, CircuitBreakerConfig, CircuitBreakerRegistry, CircuitState, get_circuit_breaker, get_circuit_breaker_registry
+from .cost_tracker import CostLatencyTracker, TokenUsage, CostEstimate, LatencyBreakdown, RequestMetrics, get_cost_tracker
+# v2.0 Phase 5: Polish & Docs
+from .feature_flags import FeatureFlagRegistry, FeatureFlag, RiskLevel, V2_FEATURE_FLAGS, get_feature_flags, is_feature_enabled
+from .config_migration import ConfigMigrator, MigrationResult, V2_NEW_FIELDS, get_config_migrator, migrate_config
 
 __all__ = [
     "ConfigStore",

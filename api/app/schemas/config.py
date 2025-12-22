@@ -62,6 +62,8 @@ class RetrievalDefaults(BaseModel):
     proximity_weight: float = 0.5  # Term-proximity boost for BM25
     diversity: float = 0.0  # 0-1: prefer diverse chunks when >0
     use_hyde: bool = False  # Enable HyDE (Hypothetical Document Embeddings)
+    abstain_when_unverified: bool = False  # Abstain when evidence is insufficient
+    self_rag_critic: bool = False  # Enable Self-RAG LLM-based critic (v2.0)
 
     @field_validator("raptor", mode="before")
     @classmethod
@@ -132,6 +134,7 @@ RETRIEVAL_PRESETS = {
         multi_resolution=True,
         raptor=False,
         graph=False,
+        abstain_when_unverified=False,  # v2.0: DISABLED - coverage calc bug
     ),
     "thorough": RetrievalDefaults(
         hybrid=True,
@@ -152,6 +155,8 @@ RETRIEVAL_PRESETS = {
         raptor=True,
         graph=False,
         use_hyde=True,
+        abstain_when_unverified=False,  # v2.0: DISABLED - coverage calc bug
+        self_rag_critic=False,  # v2.0: DISABLED - causes late failures
     ),
     "ultra_accurate": RetrievalDefaults(
         hybrid=True,
@@ -173,6 +178,8 @@ RETRIEVAL_PRESETS = {
         graph=True,
         diversity=0.3,
         use_hyde=True,
+        abstain_when_unverified=False,  # v2.0: DISABLED - coverage calc bug
+        self_rag_critic=False,  # v2.0: DISABLED - causes late failures
     ),
 }
 
