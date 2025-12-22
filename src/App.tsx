@@ -8,13 +8,15 @@ import { useToast } from "@/components/ui/toast";
 
 import { AdvancedRAGSettings } from "@/components/features/AdvancedRAGSettings";
 import { ChatInterface } from "@/components/features/ChatInterface";
+import { EnterpriseStatusPanel } from "@/components/features/EnterpriseStatusPanel";
 import { IngestPanel } from "@/components/features/IngestPanel";
 import { MetricsDashboard } from "@/components/features/MetricsDashboard";
 import { ProviderConfig } from "@/components/features/ProviderConfig";
 import { TraceLog } from "@/components/features/TraceLog";
+import { PresetSelector } from "@/components/features/PresetSelector";
 
 import "./index.css";
-import type { AppConfig, CacheStats, DocumentOut, IngestResponse, LocalProviderInfo, ModelStatus, ProviderConfig as ProviderConfigType, ProviderProfile, QueryResponse, RetrievalDefaults, RoleSelection, TraceOut } from "@/types";
+import type { AppConfig, CacheStats, DocumentOut, IngestResponse, LocalProviderInfo, ModelStatus, ProviderConfig as ProviderConfigType, ProviderProfile, QueryResponse, RetrievalDefaults, RoleSelection, TraceOut, ChatSession, PresetLevel } from "@/types";
 
 const resolveDefaultBaseUrl = () => {
   const envBase =
@@ -71,12 +73,27 @@ export function App() {
   const { toast } = useToast();
   const [baseUrl, setBaseUrl] = useState(defaultBaseUrl);
   const [status, setStatus] = useState("");
+  const [isConnected, setIsConnected] = useState(false); // New state for reliable connection tracking
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [documents, setDocuments] = useState<DocumentOut[]>([]);
   const [traces, setTraces] = useState<TraceOut[]>([]);
   const [cacheStats, setCacheStats] = useState<CacheStats | null>(null);
-  const [question, setQuestion] = useState("What is JR AutoRAG?");
+  const [question, setQuestion] = useState("");
   const [queryResult, setQueryResult] = useState<QueryResponse | null>(null);
+  const [chatHistory, setChatHistory] = useState<{ role: string; content: string }[]>(() => {
+    const saved = localStorage.getItem("chatHistory");
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [savedSessions, setSavedSessions] = useState<ChatSession[]>(() => {
+    const saved = localStorage.getItem("savedSessions");
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const currentSessionIdRef = useRef(currentSessionId);
+  useEffect(() => {
+    currentSessionIdRef.current = currentSessionId;
+  }, [currentSessionId]);
+  const [currentTraceId, setCurrentTraceId] = useState<string | null>(null);
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
   const [ingestTitle, setIngestTitle] = useState("Getting Started");
   const [ingestText, setIngestText] = useState("Paste onboarding doc content here...");
@@ -84,6 +101,14 @@ export function App() {
   const [isIngesting, setIsIngesting] = useState(false);
   const [isQuerying, setIsQuerying] = useState(false);
   const [activeStage, setActiveStage] = useState<string | null>(null);
+  const [progress, setProgress] = useState<{
+    stage: string;
+    message: string;
+    detail?: string;
+    progress?: number;
+    elapsed_ms?: number;
+    estimated_remaining_ms?: number;
+  } | null>(null);
   const [isEvaluating, setIsEvaluating] = useState(false);
   const [evaluationSummary, setEvaluationSummary] = useState("");
   const [selectedProfile, setSelectedProfile] = useState("Default");
@@ -94,7 +119,18 @@ export function App() {
   const [localSelections, setLocalSelections] = useState<Record<string, RoleSelection>>({});
   const [isUploadingFile, setIsUploadingFile] = useState(false);
   const [isClearingCache, setIsClearingCache] = useState(false);
-  const [activeTab, setActiveTab] = useState<TabId>("config");
+  const [activeTab, setActiveTab] = useState<TabId>(() => {
+    if (typeof window === "undefined") return "config";
+    const saved = localStorage.getItem("activeTab");
+    if (saved && ["config", "documents", "query", "metrics"].includes(saved)) {
+      return saved as TabId;
+    }
+    return "config";
+  });
+
+  useEffect(() => {
+    localStorage.setItem("activeTab", activeTab);
+  }, [activeTab]);
   const [modelStatus, setModelStatus] = useState<ModelStatus>({
     embedding: "unknown",
     reranker: "unknown",
@@ -112,8 +148,29 @@ export function App() {
   });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const headers = useMemo(() => ({ "Content-Type": "application/json" }), []);
+  const [activePreset, setActivePreset] = useState<PresetLevel>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("activePreset") as PresetLevel | null;
+      if (saved && ["turbo", "fast", "balanced", "thorough", "ultra_accurate"].includes(saved)) {
+        return saved;
+      }
+    }
+    return "balanced";
+  });
 
   // Toggle dark mode
+  useEffect(() => {
+    localStorage.setItem("chatHistory", JSON.stringify(chatHistory));
+  }, [chatHistory]);
+
+  useEffect(() => {
+    localStorage.setItem("savedSessions", JSON.stringify(savedSessions));
+  }, [savedSessions]);
+
+  useEffect(() => {
+    localStorage.setItem("activePreset", activePreset);
+  }, [activePreset]);
+
   useEffect(() => {
     if (isDarkMode) {
       document.documentElement.classList.add("dark");
@@ -122,15 +179,49 @@ export function App() {
     }
   }, [isDarkMode]);
 
+  const chatEndRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (activeTab === "query") {
+      chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [chatHistory, queryResult?.answer, activeTab]);
+
   const buildUrl = (path: string) => `${baseUrl.replace(/\/$/, "")}${path}`;
 
   const fetchJson = async <T,>(path: string, init?: RequestInit): Promise<T> => {
-    const response = await fetch(buildUrl(path), init);
-    if (!response.ok) {
-      throw new Error(await response.text());
+    try {
+      const response = await fetch(buildUrl(path), init);
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+      setIsConnected(true); // Successfully reached API
+      return response.json();
+    } catch (error) {
+      if (error instanceof TypeError) {
+        setIsConnected(false); // Network error
+      }
+      throw error;
     }
-    return response.json();
   };
+
+  // Heartbeat for connection status
+  useEffect(() => {
+    const check = async () => {
+      try {
+        await fetch(buildUrl("/healthz"), { method: "GET" });
+        setIsConnected(true);
+      } catch (e) {
+        setIsConnected(false);
+      }
+    };
+
+    // Initial check
+    check();
+
+    // Periodically check every 20 seconds
+    const id = setInterval(check, 20000);
+    return () => clearInterval(id);
+  }, [baseUrl]);
 
   const refreshLocalProviders = async () => {
     setLocalProvidersStatus("loading");
@@ -229,6 +320,7 @@ export function App() {
       setTraces(traceList);
       setCacheStats(cache);
       setStatus("API data loaded");
+      setIsConnected(true);
     } catch (error) {
       setStatus(`Failed to load data: ${toMessage(error)}`);
     }
@@ -337,6 +429,7 @@ export function App() {
   useEffect(() => {
     refreshAll();
     refreshLocalProviders();
+    handleTestConnection(); // Check connection explicitly on mount/change
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [baseUrl]);
 
@@ -376,9 +469,11 @@ export function App() {
     try {
       await fetchJson("/healthz");
       setStatus("API reachable");
+      setIsConnected(true);
       toast({ title: "API reachable", description: baseUrl, variant: "success" });
     } catch (error) {
       setStatus(`Health check failed: ${toMessage(error)}`);
+      setIsConnected(false);
       toast({ title: "API health check failed", description: toMessage(error), variant: "error" });
     }
   };
@@ -482,13 +577,65 @@ export function App() {
     }
   };
 
-  const handleAsk = async () => {
+  const handleAsk = async (overrideQuestion?: string, isRegenerate = false) => {
+    if (isQuerying) return; // Prevent double trigger
+
+    // 1. Determine the question to ask
+    const currentQuestion = overrideQuestion || question;
+    if (!currentQuestion.trim()) return;
+
+    // NEW: Session persistence logic
+    let localSessionId = currentSessionId;
+    let initialHistory = chatHistory;
+
+    if (isRegenerate) {
+      // Remove last assistant message if it exists
+      initialHistory = chatHistory.slice(0, chatHistory[chatHistory.length - 1]?.role === "assistant" ? -1 : undefined);
+      setChatHistory(initialHistory);
+    } else {
+      // Persist new user question immediately
+      initialHistory = [...chatHistory, { role: "user", content: currentQuestion }];
+      setChatHistory(initialHistory);
+      setQuestion(""); // Clear input immediately
+    }
+
+    if (!localSessionId) {
+      localSessionId = crypto.randomUUID();
+      setCurrentSessionId(localSessionId);
+      const firstMsg = currentQuestion;
+      const title = firstMsg.length > 40 ? firstMsg.slice(0, 37) + "..." : firstMsg;
+      const newSession: ChatSession = {
+        id: localSessionId,
+        title,
+        history: initialHistory,
+        queryResult: null,
+        createdAt: new Date().toISOString(),
+      };
+      setSavedSessions(prev => [newSession, ...prev]);
+    } else {
+      // Update existing session in sidebar immediately with user message
+      setSavedSessions(prev => prev.map(s => s.id === localSessionId ? { ...s, history: initialHistory } : s));
+    }
+
     setIsQuerying(true);
     setQueryResult(null);
     setActiveStage("planning");
+    setProgress(null);
+
     try {
+      // Use currentQuestion instead of state 'question'
       const useFilter = selectedDocumentIds.length > 0 && selectedDocumentIds.length < documents.length;
-      const payload = useFilter ? { question, document_ids: selectedDocumentIds } : { question };
+
+      // Filter chat history to exclude the last assistant message if we are regenerating
+      let historyToSend = initialHistory;
+      const lastItem = historyToSend.length > 0 ? historyToSend[historyToSend.length - 1] : null;
+      if (isRegenerate && lastItem && lastItem.role === "assistant") {
+        historyToSend = historyToSend.slice(0, -1);
+      }
+
+      const payload = useFilter
+        ? { question: currentQuestion, document_ids: selectedDocumentIds, history: historyToSend }
+        : { question: currentQuestion, history: historyToSend };
       const response = await fetch(buildUrl("/query/stream"), {
         method: "POST",
         headers,
@@ -498,7 +645,14 @@ export function App() {
         throw new Error(await response.text());
       }
 
-      const reader = response.body.getReader();
+      setIsConnected(true); // Stream started
+
+      const body = response.body;
+      if (!body) {
+        throw new Error("Response body is null");
+      }
+
+      const reader = body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
       let receivedResult = false;
@@ -518,24 +672,7 @@ export function App() {
           const payloadText = chunk.replace(/^data:\s*/, "");
           const event = JSON.parse(payloadText);
           if (event.type === "step") {
-            setQueryResult(prev => {
-              const base: QueryResponse = prev ?? {
-                answer: "",
-                chunks: [],
-                sources: [],
-                trace_id: "",
-                metrics: {},
-                steps: [],
-              };
-              return {
-                ...base,
-                steps: [...(base.steps ?? []), event.data],
-              };
-            });
-          }
-          if (event.type === "token") {
-            const text = event.data?.text ?? "";
-            if (text) {
+            if (localSessionId === currentSessionIdRef.current) {
               setQueryResult(prev => {
                 const base: QueryResponse = prev ?? {
                   answer: "",
@@ -547,41 +684,155 @@ export function App() {
                 };
                 return {
                   ...base,
-                  answer: `${base.answer}${text}`,
+                  steps: [...(base.steps ?? []), event.data],
                 };
               });
             }
           }
+          if (event.type === "token") {
+            const text = event.data?.text ?? "";
+            if (text) {
+              if (localSessionId === currentSessionIdRef.current) {
+                setQueryResult(prev => {
+                  const base: QueryResponse = prev ?? {
+                    answer: "",
+                    chunks: [],
+                    sources: [],
+                    trace_id: "",
+                    metrics: {},
+                    steps: [],
+                  };
+                  return {
+                    ...base,
+                    answer: `${base.answer}${text}`,
+                  };
+                });
+              }
+            }
+          }
           if (event.type === "stage") {
-            setActiveStage(event.data?.name ?? null);
+            if (localSessionId === currentSessionIdRef.current) {
+              setActiveStage(event.data?.name ?? null);
+            }
+          }
+          if (event.type === "progress") {
+            if (localSessionId === currentSessionIdRef.current) {
+              setProgress(event.data);
+              if (event.data?.trace_id) {
+                setCurrentTraceId(event.data.trace_id);
+              }
+            }
           }
 
-        if (event.type === "result") {
-          receivedResult = true;
-          setQueryResult(event.data);
-          setStatus("Query succeeded");
-          setActiveStage(null);
-          refreshAll();
-          toast({ title: "Query complete", description: "Results updated", variant: "success" });
-        }
-        if (event.type === "error") {
-          const message = event.data?.message ?? "Query failed";
-          throw new Error(message);
+          if (event.type === "result") {
+            receivedResult = true;
+            if (localSessionId === currentSessionIdRef.current) {
+              setQueryResult(event.data);
+              setStatus("Query succeeded");
+              setActiveStage(null);
+              setProgress(null);
+            }
+
+            // Update history locally
+            const updatedHistory = [
+              ...initialHistory,
+              { role: "assistant", content: event.data.answer }
+            ];
+
+            if (localSessionId === currentSessionIdRef.current) {
+              setChatHistory(updatedHistory);
+            }
+
+            // ALWAYS update history in the saved session list (even if not active)
+            setSavedSessions(prev => prev.map(s =>
+              s.id === localSessionId ? { ...s, history: updatedHistory, queryResult: event.data } : s
+            ));
+
+            refreshAll();
+            toast({ title: "Query complete", description: "Results updated", variant: "success" });
+          }
+          if (event.type === "error") {
+            const message = event.data?.message ?? "Query failed";
+            throw new Error(message);
+          }
         }
       }
-    }
 
-    if (!receivedResult) {
-      throw new Error("Query ended before returning a result");
+      if (!receivedResult) {
+        throw new Error("Query ended before returning a result");
+      }
+    } catch (error) {
+      console.error("Query execution error:", error);
+      setStatus(`Query failed: ${toMessage(error)}`);
+
+      // Attempt to save partial result if available
+      setQueryResult((currentPartial) => {
+        if (currentPartial?.answer && localSessionId === currentSessionIdRef.current) {
+          const partialAnswer = currentPartial.answer + "\n\n*[Generation interrupted due to error]*";
+          const updatedHistory = [
+            ...initialHistory,
+            { role: "assistant", content: partialAnswer }
+          ];
+          setChatHistory(updatedHistory);
+          setSavedSessions(prev => prev.map(s =>
+            s.id === localSessionId ? { ...s, history: updatedHistory } : s
+          ));
+        }
+        return currentPartial;
+      });
+
+      toast({ title: "Query interrupted", description: toMessage(error), variant: "error" });
+    } finally {
+      setIsQuerying(false);
+      setActiveStage(null);
+      setProgress(null);
+      setCurrentTraceId(null);
     }
-  } catch (error) {
-    setStatus(`Query failed: ${toMessage(error)}`);
-    toast({ title: "Query failed", description: toMessage(error), variant: "error" });
-  } finally {
-    setIsQuerying(false);
+  };
+
+  const handleCancelQuery = async () => {
+    if (!currentTraceId) return;
+    try {
+      await fetch(buildUrl(`/query/cancel?trace_id=${currentTraceId}`), { method: "POST" });
+      setStatus("Query cancelled");
+      toast({ title: "Query cancelled", variant: "info" });
+      setIsQuerying(false);
+      setActiveStage(null);
+      setProgress(null);
+      setCurrentTraceId(null);
+    } catch (e) {
+      console.error("Cancel failed", e);
+    }
+  };
+
+  const handleNewChat = () => {
+    setChatHistory([]);
+    setQueryResult(null);
+    setCurrentSessionId(null);
     setActiveStage(null);
-  }
-};
+    setProgress(null);
+    setQuestion("");
+    toast({ title: "New chat started", variant: "info" });
+  };
+
+  const handleClearHistory = () => {
+    if (window.confirm("Delete all saved chat history? This cannot be undone.")) {
+      setSavedSessions([]);
+      toast({ title: "History cleared", variant: "success" });
+    }
+  };
+
+  const handleLoadSession = (session: ChatSession) => {
+    setCurrentSessionId(session.id);
+    setChatHistory(session.history);
+    setQueryResult(session.queryResult);
+    setActiveTab("query");
+    toast({ title: "Session restored", description: session.title });
+  };
+
+  const handleDeleteSession = (id: string) => {
+    setSavedSessions(prev => prev.filter(s => s.id !== id));
+  };
 
   const handleEvaluation = async () => {
     setIsEvaluating(true);
@@ -591,32 +842,40 @@ export function App() {
         questions: ["What is JR AutoRAG?", "How do I onboard documents?"],
       };
       const result = await fetchJson<{ average_coverage: number; average_tokens: number }>("/evaluation", {
-      method: "POST",
-      headers,
-      body: JSON.stringify(payload),
-    });
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload),
+      });
       setEvaluationSummary(
-      `Avg coverage ${(result.average_coverage * 100).toFixed(1)}%, Avg tokens ${result.average_tokens.toFixed(0)}`,
-    );
-    setStatus("Evaluation complete");
-    toast({ title: "Evaluation complete", description: "Coverage and tokens updated", variant: "success" });
-  } catch (error) {
-    const message = `Evaluation failed: ${toMessage(error)}`;
-    setEvaluationSummary(message);
-    setStatus(message);
-    toast({ title: "Evaluation failed", description: toMessage(error), variant: "error" });
-  } finally {
-    setIsEvaluating(false);
-  }
-};
+        `Avg coverage ${(result.average_coverage * 100).toFixed(1)}%, Avg tokens ${result.average_tokens.toFixed(0)}`,
+      );
+      setStatus("Evaluation complete");
+      toast({ title: "Evaluation complete", description: "Coverage and tokens updated", variant: "success" });
+    } catch (error) {
+      const message = `Evaluation failed: ${toMessage(error)}`;
+      setEvaluationSummary(message);
+      setStatus(message);
+      toast({ title: "Evaluation failed", description: toMessage(error), variant: "error" });
+    } finally {
+      setIsEvaluating(false);
+    }
+  };
 
   const handleClearCache = async () => {
+    const confirmed = window.confirm(
+      "Clear all cached indexes and query results? This will require a rebuild on next query."
+    );
+    if (!confirmed) {
+      return;
+    }
     setIsClearingCache(true);
     try {
-      await fetchJson("/monitoring/cache/clear", { method: "POST" });
-      setStatus("Cache cleared");
+      const result = await fetchJson<{ status: string; message: string }>("/api/cache/clear", {
+        method: "DELETE",
+      });
+      setStatus(result.message || "Cache cleared");
       refreshAll();
-      toast({ title: "Cache cleared", description: "Embedding and query caches reset", variant: "success" });
+      toast({ title: "Cache cleared", description: "All indexes and query caches reset", variant: "success" });
     } catch (error) {
       setStatus(`Cache clear failed: ${toMessage(error)}`);
       toast({ title: "Cache clear failed", description: toMessage(error), variant: "error" });
@@ -732,21 +991,47 @@ export function App() {
 
   const docsReady = documents.length > 0;
   const modelsReady = Boolean(config?.provider?.planner_model && config?.provider?.generator_model);
-  const apiReady = status.toLowerCase().includes("api reachable");
+  const apiReady = isConnected;
 
   return (
-    <div className="min-h-screen bg-background transition-colors duration-300">
+    <div className="flex flex-col h-screen overflow-hidden bg-background transition-colors duration-300">
       {/* Header */}
-      <header className="sticky top-0 z-50 border-b border-border/60 bg-background/95">
-        <div className="mx-auto flex max-w-[1600px] items-center justify-between px-4 py-4">
-          <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary text-lg font-bold text-primary-foreground shadow-sm">
-                JR
+      {/* Header */}
+      <header className="flex-none relative z-50 border-b border-border/60 bg-background/95">
+        <div className="mx-auto flex max-w-[1600px] items-center justify-between px-4 py-3">
+          <div className="flex items-center gap-8">
+            <div className="flex items-center gap-3">
+              <img
+                src="/HWC-Icon.png"
+                alt="JR AutoRAG"
+                className="h-10 w-10 rounded-lg object-cover shadow-sm"
+              />
+              <div>
+                <h1 className="text-xl font-bold text-foreground">JR AutoRAG</h1>
+                <p className="text-xs text-muted-foreground">Admin Console</p>
               </div>
-            <div>
-              <h1 className="text-xl font-bold text-foreground">AutoRAG</h1>
-              <p className="text-xs text-muted-foreground">Admin Console</p>
             </div>
+
+            {/* Top Navigation */}
+            <nav className="flex items-center gap-1 bg-muted/30 p-1 rounded-lg">
+              {tabs.map(tab => {
+                const Icon = tab.icon;
+                const isActive = activeTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-all ${isActive
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                      }`}
+                  >
+                    <Icon className="h-4 w-4" />
+                    {tab.label}
+                  </button>
+                );
+              })}
+            </nav>
           </div>
 
           <div className="flex items-center gap-4">
@@ -758,204 +1043,290 @@ export function App() {
                 onChange={e => setBaseUrl(e.target.value)}
                 placeholder="API URL"
               />
-              <Button variant="outline" size="sm" onClick={handleTestConnection}>
-                Test
+              <Button size="sm" variant="outline" onClick={handleTestConnection}>
+                {apiReady ? "Connected" : "Connect"}
               </Button>
             </div>
 
-            {/* Dark Mode Toggle */}
-            <button
-              type="button"
+            {/* Checklist items indicator */}
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground/80 bg-muted/30 px-3 py-1.5 rounded-full">
+              <div className={`h-2 w-2 rounded-full ${apiReady ? "bg-green-500" : "bg-red-500"}`} />
+              <span className="font-medium mr-2">API</span>
+              <div className={`h-2 w-2 rounded-full ${modelsReady ? "bg-green-500" : "bg-yellow-500"}`} />
+              <span className="font-medium mr-2">Models</span>
+              <div className={`h-2 w-2 rounded-full ${docsReady ? "bg-green-500" : "bg-yellow-500"}`} />
+              <span className="font-medium">Knowledge</span>
+            </div>
+
+            {/* Theme Toggle */}
+            <Button
+              variant="ghost"
+              size="icon"
               onClick={() => setIsDarkMode(!isDarkMode)}
-              className="flex h-9 w-9 items-center justify-center rounded-md border border-border/70 bg-card text-lg transition-colors hover:bg-muted/40"
-              aria-label="Toggle dark mode"
+              className="text-foreground"
             >
-              {isDarkMode ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
-            </button>
+              {isDarkMode ? <Moon className="h-5 w-5" /> : <Sun className="h-5 w-5" />}
+            </Button>
           </div>
         </div>
-
-        {/* Status Bar */}
-        {status && (
-        <div className="border-t border-border/60 bg-muted/20 px-4 py-2">
-            <p className="mx-auto max-w-[1600px] text-sm text-muted-foreground">
-              <span className="inline-block h-2 w-2 rounded-full bg-primary mr-2" />
-              {status}
-            </p>
-          </div>
-        )}
       </header>
 
-      {/* Tab Navigation */}
-      <nav className="border-b border-border/60 bg-muted/20">
-        <div className="mx-auto max-w-[1600px] px-4">
-          <div className="flex gap-1 overflow-x-auto py-2">
-            {tabs.map(tab => (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors ${activeTab === tab.id
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
-                  }`}
-              >
-                <tab.icon className="h-4 w-4" />
-                <span className="hidden sm:inline">{tab.label}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      </nav>
-
-      {/* Setup Checklist */}
-      {!checklistDismissed && (
-        <div className="border-b border-border/60 bg-muted/10">
-          <div className="mx-auto flex max-w-[1600px] flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex flex-wrap items-center gap-3 text-sm text-foreground">
-              <span className="font-semibold text-foreground">Setup Checklist</span>
-              <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs ${docsReady ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
-                <span className={`h-2 w-2 rounded-full ${docsReady ? "bg-emerald-500" : "bg-amber-500"}`} />
-                {docsReady ? "Documents ready" : "Add documents"}
-              </span>
-              <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs ${modelsReady ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
-                <span className={`h-2 w-2 rounded-full ${modelsReady ? "bg-emerald-500" : "bg-amber-500"}`} />
-                {modelsReady ? "Models configured" : "Select models"}
-              </span>
-              <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs ${apiReady ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
-                <span className={`h-2 w-2 rounded-full ${apiReady ? "bg-emerald-500" : "bg-amber-500"}`} />
-                {apiReady ? "API reachable" : "Test API"}
-              </span>
-              <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground">
-                OCR: install tesseract + poppler for scanned PDFs
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={() => setChecklistDismissed(true)}
-              className="text-xs text-muted-foreground hover:text-foreground"
-            >
-              Dismiss
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Main Content */}
-      <main className="mx-auto max-w-[1600px] px-4 py-8">
-        <div className="flex flex-col gap-8">
-          {/* Config Tab */}
-          {activeTab === "config" && (
-            <>
-              <ProviderConfig
-                config={config}
-                setConfig={setConfig}
-                selectedProfile={selectedProfile}
-                handleSelectProfile={handleSelectProfile}
-                newProfileName={newProfileName}
-                setNewProfileName={setNewProfileName}
-                handleAddProfile={handleAddProfile}
-                handleDiscoverModels={handleDiscoverModels}
-                isSavingConfig={isSavingConfig}
-                handleSaveConfig={handleSaveConfig}
-                refreshAll={refreshAll}
-                localProviders={localProviders}
-                localProvidersStatus={localProvidersStatus}
-                refreshLocalProviders={refreshLocalProviders}
-                localSelections={localSelections}
-                setLocalSelection={setLocalSelection}
-                applyLocalProvider={applyLocalProvider}
-                modelOptions={modelOptions}
-              />
-              <AdvancedRAGSettings
-                retrieval={config?.retrieval}
-                updateRetrieval={updateRetrieval}
-                onSave={handleSaveConfig}
-                isSaving={isSavingConfig}
-                modelStatus={modelStatus}
-                isCheckingModels={isCheckingModels}
-                modelActionMessage={modelActionMessage}
-                onRefreshModelStatus={() =>
-                  refreshModelStatus(
-                    config?.retrieval?.embedding_model,
-                    config?.retrieval?.reranker_model,
-                  )
-                }
-                onDownloadEmbedding={() => downloadModel("embedding")}
-                onDownloadReranker={() => downloadModel("reranker")}
-                onDeleteEmbedding={() => deleteModel("embedding")}
-                onDeleteReranker={() => deleteModel("reranker")}
-                isDownloadingEmbedding={isDownloadingEmbedding}
-                isDownloadingReranker={isDownloadingReranker}
-              />
-            </>
-          )}
+      <main className="flex-1 min-h-0 mx-auto w-full max-w-[1600px]">
+        <div className="flex h-full flex-col">
+          <div className={`flex-1 bg-background ${activeTab === "query" ? "overflow-hidden p-0" : "overflow-auto p-6"}`}>
+            <div className={`h-full animate-in fade-in slide-in-from-bottom-2 duration-300 ${activeTab !== "config" ? "hidden" : ""}`}>
+              {/* Configuration Panel */}
+              <div className="space-y-6 max-w-[1600px] mx-auto">
+                <div>
+                  <h2 className="text-lg font-semibold tracking-tight">System Configuration</h2>
+                  <p className="text-sm text-muted-foreground">Manage LLM providers and retrieval settings.</p>
+                </div>
 
-          {/* Documents Tab */}
-          {activeTab === "documents" && (
-            <IngestPanel
-              ingestTitle={ingestTitle}
-              setIngestTitle={setIngestTitle}
-              ingestText={ingestText}
-              setIngestText={setIngestText}
-              isIngesting={isIngesting}
-              handleIngest={handleIngest}
-              documents={documents}
-              handleDeleteDocument={handleDeleteDocument}
-              handleDeleteAllDocuments={handleDeleteAllDocuments}
-              isUploadingFile={isUploadingFile}
-              uploadFile={uploadFile}
-              waitForDocumentReady={waitForDocumentReady}
-              fileInputRef={fileInputRef}
-              formatDateTime={formatDateTime}
-            />
-          )}
+                <div className="grid gap-6">
+                  {/* Provider Configuration */}
+                  <ProviderConfig
+                    localProviders={localProviders}
+                    localProvidersStatus={localProvidersStatus}
+                    localSelections={localSelections}
+                    refreshLocalProviders={refreshLocalProviders}
+                    setLocalSelection={setLocalSelection}
+                    applyLocalProvider={applyLocalProvider}
+                    config={config}
+                    setConfig={setConfig}
+                    handleSaveConfig={handleSaveConfig}
+                    modelOptions={modelOptions}
+                    handleDiscoverModels={handleDiscoverModels}
+                    isSavingConfig={isSavingConfig}
+                    selectedProfile={selectedProfile}
+                    handleSelectProfile={handleSelectProfile}
+                    handleAddProfile={handleAddProfile}
+                    newProfileName={newProfileName}
+                    setNewProfileName={setNewProfileName}
+                    refreshAll={refreshAll}
+                  />
 
-          {/* Query Tab */}
-          {activeTab === "query" && (
-            <ChatInterface
-              question={question}
-              setQuestion={setQuestion}
-              isQuerying={isQuerying}
-              handleAsk={handleAsk}
-              queryResult={queryResult}
-              documents={documents}
-              selectedDocumentIds={selectedDocumentIds}
-              setSelectedDocumentIds={setSelectedDocumentIds}
-              providerConfig={config?.provider}
-              activeStage={activeStage}
-            />
-          )}
+                  {/* Advanced Engineering Presets */}
+                  <div className="bg-card rounded-lg border border-border/60 p-6 shadow-sm">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Settings className="h-5 w-5 text-primary" />
+                      <h3 className="font-semibold">Advanced Engineering Presets</h3>
+                    </div>
+                    <p className="text-sm text-muted-foreground mb-4">
+                      Apply tuned defaults for common workflows
+                    </p>
+                    <PresetSelector
+                      value={activePreset}
+                      onChange={async (newPreset: PresetLevel) => {
+                        setActivePreset(newPreset);
+                        localStorage.setItem("jr-autorag-preset", newPreset);
+                        try {
+                          await fetchJson(`/config/presets/${newPreset}`, { method: "POST" });
+                          toast({ title: `Applied ${newPreset} preset`, variant: "default" });
+                        } catch (e) {
+                          toast({ title: toMessage(e), variant: "error" });
+                        }
+                      }}
+                      disabled={isSavingConfig}
+                    />
+                  </div>
 
-          {/* Metrics Tab */}
-          {activeTab === "metrics" && (
-            <>
-              <MetricsDashboard
-                traces={traces}
-                cacheStats={cacheStats ?? undefined}
-                onClearCache={handleClearCache}
-                isClearingCache={isClearingCache}
+                  {/* Retrieval Settings */}
+                  <AdvancedRAGSettings
+                    retrieval={config?.retrieval}
+                    updateRetrieval={updateRetrieval}
+                    onSave={handleSaveConfig}
+                    isSaving={isSavingConfig}
+                    modelStatus={modelStatus}
+                    onRefreshModelStatus={() => refreshModelStatus(config?.retrieval?.embedding_model, config?.retrieval?.reranker_model)}
+                    onDownloadEmbedding={() => downloadModel("embedding")}
+                    onDownloadReranker={() => downloadModel("reranker")}
+                    onDeleteEmbedding={() => deleteModel("embedding")}
+                    onDeleteReranker={() => deleteModel("reranker")}
+                    isDownloadingEmbedding={isDownloadingEmbedding}
+                    isDownloadingReranker={isDownloadingReranker}
+                    isCheckingModels={isCheckingModels}
+                    modelActionMessage={modelActionMessage}
+                  />
+
+                  {/* Cache Controls */}
+                  <div className="bg-card rounded-lg border border-border/60 p-6 shadow-sm">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-2">
+                        <BarChart3 className="h-5 w-5 text-primary" />
+                        <h3 className="font-semibold">System Cache</h3>
+                      </div>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={handleClearCache}
+                        disabled={isClearingCache}
+                      >
+                        {isClearingCache ? "Clearing..." : "Clear All Caches"}
+                      </Button>
+                    </div>
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
+                      <div className="p-3 bg-muted/40 rounded-lg border border-border/40">
+                        <div className="text-muted-foreground mb-1">Embedding Cache</div>
+                        <div className="text-xl font-mono font-medium">{cacheStats?.embeddings?.size || 0}</div>
+                      </div>
+                      <div className="p-3 bg-muted/40 rounded-lg border border-border/40">
+                        <div className="text-muted-foreground mb-1">Query Cache</div>
+                        <div className="text-xl font-mono font-medium">{cacheStats?.queries?.size || 0}</div>
+                      </div>
+                      <div className="p-3 bg-muted/40 rounded-lg border border-border/40">
+                        <div className="text-muted-foreground mb-1">Cache Size</div>
+                        <div className="text-xl font-mono font-medium">{(cacheStats?.embeddings?.size || 0) + (cacheStats?.queries?.size || 0)} items</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className={`h-full animate-in fade-in slide-in-from-bottom-2 duration-300 ${activeTab !== "documents" ? "hidden" : ""}`}>
+              {/* Documents Panel */}
+              <div className="space-y-6 max-w-[1600px] mx-auto flex flex-col">
+                <div>
+                  <h2 className="text-lg font-semibold tracking-tight">Knowledge Base</h2>
+                  <p className="text-sm text-muted-foreground">Ingest and manage documents.</p>
+                </div>
+
+                <div className="grid lg:grid-cols-[350px,1fr] gap-6 min-h-0">
+                  <IngestPanel
+                    ingestTitle={ingestTitle}
+                    setIngestTitle={setIngestTitle}
+                    ingestText={ingestText}
+                    setIngestText={setIngestText}
+                    handleIngest={handleIngest}
+                    isIngesting={isIngesting}
+                    uploadFile={uploadFile}
+                    isUploadingFile={isUploadingFile}
+                    fileInputRef={fileInputRef}
+                    documents={documents}
+                    handleDeleteDocument={handleDeleteDocument}
+                    handleDeleteAllDocuments={handleDeleteAllDocuments}
+                    waitForDocumentReady={waitForDocumentReady}
+                    formatDateTime={formatDateTime}
+                  />
+
+                  <div className="bg-card rounded-lg border border-border/60 shadow-sm flex flex-col min-h-0">
+                    <div className="p-4 border-b border-border/40 flex items-center justify-between">
+                      <h3 className="font-semibold flex items-center gap-2">
+                        <FileText className="h-4 w-4 text-primary" />
+                        Documents ({documents.length})
+                      </h3>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive hover:text-destructive hover:bg-destructive/10 h-8"
+                        onClick={handleDeleteAllDocuments}
+                        disabled={documents.length === 0}
+                      >
+                        Delete All
+                      </Button>
+                    </div>
+
+                    <div className="flex-1 overflow-auto p-2">
+                      {documents.length === 0 ? (
+                        <div className="h-full flex flex-col items-center justify-center text-muted-foreground p-8">
+                          <FileText className="h-12 w-12 mb-4 opacity-20" />
+                          <p>No documents found.</p>
+                          <p className="text-xs opacity-70">Add content using the ingest panel.</p>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {documents.map((doc) => (
+                            <div key={doc.id} className="group flex items-center justify-between p-3 rounded-lg border border-border/40 bg-background hover:border-primary/40 transition-all">
+                              <div>
+                                <div className="font-medium text-sm truncate flex-1 min-w-0">{doc.title}</div>
+                                <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1">
+                                  <span className="bg-muted px-1.5 py-0.5 rounded text-[10px] uppercase">{doc.metadata?.source || "text"}</span>
+                                  <span>{formatDateTime(doc.created_at)}</span>
+                                  <span>• {doc.chunk_count} chunks</span>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <div className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${doc.metadata?.processing_status === 'ready' ? 'bg-green-500/10 text-green-600' :
+                                  doc.metadata?.processing_status === 'error' ? 'bg-red-500/10 text-red-600' :
+                                    'bg-yellow-500/10 text-yellow-600'
+                                  }`}>
+                                  {doc.metadata?.processing_status || 'unknown'}
+                                </div>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                                  onClick={() => handleDeleteDocument(doc.id, doc.title)}
+                                >
+                                  <span className="sr-only">Delete</span>
+                                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /></svg>
+                                </Button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className={`h-full animate-in fade-in slide-in-from-bottom-2 duration-300 ${activeTab !== "query" ? "hidden" : ""}`}>
+              {/* Query Interface */}
+              <ChatInterface
+                question={question}
+                setQuestion={setQuestion}
+                handleAsk={handleAsk}
+                isQuerying={isQuerying}
+                queryResult={queryResult}
+                history={chatHistory}
+                documents={documents}
+                selectedDocumentIds={selectedDocumentIds}
+                setSelectedDocumentIds={setSelectedDocumentIds}
+                activeStage={activeStage}
+                progress={progress ? { ...progress, progress: progress.progress || 0 } : undefined}
+                providerConfig={config?.provider}
+                onNewChat={handleNewChat}
+                onCancel={handleCancelQuery}
+                savedSessions={savedSessions}
+                onLoadSession={handleLoadSession}
+                onDeleteSession={handleDeleteSession}
+                onClearHistory={handleClearHistory}
+                scrollRef={chatEndRef}
+                currentSessionId={currentSessionId}
+                preset={activePreset}
+                onPresetChange={async (preset) => {
+                  setActivePreset(preset);
+                  try {
+                    await fetchJson(`/config/presets/${preset}`, { method: "POST" });
+                    toast({ title: "Preset applied", description: `Switched to ${preset} mode`, variant: "success" });
+                  } catch (e) {
+                    console.error("Failed to apply preset:", e);
+                  }
+                }}
               />
-              <TraceLog
-                isEvaluating={isEvaluating}
-                handleEvaluation={handleEvaluation}
-                evaluationSummary={evaluationSummary}
-                traces={traces}
-                formatNumber={formatNumber}
-              />
-            </>
-          )}
+            </div>
+
+            <div className={`h-full animate-in fade-in slide-in-from-bottom-2 duration-300 ${activeTab !== "metrics" ? "hidden" : ""}`}>
+              {/* Metrics & Traces */}
+              <div className="space-y-6 max-w-5xl mx-auto">
+                <EnterpriseStatusPanel baseUrl={baseUrl} />
+
+                <MetricsDashboard traces={traces} />
+                <TraceLog
+                  isEvaluating={isEvaluating}
+                  handleEvaluation={handleEvaluation}
+                  evaluationSummary={evaluationSummary}
+                  traces={traces}
+                  formatNumber={formatNumber}
+                />
+              </div>
+            </div>
+          </div>
         </div>
       </main>
-
-      {/* Footer */}
-      <footer className="border-t border-border bg-muted/30 py-4">
-        <div className="mx-auto max-w-[1600px] px-4 text-center text-xs text-muted-foreground">
-          JR AutoRAG • From Hello.World Consulting
-        </div>
-      </footer>
     </div>
   );
 }
-
-export default App;

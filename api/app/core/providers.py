@@ -47,14 +47,14 @@ class _HTTPProvider(LLMProvider):
     async def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         url = f"{self.base_url}{path}"
         try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
+            async with httpx.AsyncClient(timeout=300.0) as client:
                 response = await client.post(url, json=payload)
             response.raise_for_status()
             return response.json()
         except httpx.HTTPStatusError as exc:
             raise ProviderError(f"Provider error {exc.response.status_code}: {exc}") from exc
         except httpx.HTTPError as exc:
-            raise ProviderError(f"Provider request failed: {exc}") from exc
+            raise ProviderError(f"Provider request failed ({type(exc).__name__}): {exc}") from exc
 
 
 class OllamaProvider(_HTTPProvider):
@@ -132,7 +132,7 @@ class CloudProvider(_HTTPProvider):
         except httpx.HTTPStatusError as exc:
             raise ProviderError(f"Cloud provider error {exc.response.status_code}: {exc}") from exc
         except httpx.HTTPError as exc:
-            raise ProviderError(f"Cloud provider request failed: {exc}") from exc
+            raise ProviderError(f"Cloud provider request failed ({type(exc).__name__}): {exc}") from exc
 
     async def chat(self, messages: Iterable[dict[str, Any]], **kwargs: Any) -> str:
         model = kwargs.get("model") or self.default_model or "gpt-4o-mini"
@@ -162,6 +162,42 @@ class ProviderFactory:
         if "lm" in name or "studio" in name:
             return LMStudioProvider(str(cfg.base_url), cfg.generator_model)
         return CloudProvider(str(cfg.base_url), cfg.generator_model, api_key=cfg.api_key or self.api_key)
+
+    def get_default_provider(self) -> LLMProvider | None:
+        """Get a default local provider for background tasks like GraphRAG.
+        
+        Probes Ollama and LM Studio endpoints synchronously.
+        Returns None if no local provider is available.
+        """
+        import httpx
+        
+        # Try Ollama first
+        ollama_url = os.environ.get("JR_OLLAMA_URL", "http://localhost:11434")
+        try:
+            with httpx.Client(timeout=2.0) as client:
+                resp = client.get(f"{ollama_url}/api/tags")
+                resp.raise_for_status()
+                data = resp.json()
+                models = [m.get("name") for m in data.get("models", []) if m.get("name")]
+                if models:
+                    return OllamaProvider(ollama_url, models[0])
+        except (httpx.HTTPError, httpx.RequestError):
+            pass
+        
+        # Try LM Studio
+        lmstudio_url = os.environ.get("JR_LMSTUDIO_URL", "http://localhost:1234")
+        try:
+            with httpx.Client(timeout=2.0) as client:
+                resp = client.get(f"{lmstudio_url}/v1/models")
+                resp.raise_for_status()
+                data = resp.json()
+                models = [m.get("id") for m in data.get("data", []) if m.get("id")]
+                if models:
+                    return LMStudioProvider(lmstudio_url, models[0])
+        except (httpx.HTTPError, httpx.RequestError):
+            pass
+        
+        return None
 
 
 async def discover_models(cfg: ProviderConfig) -> list[str]:

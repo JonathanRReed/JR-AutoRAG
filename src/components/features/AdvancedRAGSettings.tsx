@@ -57,7 +57,6 @@ export function AdvancedRAGSettings({
     isDownloadingReranker,
 }: AdvancedRAGSettingsProps) {
     const [isExpanded, setIsExpanded] = useState(true);
-    const [preset, setPreset] = useState("balanced");
     const chunkSizeOptions = [100, 150, 200, 250, 300, 350, 400, 450, 500, 600, 800, 1000];
     const overlapOptions = [0, 50, 100, 150, 200];
     const targetTokenOptions = [800, 1000, 1200, 1500, 1800, 2000, 2400, 3000, 3600];
@@ -89,103 +88,6 @@ export function AdvancedRAGSettings({
         "BAAI/bge-reranker-large",
         "mixedbread-ai/mxbai-rerank-base-v1",
     ];
-    const presets: Record<string, Partial<RetrievalDefaults>> = useMemo(() => ({
-        balanced: {
-            chunking_strategy: "fixed",
-            chunk_size: 400,
-            chunk_overlap: 50,
-            target_tokens: 1600,
-            max_context_tokens: 4096,
-            coverage_target: 0.7,
-            top_n: 5,
-            dense_k: 10,
-            sparse_k: 20,
-            rerank_pool: 20,
-            hybrid: true,
-            compression: false,
-            raptor: false,
-            graph: false,
-            use_reranking: true,
-            embedding_model: "BAAI/bge-base-en-v1.5",
-            reranker_model: "cross-encoder/ms-marco-MiniLM-L-6-v2",
-        },
-        fast: {
-            chunking_strategy: "fixed",
-            chunk_size: 600,
-            chunk_overlap: 50,
-            target_tokens: 1200,
-            max_context_tokens: 3072,
-            coverage_target: 0.6,
-            top_n: 3,
-            dense_k: 5,
-            sparse_k: 10,
-            rerank_pool: 10,
-            hybrid: false,
-            compression: false,
-            raptor: false,
-            graph: false,
-            use_reranking: false,
-            embedding_model: "BAAI/bge-small-en-v1.5",
-            reranker_model: "cross-encoder/ms-marco-MiniLM-L-6-v2",
-        },
-        deep: {
-            chunking_strategy: "semantic",
-            chunk_size: 450,
-            chunk_overlap: 100,
-            target_tokens: 2400,
-            max_context_tokens: 8192,
-            coverage_target: 0.8,
-            top_n: 8,
-            dense_k: 20,
-            sparse_k: 40,
-            rerank_pool: 40,
-            hybrid: true,
-            compression: true,
-            raptor: true,
-            graph: false,
-            use_reranking: true,
-            embedding_model: "BAAI/bge-large-en-v1.5",
-            reranker_model: "BAAI/bge-reranker-large",
-        },
-        recall: {
-            chunking_strategy: "recursive",
-            chunk_size: 400,
-            chunk_overlap: 100,
-            target_tokens: 2000,
-            max_context_tokens: 6144,
-            coverage_target: 0.9,
-            top_n: 12,
-            dense_k: 30,
-            sparse_k: 60,
-            rerank_pool: 60,
-            hybrid: true,
-            compression: false,
-            raptor: true,
-            graph: true,
-            use_reranking: true,
-            embedding_model: "intfloat/e5-large-v2",
-            reranker_model: "cross-encoder/ms-marco-MiniLM-L-12-v2",
-        },
-        precise: {
-            chunking_strategy: "fixed",
-            chunk_size: 300,
-            chunk_overlap: 50,
-            target_tokens: 1500,
-            max_context_tokens: 4096,
-            coverage_target: 0.7,
-            top_n: 3,
-            dense_k: 10,
-            sparse_k: 20,
-            rerank_pool: 30,
-            hybrid: true,
-            compression: true,
-            raptor: false,
-            graph: false,
-            use_reranking: true,
-            embedding_model: "BAAI/bge-base-en-v1.5",
-            reranker_model: "mixedbread-ai/mxbai-rerank-base-v1",
-        },
-    }), []);
     return (
         <Card className="overflow-hidden">
             <CardHeader className="bg-muted/20">
@@ -232,44 +134,6 @@ export function AdvancedRAGSettings({
             {isExpanded && (
                 <CardContent className="pt-8">
                     <div className="grid gap-6">
-                        <section className="space-y-4 rounded-lg border border-border/60 bg-muted/10 p-4">
-                            <div className="flex items-center gap-2">
-                                <div className="h-4 w-1 rounded-full bg-border" />
-                                <div>
-                                    <h4 className="text-sm font-semibold uppercase tracking-wider text-foreground">Presets</h4>
-                                    <p className="text-xs text-muted-foreground">Apply tuned defaults for common workflows.</p>
-                                </div>
-                            </div>
-                            <div className="grid gap-4 sm:grid-cols-[minmax(0,240px)_minmax(0,1fr)] sm:items-center">
-                                <div className="space-y-2">
-                                    <Label htmlFor="presetSelect" className="text-xs">Quick Start</Label>
-                                    <Select
-                                        value={preset}
-                                        onValueChange={(value) => {
-                                            setPreset(value);
-                                            const selected = presets[value];
-                                            if (!selected) return;
-                                            (Object.entries(selected) as Array<[keyof RetrievalDefaults, RetrievalDefaults[keyof RetrievalDefaults]]>)
-                                                .forEach(([key, val]) => updateRetrieval(key, val));
-                                        }}
-                                    >
-                                        <SelectTrigger id="presetSelect" className="h-9">
-                                            <SelectValue placeholder="Select a preset" />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            <SelectItem value="balanced">Balanced (recommended)</SelectItem>
-                                            <SelectItem value="fast">Fast answers</SelectItem>
-                                            <SelectItem value="deep">Deep analysis</SelectItem>
-                                            <SelectItem value="recall">High recall</SelectItem>
-                                            <SelectItem value="precise">Precision mode</SelectItem>
-                                        </SelectContent>
-                                    </Select>
-                                </div>
-                                <p className="text-xs text-muted-foreground">
-                                    Presets apply a tuned mix of chunking, retrieval, and reranking for common use cases.
-                                </p>
-                            </div>
-                        </section>
                         {/* Chunking Strategy */}
                         <section className="space-y-4 rounded-lg border border-border/60 bg-muted/10 p-4">
                             <div className="flex items-center gap-2">
@@ -403,26 +267,24 @@ export function AdvancedRAGSettings({
                                 <div className="space-y-2">
                                     <Label className="text-xs">Model Assets</Label>
                                     <div className="flex flex-wrap items-center gap-2">
-                                        <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${
-                                            modelStatus.embedding === "installed"
-                                                ? "bg-primary/10 text-primary"
-                                                : modelStatus.embedding === "missing"
-                                                    ? "bg-muted text-muted-foreground"
-                                                    : modelStatus.embedding === "error"
-                                                        ? "bg-destructive/20 text-destructive"
-                                                        : "bg-muted/60 text-muted-foreground"
-                                        }`}>
+                                        <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${modelStatus.embedding === "installed"
+                                            ? "bg-primary/10 text-primary"
+                                            : modelStatus.embedding === "missing"
+                                                ? "bg-muted text-muted-foreground"
+                                                : modelStatus.embedding === "error"
+                                                    ? "bg-destructive/20 text-destructive"
+                                                    : "bg-muted/60 text-muted-foreground"
+                                            }`}>
                                             Embedding: {modelStatus.embedding}
                                         </span>
-                                        <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${
-                                            modelStatus.reranker === "installed"
-                                                ? "bg-primary/10 text-primary"
-                                                : modelStatus.reranker === "missing"
-                                                    ? "bg-muted text-muted-foreground"
-                                                    : modelStatus.reranker === "error"
-                                                        ? "bg-destructive/20 text-destructive"
-                                                        : "bg-muted/60 text-muted-foreground"
-                                        }`}>
+                                        <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${modelStatus.reranker === "installed"
+                                            ? "bg-primary/10 text-primary"
+                                            : modelStatus.reranker === "missing"
+                                                ? "bg-muted text-muted-foreground"
+                                                : modelStatus.reranker === "error"
+                                                    ? "bg-destructive/20 text-destructive"
+                                                    : "bg-muted/60 text-muted-foreground"
+                                            }`}>
                                             Reranker: {modelStatus.reranker}
                                         </span>
                                         <button
@@ -661,7 +523,7 @@ export function AdvancedRAGSettings({
                                     { id: "raptor", label: "RAPTOR", icon: Boxes },
                                     { id: "graph", label: "Knowledge Graph", icon: GitMerge },
                                 ].map((feature) => (
-                                <div key={feature.id} className="space-y-2 rounded-lg border border-border/60 bg-card p-3">
+                                    <div key={feature.id} className="space-y-2 rounded-lg border border-border/60 bg-card p-3">
                                         <div className="flex items-center gap-2">
                                             <feature.icon className="h-4 w-4 text-foreground" />
                                             <span className="text-xs font-semibold">{feature.label}</span>

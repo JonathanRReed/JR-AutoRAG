@@ -84,33 +84,30 @@ class GraphRAG:
     5. Use graph structure for multi-hop reasoning
     """
     
-    ENTITY_EXTRACTION_PROMPT = """Extract entities from the following text.
-For each entity, identify its type and a brief description.
+    KNOWLEDGE_EXTRACTION_PROMPT = """Extract a knowledge graph from the following text.
+Identify all high-value entities and the relationships between them.
 
 Entity types: PERSON, ORGANIZATION, LOCATION, CONCEPT, EVENT, PRODUCT, TECHNOLOGY, OTHER
 
 Text:
 {text}
 
-Respond in this exact format (one entity per line):
-ENTITY: [name] | TYPE: [type] | DESCRIPTION: [brief description]
+Respond in VALID JSON format with this structure:
+{{
+  "entities": [
+    {{"name": "Entity Name", "type": "TYPE", "description": "concise description"}}
+  ],
+  "relationships": [
+    {{"source": "Entity Name", "target": "Entity Name", "relation": "type_of_link", "description": "how they are linked"}}
+  ]
+}}
 
-Only extract clearly mentioned entities. Be precise and concise."""
-
-    RELATIONSHIP_EXTRACTION_PROMPT = """Given these entities extracted from a document, identify relationships between them.
-
-Entities:
-{entities}
-
-Text:
-{text}
-
-For each relationship, specify:
-RELATIONSHIP: [source entity] | [relationship type] | [target entity] | [description]
-
-Relationship types examples: works_for, part_of, located_in, related_to, caused_by, used_for, created_by
-
-Only extract relationships that are clearly stated or strongly implied in the text."""
+STRICT FORMATTING RULES:
+1. Return ONLY the JSON object.
+2. Do NOT use markdown code blocks (```json).
+3. Do NOT add preamble or explanation.
+4. Escape quotes within strings.
+"""
 
     def __init__(self) -> None:
         self.entities: dict[str, Entity] = {}
@@ -122,58 +119,113 @@ Only extract relationships that are clearly stated or strongly implied in the te
         """Normalize entity name for consistent matching."""
         return name.strip().lower()
     
+    async def extract_knowledge_from_chunk(
+        self,
+        chunk_text: str,
+        chunk_id: str,
+        provider: "LLMProvider",
+    ) -> tuple[list[Entity], list[Relationship]]:
+        """Extract both entities and relationships in a single pass with retries."""
+        import json
+        import re
+        import asyncio
+        
+        prompt = self.KNOWLEDGE_EXTRACTION_PROMPT.format(text=chunk_text[:2500])
+        last_error = None
+        
+        # Retry loop for reliability with local models
+        for attempt in range(3):
+            try:
+                response = await provider.chat([
+                    {"role": "system", "content": "You are a precise knowledge graph extractor. Always respond in valid JSON. No Markdown."},
+                    {"role": "user", "content": prompt},
+                ])
+                
+                clean_response = response.strip()
+                
+                # Robust JSON extraction: Handle markdown code blocks common in local models
+                # Try to find content inside ```json ... ``` or just { ... }
+                json_block_match = re.search(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```', clean_response, re.IGNORECASE)
+                if json_block_match:
+                    clean_response = json_block_match.group(1)
+                else:
+                    # Fallback: Find first { and last }
+                    json_match = re.search(r'(\{[\s\S]*\})', clean_response)
+                    if json_match:
+                        clean_response = json_match.group(1)
+                
+                # Simple repair: remove trailing commas before closing braces/brackets
+                clean_response = re.sub(r',\s*([}\]])', r'\1', clean_response)
+                
+                try:
+                    data = json.loads(clean_response)
+                except json.JSONDecodeError:
+                    # Fallback: try to fix unescaped quotes if safe
+                    try:
+                        clean_response_fixed = clean_response.replace("'", '"')
+                        data = json.loads(clean_response_fixed)
+                    except Exception:
+                        if attempt < 2:
+                            continue  # Retry on parse error
+                        raise ValueError(f"Failed to parse JSON: {clean_response[:100]}...")
+                
+                entities = []
+                for e_data in data.get("entities", []):
+                    name = e_data.get("name", "").strip()
+                    if not name: continue
+                    
+                    type_str = e_data.get("type", "OTHER").upper()
+                    try:
+                        entity_type = EntityType(type_str.lower())
+                    except ValueError:
+                        entity_type = EntityType.OTHER
+                    
+                    entities.append(Entity(
+                        name=name,
+                        type=entity_type,
+                        description=e_data.get("description", ""),
+                        mentions=[chunk_id],
+                    ))
+                
+                relationships = []
+                for r_data in data.get("relationships", []):
+                    source = r_data.get("source", "").strip()
+                    target = r_data.get("target", "").strip()
+                    relation = r_data.get("relation", "").strip()
+                    if not (source and target and relation): continue
+                    
+                    relationships.append(Relationship(
+                        source=source,
+                        target=target,
+                        relation=relation,
+                        chunk_ids=[chunk_id],
+                        description=r_data.get("description", ""),
+                    ))
+                    
+                return entities, relationships
+
+            except Exception as e:
+                last_error = e
+                # Backoff slightly on failure
+                await asyncio.sleep(0.5 * (attempt + 1))
+                if attempt == 2:
+                    # Provide more descriptive error details for debugging
+                    error_msg = str(e) or "Empty error message"
+                    if "Provider request failed" in error_msg:
+                        print(f"❌ GraphRAG Error: LLM Provider failed to process chunk {chunk_id} after 3 retries. Error: {error_msg}")
+                    else:
+                        print(f"⚠️ GraphRAG Warning: Failed to parse extraction JSON for chunk {chunk_id}: {error_msg}")
+        
+        return [], []
+
     async def extract_entities_from_chunk(
         self,
         chunk_text: str,
         chunk_id: str,
         provider: "LLMProvider",
     ) -> list[Entity]:
-        """Extract entities from a single chunk."""
-        prompt = self.ENTITY_EXTRACTION_PROMPT.format(text=chunk_text[:2000])
-        
-        try:
-            response = await provider.chat([
-                {"role": "system", "content": "You are a precise entity extractor."},
-                {"role": "user", "content": prompt},
-            ])
-            return self._parse_entities(response, chunk_id)
-        except Exception:
-            return []
-    
-    def _parse_entities(self, response: str, chunk_id: str) -> list[Entity]:
-        """Parse LLM entity extraction response."""
-        entities = []
-        
-        for line in response.strip().split('\n'):
-            if not line.startswith('ENTITY:'):
-                continue
-            
-            try:
-                # Parse: ENTITY: [name] | TYPE: [type] | DESCRIPTION: [description]
-                parts = line.split('|')
-                if len(parts) < 2:
-                    continue
-                
-                name = parts[0].replace('ENTITY:', '').strip()
-                type_str = parts[1].replace('TYPE:', '').strip().upper()
-                description = parts[2].replace('DESCRIPTION:', '').strip() if len(parts) > 2 else ""
-                
-                # Map to EntityType
-                try:
-                    entity_type = EntityType(type_str.lower())
-                except ValueError:
-                    entity_type = EntityType.OTHER
-                
-                entity = Entity(
-                    name=name,
-                    type=entity_type,
-                    description=description,
-                    mentions=[chunk_id],
-                )
-                entities.append(entity)
-            except Exception:
-                continue
-        
+        """Deprecated: Use extract_knowledge_from_chunk for better performance."""
+        entities, _ = await self.extract_knowledge_from_chunk(chunk_text, chunk_id, provider)
         return entities
     
     async def extract_relationships_from_chunk(
@@ -183,90 +235,59 @@ Only extract relationships that are clearly stated or strongly implied in the te
         entities: list[Entity],
         provider: "LLMProvider",
     ) -> list[Relationship]:
-        """Extract relationships between entities in a chunk."""
-        if len(entities) < 2:
-            return []
-        
-        entity_list = "\n".join([f"- {e.name} ({e.type.value})" for e in entities])
-        prompt = self.RELATIONSHIP_EXTRACTION_PROMPT.format(
-            entities=entity_list,
-            text=chunk_text[:2000],
-        )
-        
-        try:
-            response = await provider.chat([
-                {"role": "system", "content": "You are a precise relationship extractor."},
-                {"role": "user", "content": prompt},
-            ])
-            return self._parse_relationships(response, chunk_id)
-        except Exception:
-            return []
-    
-    def _parse_relationships(self, response: str, chunk_id: str) -> list[Relationship]:
-        """Parse LLM relationship extraction response."""
-        relationships = []
-        
-        for line in response.strip().split('\n'):
-            if not line.startswith('RELATIONSHIP:'):
-                continue
-            
-            try:
-                # Parse: RELATIONSHIP: [source] | [relation] | [target] | [description]
-                content = line.replace('RELATIONSHIP:', '').strip()
-                parts = [p.strip() for p in content.split('|')]
-                if len(parts) < 3:
-                    continue
-                
-                source = parts[0]
-                relation = parts[1]
-                target = parts[2]
-                description = parts[3] if len(parts) > 3 else ""
-                
-                relationship = Relationship(
-                    source=source,
-                    target=target,
-                    relation=relation,
-                    chunk_ids=[chunk_id],
-                    description=description,
-                )
-                relationships.append(relationship)
-            except Exception:
-                continue
-        
-        return relationships
+        """Deprecated: Use extract_knowledge_from_chunk for better performance."""
+        # This is now effectively a no-op if called after extraction, 
+        # but kept for interface compatibility.
+        return []
     
     async def build_from_chunks(
         self,
         chunks: list["EvidenceChunk"],
         provider: "LLMProvider",
+        on_progress: Callable[[str, int, int, str | None], None] | None = None,
     ) -> None:
         """Build knowledge graph from document chunks.
         
         This is the main entry point for graph construction.
         Extracts entities and relationships from all chunks.
         """
+        import asyncio
+        
         all_entities: list[Entity] = []
         all_relationships: list[Relationship] = []
         
-        for chunk in chunks:
+        # Limit concurrent LLM calls to prevent local provider overload (e.g. Ollama queue full)
+        semaphore = asyncio.Semaphore(3)
+        total_chunks = len(chunks)
+        processed_chunks = 0
+        
+        async def process_chunk(chunk: "EvidenceChunk") -> None:
+            nonlocal processed_chunks
             chunk_id = getattr(chunk, 'id', str(id(chunk)))
             chunk_text = getattr(chunk, 'snippet', '') or getattr(chunk, 'text', '')
             
             if not chunk_text:
-                continue
+                processed_chunks += 1
+                return
             
-            # Extract entities
-            chunk_entities = await self.extract_entities_from_chunk(
-                chunk_text, chunk_id, provider
-            )
-            all_entities.extend(chunk_entities)
-            
-            # Extract relationships
-            if chunk_entities:
-                chunk_relationships = await self.extract_relationships_from_chunk(
-                    chunk_text, chunk_id, chunk_entities, provider
+            async with semaphore:
+                # Optimized: Extract both in one call
+                chunk_entities, chunk_relationships = await self.extract_knowledge_from_chunk(
+                    chunk_text, chunk_id, provider
                 )
-                all_relationships.extend(chunk_relationships)
+            
+            all_entities.extend(chunk_entities)
+            all_relationships.extend(chunk_relationships)
+            
+            processed_chunks += 1
+            if on_progress:
+                detail = f"Found {len(chunk_entities)} entities, {len(chunk_relationships)} relations"
+                on_progress("extracting_graph", processed_chunks, total_chunks, detail)
+
+        if on_progress:
+            on_progress("extracting_graph", 0, total_chunks)
+            
+        await asyncio.gather(*(process_chunk(c) for c in chunks))
         
         # Merge entities with same name
         for entity in all_entities:
@@ -354,15 +375,27 @@ Only extract relationships that are clearly stated or strongly implied in the te
     async def summarize_communities(
         self,
         provider: "LLMProvider",
+        on_progress: Callable[[str, int, int, str | None], None] | None = None,
     ) -> dict[int, str]:
         """Generate summaries for each community."""
+        import asyncio
         summaries = {}
         
-        for community in self.communities:
+        total_communities = len(self.communities)
+        processed_communities = 0
+        semaphore = asyncio.Semaphore(5)  # Limit concurrent summaries
+        
+        async def summarize_community(community: Community) -> None:
+            nonlocal processed_communities
+            
             if len(community.entities) < 2:
-                community.summary = f"Single entity: {community.entities[0]}"
-                summaries[community.id] = community.summary
-                continue
+                summary = f"Single entity: {community.entities[0]}"
+                community.summary = summary
+                summaries[community.id] = summary
+                processed_communities += 1
+                if on_progress:
+                    on_progress("summarizing_communities", processed_communities, total_communities)
+                return
             
             # Build entity descriptions
             entity_info = []
@@ -391,16 +424,25 @@ Relationships:
 Write a 1-2 sentence summary describing the main theme or topic of this cluster."""
 
             try:
-                response = await provider.chat([
-                    {"role": "system", "content": "You are a knowledge graph summarizer."},
-                    {"role": "user", "content": prompt},
-                ])
+                async with semaphore:
+                    response = await provider.chat([
+                        {"role": "system", "content": "You are a knowledge graph summarizer."},
+                        {"role": "user", "content": prompt},
+                    ])
                 community.summary = response.strip()[:300]
                 summaries[community.id] = community.summary
             except Exception:
                 community.summary = f"Cluster of {len(community.entities)} related entities"
                 summaries[community.id] = community.summary
-        
+            
+            processed_communities += 1
+            if on_progress:
+                on_progress("summarizing_communities", processed_communities, total_communities)
+
+        if on_progress:
+            on_progress("summarizing_communities", 0, total_communities)
+            
+        await asyncio.gather(*(summarize_community(c) for c in self.communities))
         return summaries
     
     def query_entities(self, query: str, top_k: int = 5) -> list[Entity]:

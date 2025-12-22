@@ -10,6 +10,7 @@ from pydantic import BaseModel
 class QueryRequest(BaseModel):
     question: str
     document_ids: list[str] | None = None
+    history: list[dict[str, str]] | None = None
 
 
 class ChunkOut(BaseModel):

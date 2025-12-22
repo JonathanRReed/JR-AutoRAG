@@ -135,8 +135,52 @@ def delete_model(payload: ModelDownloadRequest):
 
 @router.get("/presets", response_model=dict[str, RetrievalDefaults])
 def list_presets():
-    """List available retrieval presets (fast, balanced, thorough)."""
+    """List available retrieval presets (turbo, fast, balanced, thorough, ultra_accurate)."""
     return RETRIEVAL_PRESETS
+
+
+@router.get("/presets/active")
+def get_active_preset(container: ServiceContainer = Depends(get_container)):
+    """Determine which preset the current config most closely matches."""
+    cfg = container.config_store.read()
+    current = cfg.retrieval
+    
+    # Find best matching preset by comparing key parameters
+    best_match = "balanced"
+    best_score = 0
+    
+    for name, preset in RETRIEVAL_PRESETS.items():
+        score = 0
+        # Compare key parameters
+        if current.dense_k == preset.dense_k:
+            score += 2
+        elif abs(current.dense_k - preset.dense_k) <= 2:
+            score += 1
+        if current.use_reranking == preset.use_reranking:
+            score += 1
+        if current.raptor == preset.raptor:
+            score += 1
+        if current.graph == preset.graph:
+            score += 1
+        if current.flare_generation == preset.flare_generation:
+            score += 1
+        if current.enforce_evidence_contract == preset.enforce_evidence_contract:
+            score += 1
+        
+        if score > best_score:
+            best_score = score
+            best_match = name
+    
+    return {
+        "level": best_match,
+        "features": {
+            "reranking": current.use_reranking,
+            "raptor": current.raptor,
+            "graph": current.graph,
+            "flare": current.flare_generation,
+            "evidence_contract": current.enforce_evidence_contract,
+        }
+    }
 
 
 @router.post("/presets/{preset_name}", response_model=AppConfig)

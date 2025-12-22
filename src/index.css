@@ -5,8 +5,14 @@
     @apply font-sans;
   }
 
+  html {
+    @apply bg-background;
+    overscroll-behavior: none;
+  }
+
   body {
     @apply min-w-[320px] min-h-screen relative m-0 bg-background text-foreground antialiased;
+    overscroll-behavior: none;
   }
 }
 
@@ -133,19 +139,23 @@ button:not(:disabled):hover {
 
 /* Status badges */
 .badge-success {
-  @apply bg-primary/10 text-primary;
+  background-color: color-mix(in srgb, var(--success) 10%, transparent);
+  color: var(--success);
 }
 
 .badge-warning {
-  @apply bg-secondary/30 text-secondary-foreground;
+  background-color: color-mix(in srgb, var(--warning) 10%, transparent);
+  color: var(--warning);
 }
 
 .badge-error {
-  @apply bg-destructive/20 text-destructive;
+  background-color: color-mix(in srgb, var(--destructive) 10%, transparent);
+  color: var(--destructive);
 }
 
 .badge-info {
-  @apply bg-secondary/20 text-secondary-foreground;
+  background-color: color-mix(in srgb, var(--info) 10%, transparent);
+  color: var(--info);
 }
 
 @media (prefers-reduced-motion) {
@@ -159,36 +169,205 @@ button:not(:disabled):hover {
 }
 
 /* ========================================
+   Enterprise Cards & Premium Polish
+   ======================================== */
+
+.enterprise-card {
+  position: relative;
+  overflow: hidden;
+  background: var(--card);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border);
+  box-shadow:
+    0 4px 24px -4px rgba(0, 0, 0, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.dark .enterprise-card {
+  box-shadow:
+    0 4px 24px -4px rgba(0, 0, 0, 0.3),
+    0 0 0 1px rgba(255, 255, 255, 0.02);
+}
+
+.enterprise-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg,
+      transparent 0%,
+      rgba(99, 102, 241, 0.3) 50%,
+      transparent 100%);
+}
+
+/* Subtle gradient overlays */
+.gradient-overlay {
+  position: relative;
+}
+
+.gradient-overlay::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse 80% 50% at 50% -20%,
+      rgba(99, 102, 241, 0.08) 0%,
+      transparent 70%);
+  pointer-events: none;
+}
+
+/* Premium input focus states */
+input:focus,
+textarea:focus,
+select:focus,
+button:focus-visible {
+  box-shadow:
+    0 0 0 2px var(--background),
+    0 0 0 4px rgba(99, 102, 241, 0.3);
+}
+
+/* Refined button styles */
+button[class*="bg-primary"] {
+  background: linear-gradient(135deg, var(--primary) 0%, rgba(99, 102, 241, 0.9) 100%);
+  box-shadow:
+    0 2px 8px -2px rgba(99, 102, 241, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+button[class*="bg-primary"]:hover:not(:disabled) {
+  background: linear-gradient(135deg, var(--primary) 0%, rgba(99, 102, 241, 1) 100%);
+  box-shadow:
+    0 4px 12px -2px rgba(99, 102, 241, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  transform: translateY(-1px);
+}
+
+/* Corporate data table styles */
+.data-table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.data-table th {
+  background: var(--muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 0.65rem;
+  letter-spacing: 0.05em;
+  color: var(--muted-foreground);
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.data-table td {
+  padding: 0.875rem 1rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.875rem;
+}
+
+.data-table tr:hover td {
+  background: rgba(99, 102, 241, 0.02);
+}
+
+/* Status indicators */
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.status-dot.success {
+  background: #10b981;
+}
+
+.status-dot.warning {
+  background: #f59e0b;
+}
+
+.status-dot.error {
+  background: #ef4444;
+}
+
+.status-dot.info {
+  background: #06b6d4;
+}
+
+/* Metric cards */
+.metric-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1rem;
+  border-radius: 0.75rem;
+  background: var(--card);
+  border: 1px solid var(--border);
+  transition: all 0.2s ease;
+}
+
+.metric-card:hover {
+  border-color: rgba(99, 102, 241, 0.3);
+  box-shadow: 0 4px 16px -4px rgba(99, 102, 241, 0.15);
+}
+
+.metric-value {
+  font-size: 1.75rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.metric-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted-foreground);
+}
+
+/* Info color utility */
+.text-info {
+  color: #06b6d4;
+}
+
+.bg-info {
+  background-color: #06b6d4;
+}
+
+.border-info {
+  border-color: #06b6d4;
+}
+
+/* ========================================
    Premium Glassmorphism Components
    ======================================== */
 
 .glass-card {
-  background: rgba(18, 18, 26, 0.7);
+  background: var(--glass-bg);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(99, 102, 241, 0.15);
+  border: 1px solid var(--glass-border);
   box-shadow:
-    0 4px 24px -4px rgba(0, 0, 0, 0.4),
-    inset 0 1px 0 rgba(255, 255, 255, 0.03);
+    0 4px 6px -1px rgb(0 0 0 / 0.1),
+    0 2px 4px -2px rgb(0 0 0 / 0.1);
 }
 
 .dark .glass-card {
-  background: rgba(18, 18, 26, 0.8);
-  border-color: rgba(99, 102, 241, 0.2);
-}
-
-:root .glass-card {
-  background: rgba(255, 255, 255, 0.8);
-  border-color: rgba(0, 0, 0, 0.1);
+  box-shadow: 0 4px 24px -4px rgba(0, 0, 0, 0.4);
 }
 
 .glass-panel {
+  background: var(--glass-bg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--glass-border);
+}
+
+.dark .glass-panel {
   background: linear-gradient(135deg,
       rgba(30, 30, 42, 0.6) 0%,
       rgba(18, 18, 26, 0.8) 100%);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(99, 102, 241, 0.1);
 }
 
 /* ========================================

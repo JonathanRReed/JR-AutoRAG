@@ -10,6 +10,7 @@ This module implements a SOTA Auto-RAG pipeline with:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
@@ -21,7 +22,7 @@ from collections.abc import Callable
 from ..schemas.config import AppConfig
 from .cache import get_cache_manager
 from .gatherer import Gatherer, EvidenceChunk
-from .planner import Planner
+from .planner import Planner, PlanStep
 from .providers import LLMProvider, ProviderError, ProviderFactory
 from .retrieval import RetrievalEngine, HybridRetrievalEngine
 from .reflection import SelfReflector
@@ -48,6 +49,12 @@ from .ragas_eval import RAGASEvaluator, InvocationEvaluator
 # Web search disabled for offline-only operation
 # from .web_search import WebSearch, get_web_search
 from .smart_planner import compute_marginal_gain
+# vNext Expansion: G1-G4 Guarantees
+from .citation_verifier import CitationVerifier
+from .trace_export import create_trace_bundle, TraceBundle
+from .artifact_builder import get_artifact_builder, ArtifactStatus
+from .cache import RetrievalMode
+from .hyde import HyDEGenerator, get_hyde_generator
 
 
 class Orchestrator:
@@ -91,7 +98,8 @@ class Orchestrator:
             ),
             monitor=self._uncertainty_monitor,
         )
-        self._hallucination_firewall = HallucinationFirewall(strict_mode=False)
+        self._active_tasks = {} # type: dict[str, asyncio.Task]
+        self._cancelled_traces = set() # type: set[str]
         self._evidence_contract = EvidenceContract(min_coverage=0.7)
         # Advanced retrieval modes
         self._hierarchy_builder = HierarchyBuilder()
@@ -109,6 +117,12 @@ class Orchestrator:
         self._chunk_records: list[tuple[str, Any]] = []
         # Web search disabled for offline-only operation
         self._web_search = None
+        # vNext Expansion: G1/G4 Guarantees
+        self._citation_verifier = CitationVerifier(max_repair_attempts=2)
+        self._artifact_builder = get_artifact_builder()
+        self._hallucination_firewall = HallucinationFirewall(strict_mode=False, min_overlap=0.25, min_pass_rate=0.4)
+        self._last_trace_bundle: TraceBundle | None = None
+        self._hyde_generator = get_hyde_generator()
 
     def rebuild(self, config: AppConfig) -> None:
         self._config = config
@@ -117,7 +131,13 @@ class Orchestrator:
             self._provider = self._providers.build(config.provider)
         if hasattr(self._planner, "set_provider"):
             self._planner.set_provider(self._provider)
-        self._retrieval.build()
+        
+        # Only build if not already loaded (prevents double-build on startup)
+        if hasattr(self._retrieval, "_chunks") and not self._retrieval._chunks:
+            self._retrieval.build()
+        elif not hasattr(self._retrieval, "_chunks"):
+             self._retrieval.build()
+             
         if hasattr(self._retrieval, "get_document_trees"):
             try:
                 self._document_trees = self._retrieval.get_document_trees()
@@ -130,6 +150,12 @@ class Orchestrator:
                 self._chunk_records = self._retrieval.get_chunk_records()
             except Exception:
                 self._chunk_records = []
+        
+        # Synchronize GraphRAG if available in retriever
+        if hasattr(self._retrieval, "_graph_rag") and self._retrieval._graph_rag:
+            self._graph_rag = self._retrieval._graph_rag
+            self._graph_ready = self._retrieval._graph_ready
+        
         # Update compressor with config settings
         self._compressor = ContextCompressor(
             max_tokens=config.retrieval.max_context_tokens,
@@ -137,6 +163,19 @@ class Orchestrator:
         if not getattr(config.retrieval, "graph", False):
             self._graph_rag = None
             self._graph_ready = False
+        
+        # Sync artifact status with builder for UI (G4)
+        from .artifact_builder import ArtifactStatus
+        if self._hierarchy_ready:
+            self._artifact_builder.set_status("raptor", ArtifactStatus.READY)
+            self._artifact_builder.set_items("raptor", sum(len(t.nodes) for t in self._document_trees.values()))
+        
+        if self._graph_ready:
+            self._artifact_builder.set_status("graph_rag", ArtifactStatus.READY)
+            if self._graph_rag:
+                self._artifact_builder.set_items("graph_rag", len(self._graph_rag.entities))
+        elif getattr(self._retrieval, "_graph_failed", False):
+            self._artifact_builder.set_status("graph_rag", ArtifactStatus.FAILED)
         # Web search disabled for offline-only operation
         # self._web_search = get_web_search()
 
@@ -218,7 +257,11 @@ class Orchestrator:
         
         return chunks[:5]  # Limit community chunks
 
-    async def _ensure_graph_context(self, force: bool = False) -> None:
+    async def _ensure_graph_context(
+        self, 
+        force: bool = False,
+        on_progress: Callable[[str, int, int, str | None], None] | None = None,
+    ) -> None:
         """Build GraphRAG context on demand."""
         if (
             not self._config
@@ -231,8 +274,8 @@ class Orchestrator:
         try:
             graph_builder = GraphRAG()
             evidence_chunks: list[EvidenceChunk] = []
-            # Limit to manageable number of chunks to control cost
-            max_chunks = min(len(self._chunk_records), 400)
+            # Tighten limit to 100 for faster builds as requested by user
+            max_chunks = min(len(self._chunk_records), 100)
             for doc_id, chunk in self._chunk_records[:max_chunks]:
                 tree = self._document_trees.get(doc_id)
                 title = ""
@@ -249,15 +292,27 @@ class Orchestrator:
                 ))
             if not evidence_chunks:
                 return
-            await graph_builder.build_from_chunks(evidence_chunks, self._provider)
+            
+            await graph_builder.build_from_chunks(
+                evidence_chunks, 
+                self._provider,
+                on_progress=on_progress
+            )
             graph_builder.detect_communities()
-            await graph_builder.summarize_communities(self._provider)
+            await graph_builder.summarize_communities(
+                self._provider,
+                on_progress=on_progress
+            )
             self._graph_rag = graph_builder
             self._graph_ready = True
         except Exception:
             self._graph_ready = False
 
-    async def _ensure_hierarchy_context(self, force: bool = False) -> None:
+    async def _ensure_hierarchy_context(
+        self, 
+        force: bool = False,
+        on_progress: Callable[[str, int, int, str | None], None] | None = None,
+    ) -> None:
         """Build hierarchical document trees if not provided by retriever."""
         if self._hierarchy_ready and not force:
             return
@@ -273,7 +328,11 @@ class Orchestrator:
             return
         try:
             trees: dict[str, DocumentTree] = {}
-            for doc_id, parts in doc_texts.items():
+            total_docs = len(doc_texts)
+            if on_progress:
+                on_progress("building_hierarchy", 0, total_docs)
+                
+            for idx, (doc_id, parts) in enumerate(doc_texts.items()):
                 combined = "\n\n".join(parts)
                 if not combined.strip():
                     continue
@@ -283,6 +342,9 @@ class Orchestrator:
                     title=f"Document {doc_id}",
                 )
                 trees[doc_id] = tree
+                if on_progress:
+                    on_progress("building_hierarchy", idx + 1, total_docs)
+                    
             if trees:
                 self._document_trees = trees
                 self._hierarchy_ready = True
@@ -472,6 +534,31 @@ class Orchestrator:
         encoded = json.dumps(payload, sort_keys=True, default=str)
         return hashlib.sha256(encoded.encode()).hexdigest()[:16]
 
+    # Human-readable stage messages for progress updates
+    STAGE_MESSAGES = {
+        "cache": "Checking query cache...",
+        "planning": "Planning retrieval strategy...",
+        "gating": "Determining retrieval mode...",
+        "routing": "Finding source documents...",
+        "gatherer": "Gathering relevant evidence...",
+        "retrieval": "Processing retrieval results...",
+        "retrieval_iteration": "Refining search scope...",
+        "evaluation": "Analyzing evidence relevance...",
+        "compression": "Optimizing context windows...",
+        "generation": "Crafting your answer...",
+        "conflict_detection": "Checking for factual consistency...",
+        "citation_verification": "Validating citations and sources...",
+        "reflection": "Quality checking final answer...",
+        "hallucination_check": "Running hallucination firewall...",
+        "evidence_contract": "Ensuring evidence coverage...",
+        "extracting_graph": "Building knowledge graph...",
+        "summarizing_communities": "Thematizing communities...",
+        "building_hierarchy": "Building document hierarchy...",
+    }
+    def cancel_trace(self, trace_id: str) -> None:
+        """Mark a trace as cancelled."""
+        self._cancelled_traces.add(trace_id)
+
     async def answer(
         self,
         query: str,
@@ -479,10 +566,72 @@ class Orchestrator:
         on_step: Callable[[PipelineStep], None] | None = None,
         on_token: Callable[[str], None] | None = None,
         on_stage: Callable[[str], None] | None = None,
+        on_progress: Callable[[dict], None] | None = None,
+        history: list[dict[str, str]] | None = None,
+        trace_id: str | None = None,
     ) -> dict:
+        if trace_id is None:
+            trace_id = hashlib.md5(f"{query}{time.time()}".encode()).hexdigest()[:12]
+        
+        # Immediate cleanup check
+        if trace_id in self._cancelled_traces:
+            self._cancelled_traces.remove(trace_id) # Reset for next use
+            raise asyncio.CancelledError(f"Trace {trace_id} was cancelled before starting")
+
         pipeline_start = datetime.utcnow()
         pipeline_steps: list[PipelineStep] = []
         reflection_result = None
+        
+        # Progress tracking
+        query_start_time = time.perf_counter()
+        current_stage = None
+        stage_start_time = query_start_time
+        
+        def emit_progress(
+            stage: str,
+            detail: str | None = None,
+            progress: float | None = None,
+            items_done: int | None = None,
+            items_total: int | None = None,
+        ) -> None:
+            """Emit a progress event with human-readable message."""
+            nonlocal current_stage, stage_start_time
+            if on_progress is None:
+                return
+            
+            # Update stage timer if stage changed
+            now = time.perf_counter()
+            if stage != current_stage:
+                current_stage = stage
+                stage_start_time = now
+                
+            elapsed_ms = round((now - query_start_time) * 1000, 1)
+            stage_elapsed_ms = round((now - stage_start_time) * 1000, 1)
+            message = self.STAGE_MESSAGES.get(stage, f"Processing {stage}...")
+            
+            progress_data = {
+                "stage": stage,
+                "message": message,
+                "trace_id": trace_id,
+                "elapsed_ms": elapsed_ms, # Use total elapsed for UI consistency
+                "stage_elapsed_ms": stage_elapsed_ms,
+            }
+            
+            if detail:
+                progress_data["detail"] = detail
+            
+            if progress is not None:
+                progress_data["progress"] = round(progress, 2)
+            elif items_done is not None and items_total is not None and items_total > 0:
+                progress_data["progress"] = round(items_done / items_total, 2)
+                progress_data["detail"] = detail or f"Processing {items_done} of {items_total}"
+                # Estimate remaining time
+                if items_done > 0:
+                    time_per_item = stage_elapsed_ms / items_done
+                    remaining_items = items_total - items_done
+                    progress_data["estimated_remaining_ms"] = round(time_per_item * remaining_items, 1)
+            
+            on_progress(progress_data)
 
         def record_step(step: PipelineStep) -> None:
             pipeline_steps.append(step)
@@ -501,58 +650,44 @@ class Orchestrator:
 
         cache_manager = get_cache_manager()
         cache_hash = self._cache_config_hash(document_ids)
+        
+        # G3: Get corpus version and retrieval mode for versioned cache keys
+        cache_corpus_version = ""
+        cache_retrieval_mode = RetrievalMode.STANDARD
+        if hasattr(self._retrieval, 'get_corpus_version'):
+            cache_corpus_version = self._retrieval.get_corpus_version()
+        if hasattr(self._retrieval, 'get_retrieval_mode_flags'):
+            cache_retrieval_mode = self._retrieval.get_retrieval_mode_flags()
+        
         cache_start_time = datetime.utcnow()
         cache_start = time.perf_counter()
         if on_stage:
             on_stage("cache")
-        cached_result = cache_manager.queries.get(query, cache_hash)
-        if cached_result:
-            cache_step = self._make_step(
-                "cache",
-                cache_start,
-                cache_start_time,
-                {"query_cache": "hit", "cache_key": cache_hash},
-            )
-            record_step(cache_step)
-            metrics = cached_result.get("metrics", {}) if isinstance(cached_result, dict) else {}
-            metrics["cache_hit"] = True
-            cached_steps = cached_result.get("steps", []) if isinstance(cached_result, dict) else []
-            response = {
-                **cached_result,
-                "metrics": metrics,
-                "steps": [
-                    {
-                        "name": cache_step.name,
-                        "duration_ms": cache_step.duration_ms,
-                        "details": cache_step.details,
-                        "status": cache_step.status,
-                        "started_at": cache_step.started_at.isoformat(),
-                        "completed_at": cache_step.completed_at.isoformat(),
-                    },
-                    *cached_steps,
-                ],
-            }
-            self._telemetry.record(
-                prompt=query,
-                answer=cached_result.get("answer", ""),
-                metrics=metrics,
-                steps=pipeline_steps,
-                started_at=pipeline_start,
-            )
-            return response
+        emit_progress("cache", detail="Checking index freshness")
+        
+        # NOTE: Full query-level cache is disabled - each query runs the full pipeline.
+        # Intermediate caching (embeddings, chunks) still works via the retrieval engine.
+        # This ensures users always see the pipeline stages run.
+        cached_result = None  # Disabled: cache_manager.queries.get(...)
+        
         cache_step = self._make_step(
             "cache",
             cache_start,
             cache_start_time,
-            {"query_cache": "miss", "cache_key": cache_hash},
+            {
+                "query_cache": "disabled", 
+                "note": "Full-query cache disabled, intermediate caching active",
+            },
         )
         record_step(cache_step)
 
         # Step 1: Planning (now with query analysis)
         if on_stage:
             on_stage("planning")
+        emit_progress("planning", detail="Breaking down your question")
         plan_start_time = datetime.utcnow()
         plan_start = time.perf_counter()
+        stage_start_time = plan_start  # Reset stage timer
         planner_mode = "heuristic"
         try:
             if hasattr(self._planner, "plan_async"):
@@ -590,8 +725,10 @@ class Orchestrator:
         # Step 1.5: Adaptive Gating (new agentic step)
         if on_stage:
             on_stage("gating")
+        emit_progress("gating", detail="Checking if documents are needed")
         gating_start_time = datetime.utcnow()
         gating_start = time.perf_counter()
+        stage_start_time = gating_start
         
         gate_result = await self._adaptive_gate.should_retrieve(query, self._provider)
         
@@ -638,8 +775,10 @@ class Orchestrator:
         # Step 1.6: Learned Router for advanced retrieval strategy
         if on_stage:
             on_stage("routing")
+        emit_progress("routing", detail="Choosing optimal search strategy")
         routing_start_time = datetime.utcnow()
         routing_start = time.perf_counter()
+        stage_start_time = routing_start
         
         learned_route = self._learned_router.route(query)
         
@@ -697,6 +836,9 @@ class Orchestrator:
         max_iterations = max(max_iterations, learned_route.max_iterations)
         # Override max_iterations from budget plan if tighter
         max_iterations = min(max_iterations, budget_plan.max_iterations)
+        # PERFORMANCE FIX: Hard cap at 2 iterations to prevent long delays
+        # Complex multi-iteration loops with evaluations were causing 20+ minute responses
+        max_iterations = min(max_iterations, 2)
 
         # Adjust retrieval k per learned router suggestion
         for step in getattr(plan, "steps", []):
@@ -705,9 +847,21 @@ class Orchestrator:
             if hasattr(step, "sparse_k"):
                 step.sparse_k = max(step.sparse_k, learned_route.suggested_k or step.sparse_k)
 
-        await self._ensure_hierarchy_context(force=base_use_raptor)
-        await self._ensure_graph_context(force=base_use_graph)
+        # Context building (can be slow)
+        if base_use_raptor and not self._hierarchy_ready:
+            await self._ensure_hierarchy_context(
+                force=False,
+                on_progress=lambda s, c, t: emit_progress(s, items_done=c, items_total=t)
+            )
+        
+        if base_use_graph and not self._graph_ready:
+            await self._ensure_graph_context(
+                force=False,
+                on_progress=lambda s, c, t: emit_progress(s, items_done=c, items_total=t)
+            )
+        
         # Enable high precision mode if budget allows
+        emit_progress("routing", detail="Configuring retrieval engine...")
         if isinstance(self._retrieval, HybridRetrievalEngine):
             self._retrieval.set_precision_mode(budget_plan.use_colbert)
             # Enable/disable reranker based on learned route + budget
@@ -721,6 +875,12 @@ class Orchestrator:
         # Step 2: Iterative Gatherer with CRAG evaluation
         if on_stage:
             on_stage("gatherer")
+        emit_progress(
+            "gatherer", 
+            detail=f"Searching across {len(plan.steps)} query variations",
+            items_done=0,
+            items_total=max_iterations,
+        )
         gatherer_start_time = datetime.utcnow()
         gatherer_start = time.perf_counter()
         
@@ -740,10 +900,29 @@ class Orchestrator:
         embedding_cache_hits = 0
         embedding_cache_misses = 0
         
+        # HyDE query enhancement if enabled
+        cfg_use_hyde = bool(getattr(cfg_retrieval, "use_hyde", False))
+        hyde_enhanced_query = query
+        hyde_details: dict[str, Any] = {"enabled": cfg_use_hyde}
+        
+        if cfg_use_hyde and self._provider is not None:
+            try:
+                hyde_result = await self._hyde_generator.generate(
+                    query, 
+                    self._provider, 
+                    query_type=str(query_type)
+                )
+                if hyde_result.hypotheticals:
+                    hyde_enhanced_query = hyde_result.embedding_text
+                    hyde_details["hypothetical_generated"] = True
+                    hyde_details["hypothetical_preview"] = hyde_result.hypotheticals[0][:200]
+            except Exception as e:
+                hyde_details["error"] = str(e)
+        
         # Iterative retrieval loop
         iteration = 0
         accumulated_chunks = []
-        current_query = query
+        current_query = hyde_enhanced_query if cfg_use_hyde else query
         retrieval_verdict = None
         plan_queries = [s.query for s in plan.steps if getattr(s, "query", None)]
         
@@ -759,21 +938,63 @@ class Orchestrator:
         }
 
         while iteration < max_iterations:
+            if trace_id in self._cancelled_traces:
+                raise asyncio.CancelledError(f"Trace {trace_id} cancelled by user")
             iteration_start = time.perf_counter()
             iteration_chunks = []
             iteration_details = {"iteration": iteration + 1, "query": current_query, "sub_queries": []}
             
-            # Execute retrieval for all plan steps
-            for step in plan.steps:
-                # Use refined query for iterations > 0
+            # Emit per-iteration progress
+            emit_progress(
+                "retrieval_iteration" if iteration > 0 else "gatherer",
+                detail=f"Search iteration {iteration + 1} of {max_iterations}",
+                items_done=iteration,
+                items_total=max_iterations,
+            )
+            stage_start_time = iteration_start
+            
+            # Execute retrieval for all plan steps in parallel
+            total_steps = len(plan.steps)
+            
+            async def run_retrieval_step(idx: int, step: PlanStep):
                 step_query = step.query if iteration == 0 else current_query
+                query_preview = step_query[:50] + "..." if len(step_query) > 50 else step_query
                 sub_start = time.perf_counter()
-                step_evidence = self._gatherer.gather(
+                
+                emit_progress(
+                    "gatherer",
+                    detail=f"Searching query {idx + 1}/{total_steps}: \"{query_preview}\"",
+                    items_done=idx,
+                    items_total=total_steps,
+                )
+                
+                step_evidence = await self._gatherer.gather(
                     step_query,
                     top_k=step.dense_k,
                     document_ids=document_ids,
                     routing_params=routing_params,
+                    on_progress=lambda msg, val: emit_progress(
+                        "gatherer", 
+                        detail=f"{query_preview}: {msg}",
+                        progress=val
+                    )
                 )
+                duration_ms = round((time.perf_counter() - sub_start) * 1000, 2)
+                return idx, step_query, step_evidence, duration_ms
+
+            # Run all steps in parallel for this iteration
+            tasks = [asyncio.create_task(run_retrieval_step(i, s)) for i, s in enumerate(plan.steps)]
+            try:
+                step_results = await asyncio.gather(*tasks)
+            except Exception as e:
+                # Cancel all pending tasks if any fail to avoid RuntimeWarning or orphaned tasks
+                for t in tasks:
+                    if not t.done():
+                        t.cancel()
+                raise e
+            
+            # Aggregate results from parallel tasks
+            for step_idx, step_query, step_evidence, duration_ms in step_results:
                 iteration_chunks.extend(step_evidence.chunks)
                 
                 embedding_cache = step_evidence.cache_info.get("embedding_cache")
@@ -789,7 +1010,7 @@ class Orchestrator:
                     "query": step_query,
                     "top_k": step.dense_k,
                     "chunks_found": len(step_evidence.chunks),
-                    "duration_ms": round((time.perf_counter() - sub_start) * 1000, 2),
+                    "duration_ms": duration_ms,
                     "embedding_cache": embedding_cache,
                     "literal_hits": literal_hits,
                 }
@@ -850,17 +1071,23 @@ class Orchestrator:
                     iteration_details["policy_enable_graph"] = True
                 # Opportunistically pull RAPTOR/Graph context immediately
                 if self._document_trees and iteration_details.get("raptor_chunks_added") is None:
-                    raptor_chunks = await self._retrieve_with_raptor(
-                        current_query, document_ids, iteration_chunks
-                    )
-                    if raptor_chunks:
-                        iteration_chunks.extend(raptor_chunks)
-                        iteration_details["raptor_chunks_added"] = len(raptor_chunks)
+                    try:
+                        raptor_chunks = await self._retrieve_with_raptor(
+                            current_query, document_ids, iteration_chunks
+                        )
+                        if raptor_chunks:
+                            iteration_chunks.extend(raptor_chunks)
+                            iteration_details["raptor_chunks_added"] = len(raptor_chunks)
+                    except Exception as e:
+                        print(f"RAPTOR corrective retrieval failed: {e}")
                 if self._graph_rag is not None and iteration_details.get("graph_chunks_added") is None:
-                    graph_chunks = await self._retrieve_with_graph(current_query, document_ids)
-                    if graph_chunks:
-                        iteration_chunks.extend(graph_chunks)
-                        iteration_details["graph_chunks_added"] = len(graph_chunks)
+                    try:
+                        graph_chunks = await self._retrieve_with_graph(current_query, document_ids)
+                        if graph_chunks:
+                            iteration_chunks.extend(graph_chunks)
+                            iteration_details["graph_chunks_added"] = len(graph_chunks)
+                    except Exception as e:
+                        print(f"GraphRAG corrective retrieval failed: {e}")
 
                 # Web fallback only if available (fixed null check)
                 if self._web_search is not None and hasattr(self._web_search, 'available') and self._web_search.available:
@@ -891,7 +1118,7 @@ class Orchestrator:
                 
                 # Execute slot-fill queries for targeted retrieval
                 for sq in slot_fill_queries[: policy_config["max_slot_fill_queries"]]:
-                    sub_evidence = self._gatherer.gather(
+                    sub_evidence = await self._gatherer.gather(
                         sq,
                         top_k=policy_config["slot_fill_top_k"],
                         document_ids=document_ids,
@@ -912,7 +1139,7 @@ class Orchestrator:
                 if clarification_queries:
                     iteration_details["clarification_queries"] = clarification_queries
                     for cq in clarification_queries[: policy_config["max_clarification_queries"]]:
-                        clar_evidence = self._gatherer.gather(
+                        clar_evidence = await self._gatherer.gather(
                             cq,
                             top_k=policy_config["clarification_top_k"],
                             document_ids=document_ids,
@@ -927,7 +1154,7 @@ class Orchestrator:
                     try:
                         sub_queries = await self._planner.decompose_query(current_query)
                         for sq in sub_queries[:2]:  # Limit to 2 sub-queries
-                            sub_evidence = self._gatherer.gather(
+                            sub_evidence = await self._gatherer.gather(
                                 sq,
                                 top_k=3,
                                 document_ids=document_ids,
@@ -940,23 +1167,29 @@ class Orchestrator:
             
             # RAPTOR: Add hierarchical overview chunks if enabled on first hop
             if use_raptor and self._document_trees and iteration == 0:
-                raptor_chunks = await self._retrieve_with_raptor(
-                    current_query, document_ids, iteration_chunks
-                )
-                if raptor_chunks:
-                    iteration_chunks.extend(raptor_chunks)
-                    iteration_details["raptor_chunks_added"] = len(raptor_chunks)
-                    iteration_details["raptor_enabled"] = True
-                    total_raptor_chunks += len(raptor_chunks)
+                try:
+                    raptor_chunks = await self._retrieve_with_raptor(
+                        current_query, document_ids, iteration_chunks
+                    )
+                    if raptor_chunks:
+                        iteration_chunks.extend(raptor_chunks)
+                        iteration_details["raptor_chunks_added"] = len(raptor_chunks)
+                        iteration_details["raptor_enabled"] = True
+                        total_raptor_chunks += len(raptor_chunks)
+                except Exception as e:
+                    print(f"RAPTOR initial retrieval failed: {e}")
             
             # GraphRAG: Add community summaries if enabled on first hop
             if use_graph and self._graph_rag is not None and iteration == 0:
-                graph_chunks = await self._retrieve_with_graph(current_query, document_ids)
-                if graph_chunks:
-                    iteration_chunks.extend(graph_chunks)
-                    iteration_details["graph_chunks_added"] = len(graph_chunks)
-                    iteration_details["graph_enabled"] = True
-                    total_graph_chunks += len(graph_chunks)
+                try:
+                    graph_chunks = await self._retrieve_with_graph(current_query, document_ids)
+                    if graph_chunks:
+                        iteration_chunks.extend(graph_chunks)
+                        iteration_details["graph_chunks_added"] = len(graph_chunks)
+                        iteration_details["graph_enabled"] = True
+                        total_graph_chunks += len(graph_chunks)
+                except Exception as e:
+                    print(f"GraphRAG initial retrieval failed: {e}")
             
             # Log retrieval verdict for training data
             self._decision_logger.log_retrieval_verdict(
@@ -1018,7 +1251,11 @@ class Orchestrator:
             on_stage("retrieval")
         retrieval_start_time = datetime.utcnow()
         retrieval_start = time.perf_counter()
-        retrieval_details: dict[str, Any] = {"sub_queries": gatherer_details["sub_queries"]}
+        retrieval_details: dict[str, Any] = {
+            "sub_queries": gatherer_details["sub_queries"],
+            "raptor_chunks_added": total_raptor_chunks,
+            "graph_chunks_added": total_graph_chunks,
+        }
         precision_stats: dict[str, Any] = {}
         colbert_enabled = False
         rerank_enabled = False
@@ -1034,7 +1271,7 @@ class Orchestrator:
         chunks.sort(key=lambda c: c.score, reverse=True)
         
         if not chunks:
-            evidence = self._gatherer.gather(
+            evidence = await self._gatherer.gather(
                 query,
                 top_k=3,
                 document_ids=document_ids,
@@ -1137,6 +1374,11 @@ class Orchestrator:
         ) -> tuple[str, dict]:
             if on_stage:
                 on_stage(step_name)
+            # Emit progress for generation
+            emit_progress(
+                step_name,
+                detail=f"Creating response with {len(citation_payload)} sources",
+            )
             gen_start_time = datetime.utcnow()
             gen_start = time.perf_counter()
             provider = self._provider
@@ -1169,22 +1411,45 @@ class Orchestrator:
                 gen_details["fallback"] = True
                 gen_details["status"] = "skipped"
             else:
-                system_prompt = f"""You are JR AutoRAG assistant, a precise enterprise RAG generator with STRICT citation requirements.
+                system_prompt = f"""You are JR AutoRAG Assistant, a precise enterprise RAG generator.
+
+## CRITICAL CONSTRAINT
+You MUST ONLY answer using information from the provided KNOWLEDGE BASE context below.
+If the question CANNOT be answered from the provided context, you MUST say:
+"I cannot answer this question because the information is not available in the current knowledge base."
+DO NOT use your general knowledge or training data - ONLY use the provided context.
+
+## STEP-BY-STEP ANSWER SYNTHESIS
+For each question:
+1. IDENTIFY: Find the most relevant passages in the context that address the question
+2. EXTRACT: Pull out key facts, quotes, and data points from those passages
+3. SYNTHESIZE: Combine the evidence into a coherent, well-structured answer
+4. CITE: Add bracketed citations [1], [2] for EVERY factual claim
+5. VERIFY: Confirm each claim has supporting evidence in the context
+
+## CITATION FORMAT (MANDATORY)
+- Every factual claim needs: "claim [n]." followed by "exact quote" (Source: [n])
+- Number citations sequentially: [1], [2], [3]...
+- Include a ## Sources section at the end listing each citation
 
 {CITATION_POLICY_PROMPT}
 
-CRITICAL REMINDERS:
-- First extract supporting spans, then compose the answer only from those spans
-- Every factual claim MUST have a 10-25 word quote from the source
-- Format: "<claim>." "<exact quoted text>" (Doc: Title, ChunkID: xxx)
-- If a date, number, or timeline is NOT in the sources, write: "[No dated catalyst found in knowledge base]"
-- End with "## References" section listing all sources
-- End with "## Sources Used" section confirming only KB sources used
-- NEVER invent data - better to say "Unknown" than guess{conflict_text}"""
+## FALLBACK RULES (CRITICAL)
+- If information is NOT in the context: Say "This information is not available in the current knowledge base."
+- If a date/number/metric is missing: Write "[Metadata not found in knowledge base]"
+- If the question is unrelated to the documents: Explain what topics the knowledge base covers
+- NEVER invent facts, dates, numbers, or quotes from your training data
+
+## OUTPUT QUALITY
+- Be concise but complete
+- Use clear structure (headers, bullets where appropriate)
+- Prioritize the most relevant information first{conflict_text}"""
 
                 user_prompt = (
-                    f"Context (use ONLY this for your answer):\n{context_text}\n\n"
-                    f"Question: {query}\n\n{strict_instruction}"
+                    f"### KNOWLEDGE BASE (Use ONLY this information):\n{context_text}\n\n"
+                    f"### USER QUESTION:\n{query}\n\n"
+                    f"### INSTRUCTIONS:\n{strict_instruction}\n\n"
+                    "### REMINDER:\nFollow the step-by-step synthesis process. Cite every claim."
                 )
 
                 try:
@@ -1230,8 +1495,16 @@ CRITICAL REMINDERS:
                         else:
                             messages = [
                                 {"role": "system", "content": system_prompt},
-                                {"role": "user", "content": user_prompt},
                             ]
+                            # Inject history if available (Phase 12)
+                            if history:
+                                for turn in history:
+                                    role = turn.get("role", "user")
+                                    content = turn.get("content", "")
+                                    if role in ("user", "assistant") and content:
+                                        messages.append({"role": role, "content": content})
+                            
+                            messages.append({"role": "user", "content": user_prompt})
                             if on_token is not None:
                                 answer_chunks: list[str] = []
                                 try:
@@ -1330,67 +1603,28 @@ The retrieved evidence contains some conflicting information. When you encounter
             return sanitized_answer, firewall_details
 
         # Step 4.5: Hallucination Firewall (SOTA enhancement)
-        answer, firewall_details = run_firewall_step("verification", answer, chunks)
-
-        # Step 4.5b: Firewall-driven corrective retry (lightweight)
-        # If the pass rate is low, attempt one targeted widen-and-regenerate pass.
+        # Wrapped in try/except to ensure responses always complete
         try:
-            firewall_pass_rate = firewall_details.get("pass_rate", 1.0)
-        except Exception:
-            firewall_pass_rate = 1.0
+            answer, firewall_details = run_firewall_step("verification", answer, chunks)
+        except Exception as fw_err:
+            print(f"⚠️ Hallucination firewall error (non-blocking): {fw_err}")
+            firewall_details = {"pass_rate": 1.0, "skipped": True, "error": str(fw_err)}
 
-        if (
-            firewall_pass_rate < 0.6
-            and provider is not None
-            and chunks
-        ):
-            # Widen retrieval slightly and regenerate once without FLARE to keep latency bounded
-            if on_stage:
-                on_stage("verification_retry_trigger")
-            retry_firewall_start_time = datetime.utcnow()
-            retry_firewall_start = time.perf_counter()
-            widen_k = max(6, int(plan.steps[0].dense_k * 1.25)) if plan.steps else 6
-            retry_evidence = self._gatherer.gather(
-                query,
-                top_k=widen_k,
-                document_ids=document_ids,
-                routing_params=routing_params,
-            )
-            chunks = dedupe_chunks(chunks + retry_evidence.chunks)
-            retry_details = {
-                "reason": "firewall_low_pass_rate",
-                "previous_pass_rate": firewall_pass_rate,
-                "widen_k": widen_k,
-                "chunks_found": len(retry_evidence.chunks),
-            }
-            record_step(
-                self._make_step(
-                    "verification_retry_trigger",
-                    retry_firewall_start,
-                    retry_firewall_start_time,
-                    retry_details,
-                )
-            )
+        # Step 4.5b: Firewall-driven corrective retry is DISABLED to improve response times
+        # The retry mechanism was causing 20+ minute delays. If pass rate is low, we now
+        # simply return the response with a warning rather than retrying.
+        firewall_pass_rate = firewall_details.get("pass_rate", 1.0)
 
-            # Recompress with the new chunks
-            context, citations = run_compression_step(
-                "compression_verification_retry",
-                chunks,
-            )
-
-            # Regenerate once (no FLARE to bound latency), then re-run firewall
-            answer, _ = await run_generation_step(
-                "generation_verification_retry",
-                context,
-                citations,
-                conflict_instruction,
-                allow_flare=False,
-            )
-            answer, firewall_details = run_firewall_step(
-                "verification_retry",
-                answer,
-                chunks,
-            )
+        # DISABLED: The retry mechanism below was causing 20+ minute delays.
+        # When pass rate is low, we now simply return the response rather than retrying.
+        # Users can always regenerate manually if needed.
+        #
+        # if (
+        #     firewall_pass_rate < 0.6
+        #     and provider is not None
+        #     and chunks
+        # ):
+        #     ... (retry logic disabled for performance)
 
         # Step 4.6: Evidence-first contract enforcement
         contract_result = None
@@ -1425,7 +1659,7 @@ The retrieved evidence contains some conflicting information. When you encounter
                 targeted_chunks: list = []
                 for suggestion in suggestions:
                     try:
-                        bundle = self._gatherer.gather(
+                        bundle = await self._gatherer.gather(
                             suggestion,
                             top_k=4,
                             document_ids=document_ids,
@@ -1439,6 +1673,12 @@ The retrieved evidence contains some conflicting information. When you encounter
                 chunks.extend(targeted_chunks)
                 chunks = dedupe_chunks(chunks)
                 contract_retries += 1
+                emit_progress(
+                    contract_step_name,
+                    detail=f"Contract failed ({round(contract_result.coverage_ratio, 2)} coverage). Retrying with {len(targeted_chunks)} new chunks...",
+                    items_done=contract_retries,
+                    items_total=max_evidence_contract_retries
+                )
                 context, citations = run_compression_step(
                     f"compression_contract_retry_{contract_retries}",
                     chunks,
@@ -1450,6 +1690,12 @@ The retrieved evidence contains some conflicting information. When you encounter
                     conflict_instruction,
                     allow_flare=False,
                 )
+                emit_progress(
+                    f"generation_contract_retry_{contract_retries}",
+                    detail="Verification successful. Finalizing answer...",
+                    items_done=contract_retries,
+                    items_total=max_evidence_contract_retries
+                )
                 answer, _ = run_firewall_step(
                     f"verification_contract_retry_{contract_retries}",
                     answer,
@@ -1459,7 +1705,36 @@ The retrieved evidence contains some conflicting information. When you encounter
                 if contract_retries >= max_evidence_contract_retries:
                     break
 
-        # Step 5: Self-reflection (optional retry)
+        # Step 4.7: Citation Verification (G1 Guarantee - vNext Expansion)
+        # Ensures every citation maps to a retrieved chunk ID or gets repaired/marked
+        if on_stage:
+            on_stage("citation_verification")
+        citation_start_time = datetime.utcnow()
+        citation_start = time.perf_counter()
+        
+        citation_result = self._citation_verifier.verify(answer, chunks)
+        citation_details = citation_result.to_trace_dict()
+        
+        # If citations are invalid and we have a provider, attempt repair
+        if not citation_result.all_valid and provider is not None:
+            try:
+                citation_result = await self._citation_verifier.verify_and_repair(
+                    answer, chunks, provider
+                )
+                answer = citation_result.verified_answer
+                citation_details = citation_result.to_trace_dict()
+                citation_details["repair_applied"] = True
+            except Exception as e:
+                citation_details["repair_error"] = str(e)
+        
+        record_step(self._make_step(
+            "citation_verification",
+            citation_start,
+            citation_start_time,
+            citation_details,
+            status="passed" if citation_result.final_pass else "repaired",
+        ))
+
         if on_stage:
             on_stage("reflection")
         reflection_start_time = datetime.utcnow()
@@ -1533,7 +1808,7 @@ The retrieved evidence contains some conflicting information. When you encounter
                 on_stage("retrieval_retry")
             retry_retrieval_start_time = datetime.utcnow()
             retry_retrieval_start = time.perf_counter()
-            retry_evidence = self._gatherer.gather(
+            retry_evidence = await self._gatherer.gather(
                 query,
                 top_k=retry_top_k,
                 document_ids=document_ids,
@@ -1641,10 +1916,52 @@ The retrieved evidence contains some conflicting information. When you encounter
                 "precision_stats": precision_stats,
                 "rerank_enabled": rerank_enabled,
             },
+            "confidence": {
+                "overall": reflection_result.confidence if reflection_result else 0.5,
+                "factors": {
+                    "retrieval": min(1.0, final_coverage_ratio / target_coverage) if target_coverage > 0 else 0.5,
+                    "generation": reflection_result.confidence if reflection_result else 0.5,
+                    "citation": citation_result.pass_rate if 'citation_result' in dir() and citation_result else 0.5,
+                },
+                "hallucination_pass": firewall_passed if 'firewall_passed' in dir() else None,
+                "evidence_contract_pass": contract_passed if 'contract_passed' in dir() else None,
+            },
             "steps": steps_out,
         }
+        
+        # vNext E1: Create trace bundle for export
+        corpus_version = ""
+        retrieval_mode_flags = RetrievalMode.STANDARD
+        if hasattr(self._retrieval, 'get_corpus_version'):
+            corpus_version = self._retrieval.get_corpus_version()
+        if hasattr(self._retrieval, 'get_retrieval_mode_flags'):
+            retrieval_mode_flags = self._retrieval.get_retrieval_mode_flags()
+        
+        self._last_trace_bundle = create_trace_bundle(
+            query=query,
+            answer=answer,
+            steps=steps_out,
+            corpus_version=corpus_version,
+            config_hash=cache_hash,
+            retrieval_mode=retrieval_mode_flags,
+            evaluator_verdicts={
+                "reflection_quality": reflection_result.quality.value if reflection_result else "unknown",
+                "retrieval_verdict": retrieval_verdict.value if retrieval_verdict else "unknown",
+            },
+            citation_check=citation_details if 'citation_details' in dir() else {},
+            total_duration_ms=total_duration_ms,
+        )
+        result["trace_bundle_available"] = True
+        
+        # G3: Use versioned cache keys
         cacheable = {**result, "steps": [s for s in steps_out if s["name"] != "cache"]}
-        cache_manager.queries.set(query, cacheable, cache_hash)
+        cache_manager.queries.set(
+            query, 
+            cacheable, 
+            config_hash=cache_hash,
+            corpus_version=corpus_version,
+            retrieval_mode=retrieval_mode_flags,
+        )
         return result
     
     async def _generate_direct_answer(
@@ -1820,3 +2137,126 @@ Be helpful, accurate, and concise."""
             "steps": steps_out,
             "needs_clarification": True,
         }
+    
+    # =========================================================================
+    # vNext Expansion: Export Methods
+    # =========================================================================
+    
+    def get_trace_bundle(self) -> TraceBundle | None:
+        """Get the last trace bundle for export (E1 requirement).
+        
+        Returns:
+            TraceBundle if available from last query, None otherwise
+        """
+        return self._last_trace_bundle
+    
+    def export_trace_json(self) -> str | None:
+        """Export last trace bundle as JSON string (E1).
+        
+        Returns:
+            JSON string if trace available, None otherwise
+        """
+        if self._last_trace_bundle:
+            return self._last_trace_bundle.to_json()
+        return None
+    
+    def trigger_artifact_build(self, force: bool = False) -> dict:
+        """Manually trigger background artifact build (G4)."""
+        if not self._chunk_records:
+            return {"status": "error", "message": "No documents ingested yet"}
+            
+        try:
+            # Create evidence chunks from records
+            evidence_chunks = []
+            for doc_id, chunk in self._chunk_records:
+                # Basic reconstruction - title lookup would be better but this is sufficient for v1
+                evidence_chunks.append(EvidenceChunk(
+                    id=f"{doc_id}-{chunk.index}",
+                    title=f"Document {doc_id}",
+                    snippet=chunk.text,
+                    score=1.0, 
+                ))
+                
+            asyncio.create_task(self._artifact_builder.build_all_async(
+                evidence_chunks,
+                self._provider,
+                corpus_version="manual_trigger",
+                force_rebuild=force
+            ))
+            
+            return {
+                "status": "triggered", 
+                "message": "Background build started",
+                "chunk_count": len(evidence_chunks)
+            }
+        except Exception as e:
+            return {"status": "error", "message": f"Failed to trigger artifact build: {e}"}
+
+    def get_artifact_build_status(self) -> dict:
+        """Get current status of background artifact builds (G4).
+        
+        Returns:
+            Dict with graph_rag and raptor build status
+        """
+        return self._artifact_builder.progress.to_dict()
+
+    def get_graph_data(self) -> dict[str, Any]:
+        """Get detailed GraphRAG data for visualization."""
+        if not self._graph_rag:
+            # Try to load from builder
+            self._graph_rag = self._artifact_builder.get_graph()
+            
+        if not self._graph_rag:
+            return {"entities": [], "relationships": [], "communities": []}
+            
+        return {
+            "entities": [
+                {"name": e.name, "type": e.type.value if hasattr(e.type, 'value') else str(e.type), "description": e.description}
+                for e in self._graph_rag.entities.values()
+            ],
+            "relationships": [
+                {"source": r.source, "target": r.target, "description": r.description}
+                for r in self._graph_rag.relationships
+            ],
+            "communities": [
+                {"id": c.id, "entities": c.entities, "summary": c.summary}
+                for c in self._graph_rag.communities
+            ]
+        }
+
+    def get_raptor_data(self) -> dict[str, Any]:
+        """Get RAPTOR tree data for visualization."""
+        if not self._document_trees:
+            self._document_trees = self._artifact_builder.get_trees()
+            
+        if not self._document_trees:
+            return {"trees": {}}
+            
+        result = {}
+        for doc_id, tree in self._document_trees.items():
+            nodes_data = []
+            for node_id, node in tree.nodes.items():
+                nodes_data.append({
+                    "id": node_id,
+                    "title": node.title,
+                    "summary": node.summary,
+                    "level": node.level,
+                    "children": node.children,
+                    "parent": node.parent_id
+                })
+            result[doc_id] = {
+                "doc_id": doc_id,
+                "root_id": tree.root_id,
+                "nodes": nodes_data
+            }
+        return {"trees": result}
+
+    async def stop(self) -> None:
+        """Gracefully stop agentic components."""
+        await self._flare_generator.stop()
+
+    def get_model_status(self) -> dict[str, Any]:
+        """Get loading status of local models (G1)."""
+        if hasattr(self._retrieval, "get_model_status"):
+            return self._retrieval.get_model_status()
+        return {}

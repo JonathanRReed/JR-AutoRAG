@@ -61,6 +61,7 @@ class RetrievalDefaults(BaseModel):
     heading_boost: float = 0.4  # Field-aware boost for heading matches
     proximity_weight: float = 0.5  # Term-proximity boost for BM25
     diversity: float = 0.0  # 0-1: prefer diverse chunks when >0
+    use_hyde: bool = False  # Enable HyDE (Hypothetical Document Embeddings)
 
     @field_validator("raptor", mode="before")
     @classmethod
@@ -76,35 +77,102 @@ class RetrievalDefaults(BaseModel):
         return bool(value)
 
 
-# Retrieval presets for different use cases
+# Retrieval presets for different use cases (5-tier system)
+# Speed ←→ Accuracy spectrum: turbo → fast → balanced → thorough → ultra_accurate
 RETRIEVAL_PRESETS = {
+    "turbo": RetrievalDefaults(
+        hybrid=True,
+        dense_k=2,
+        sparse_k=3,
+        rerank_pool=8,
+        top_n=2,
+        target_tokens=400,
+        coverage_target=0.3,
+        max_context_tokens=2048,
+        use_reranking=False,  # Skip reranking for max speed
+        chunking_strategy="fixed",
+        chunk_size=800,
+        flare_generation=False,
+        enforce_evidence_contract=False,
+        multi_resolution=False,
+        raptor=False,
+        graph=False,
+    ),
     "fast": RetrievalDefaults(
         hybrid=True,
         dense_k=3,
         sparse_k=5,
-        rerank_pool=10,
+        rerank_pool=12,
         top_n=3,
         target_tokens=800,
         coverage_target=0.5,
         max_context_tokens=2048,
-        use_reranking=False,  # Skip reranking for speed
-        chunking_strategy="fixed",  # Faster chunking
+        use_reranking=True,
+        chunking_strategy="fixed",
         chunk_size=600,
+        flare_generation=False,
+        enforce_evidence_contract=False,
+        multi_resolution=False,
+        raptor=False,
+        graph=False,
     ),
-    "balanced": RetrievalDefaults(),  # Uses defaults above
+    "balanced": RetrievalDefaults(
+        hybrid=True,
+        dense_k=5,
+        sparse_k=10,
+        rerank_pool=20,
+        top_n=5,
+        target_tokens=1600,
+        coverage_target=0.7,
+        max_context_tokens=4096,
+        use_reranking=True,
+        chunking_strategy="semantic",
+        flare_generation=False,
+        enforce_evidence_contract=False,
+        multi_resolution=True,
+        raptor=False,
+        graph=False,
+    ),
     "thorough": RetrievalDefaults(
         hybrid=True,
         dense_k=10,
         sparse_k=20,
-        rerank_pool=40,  # More candidates for reranking
+        rerank_pool=40,
         top_n=8,
         target_tokens=3000,
         coverage_target=0.9,
         max_context_tokens=8192,
         use_reranking=True,
         chunking_strategy="semantic",
-        chunk_size=300,  # Smaller chunks for precision
+        chunk_size=300,
         chunk_overlap=75,
+        flare_generation=True,
+        enforce_evidence_contract=False,
+        multi_resolution=True,
+        raptor=True,
+        graph=False,
+        use_hyde=True,
+    ),
+    "ultra_accurate": RetrievalDefaults(
+        hybrid=True,
+        dense_k=20,
+        sparse_k=30,
+        rerank_pool=50,
+        top_n=12,
+        target_tokens=5000,
+        coverage_target=0.95,
+        max_context_tokens=16384,
+        use_reranking=True,
+        chunking_strategy="semantic",
+        chunk_size=250,
+        chunk_overlap=100,
+        flare_generation=True,
+        enforce_evidence_contract=True,
+        multi_resolution=True,
+        raptor=True,
+        graph=True,
+        diversity=0.3,
+        use_hyde=True,
     ),
 }
 

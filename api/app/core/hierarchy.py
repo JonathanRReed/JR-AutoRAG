@@ -105,6 +105,26 @@ class DocumentTree:
                 for nid, n in self.nodes.items()
             }
         }
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "DocumentTree":
+        """Create a tree from a dictionary."""
+        nodes = {}
+        for nid, n_data in data.get("nodes", {}).items():
+            nodes[nid] = HierarchyNode(
+                id=n_data["id"],
+                level=n_data["level"],
+                title=n_data["title"],
+                text=n_data.get("text", ""),  # Might be empty in some serializations
+                summary=n_data["summary"],
+                parent_id=n_data.get("parent_id"),
+                children=n_data.get("children", []),
+                chunk_ids=n_data.get("chunk_ids", []),
+            )
+        return cls(
+            root_id=data["root_id"],
+            nodes=nodes,
+            document_id=data["document_id"],
+        )
 
 
 class HierarchyBuilder:
