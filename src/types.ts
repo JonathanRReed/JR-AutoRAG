@@ -47,6 +47,8 @@ export type RetrievalDefaults = {
     proximity_weight?: number;
     diversity?: number;
     use_hyde?: boolean;
+    abstain_when_unverified?: boolean;
+    self_rag_critic?: boolean;
 };
 
 export type AppConfig = {

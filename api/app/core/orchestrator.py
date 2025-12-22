@@ -56,6 +56,9 @@ from .trace_export import create_trace_bundle, TraceBundle
 from .artifact_builder import get_artifact_builder, ArtifactStatus
 from .cache import RetrievalMode
 from .hyde import HyDEGenerator, get_hyde_generator
+from .abstention import AbstentionRules, AbstentionConfig, get_abstention_rules
+# Self-RAG critic for v2.0
+from .self_rag import SelfRAGCritic, SelfRAGConfig, get_self_rag_critic
 
 logger = logging.getLogger("autorag.pipeline")
 
@@ -126,6 +129,10 @@ class Orchestrator:
         self._hallucination_firewall = HallucinationFirewall(strict_mode=False, min_overlap=0.25, min_pass_rate=0.4)
         self._last_trace_bundle: TraceBundle | None = None
         self._hyde_generator = get_hyde_generator()
+        # Abstention rules for insufficient evidence scenarios
+        self._abstention_rules = get_abstention_rules()
+        # Self-RAG critic for LLM-based reflection (v2.0)
+        self._self_rag_critic = get_self_rag_critic()
 
     def rebuild(self, config: AppConfig) -> None:
         self._config = config
@@ -1451,6 +1458,42 @@ class Orchestrator:
             rerank_enabled = retrieval_details.get("rerank_enabled", rerank_enabled)
         record_step(self._make_step("retrieval", retrieval_start, retrieval_start_time, retrieval_details))
 
+        # Abstention check: Should we refuse to answer due to insufficient evidence?
+        cfg_abstain = getattr(cfg_retrieval, "abstain_when_unverified", False)
+        if cfg_abstain:
+            abstention_result = self._abstention_rules.check(
+                chunks=chunks,
+                retrieval_verdict=retrieval_verdict,
+                verdict_confidence=eval_result.confidence if 'eval_result' in dir() else 0.5,
+                coverage_ratio=final_coverage_ratio,
+                plan_coverage_ratio=plan_coverage_ratio if 'plan_coverage_ratio' in dir() else 0.5,
+                query=query,
+            )
+            
+            if abstention_result.should_abstain:
+                # Record abstention step
+                abstention_step = PipelineStep(
+                    name="abstention",
+                    started_at=datetime.utcnow(),
+                    completed_at=datetime.utcnow(),
+                    duration_ms=0.0,
+                    details={
+                        "reason": abstention_result.reason.value if abstention_result.reason else "unknown",
+                        "confidence": abstention_result.confidence,
+                        **abstention_result.details,
+                    },
+                    status="abstained",
+                )
+                record_step(abstention_step)
+                
+                return self._build_abstention_response(
+                    query=query,
+                    abstention_result=abstention_result,
+                    chunks=chunks,
+                    pipeline_start=pipeline_start,
+                    pipeline_steps=pipeline_steps,
+                )
+
         compression_enabled = bool(self._config and self._config.retrieval.compression)
 
         def run_compression_step(step_name: str, chunk_list: list["EvidenceChunk"]) -> tuple[str, list[dict]]:
@@ -1904,6 +1947,8 @@ The retrieved evidence contains some conflicting information. When you encounter
             on_stage("reflection")
         reflection_start_time = datetime.utcnow()
         reflection_start = time.perf_counter()
+        
+        # Phase 1: Heuristic reflection
         reflection_result = self._reflector.reflect(
             answer=answer,
             query=query,
@@ -1917,6 +1962,31 @@ The retrieved evidence contains some conflicting information. When you encounter
             "suggestions": reflection_result.suggestions,
             "should_retry": reflection_result.should_retry,
         }
+        
+        # Phase 2: Self-RAG LLM-based critic (v2.0 enhancement)
+        cfg_self_rag = getattr(cfg_retrieval, "self_rag_critic", False) if cfg_retrieval else False
+        critic_result = None
+        if cfg_self_rag and self._provider is not None:
+            try:
+                critic_result = await self._self_rag_critic.critique(
+                    query=query,
+                    response=answer,
+                    chunks=chunks,
+                    provider=self._provider,
+                )
+                reflection_details["self_rag"] = {
+                    "relevance": critic_result.relevance.value,
+                    "support": critic_result.support.value,
+                    "utility": critic_result.utility.value,
+                    "should_regenerate": critic_result.should_regenerate,
+                    "critique": critic_result.critique[:200] if critic_result.critique else "",
+                }
+                # Override retry decision if critic strongly recommends regeneration
+                if critic_result.should_regenerate and critic_result.utility.value <= 2:
+                    reflection_result.should_retry = True
+            except Exception as e:
+                reflection_details["self_rag_error"] = str(e)
+        
         record_step(self._make_step("reflection", reflection_start, reflection_start_time, reflection_details))
 
         # Log comprehensive answer quality metrics (SOTA enhancement)
@@ -2343,6 +2413,94 @@ Be helpful, accurate, and concise."""
             },
             "steps": steps_out,
             "needs_clarification": True,
+        }
+    
+    def _build_abstention_response(
+        self,
+        query: str,
+        abstention_result: "AbstentionResult",
+        chunks: list["EvidenceChunk"],
+        pipeline_start: datetime,
+        pipeline_steps: list[PipelineStep],
+    ) -> dict:
+        """Build response when abstaining due to insufficient evidence.
+        
+        This provides a transparent explanation when the system cannot
+        provide a reliable answer based on the available evidence.
+        """
+        from .abstention import AbstentionResult
+        
+        total_duration_ms = sum(s.duration_ms for s in pipeline_steps)
+        
+        # Use the formatted abstention response
+        answer = self._abstention_rules.format_abstention_response(
+            abstention_result, query, include_details=False
+        )
+        
+        trace = self._telemetry.record(
+            prompt=query,
+            answer=answer,
+            metrics={
+                "chunks": len(chunks),
+                "coverage": abstention_result.details.get("coverage_ratio", 0.0),
+                "tokens": 0,
+                "duration_ms": total_duration_ms,
+                "cache_hit": False,
+                "mode": "abstained",
+                "abstention_reason": abstention_result.reason.value if abstention_result.reason else "unknown",
+            },
+            steps=pipeline_steps,
+            started_at=pipeline_start,
+        )
+        
+        steps_out = [
+            {
+                "name": s.name,
+                "duration_ms": s.duration_ms,
+                "details": s.details,
+                "status": s.status,
+                "started_at": s.started_at.isoformat(),
+                "completed_at": s.completed_at.isoformat(),
+            }
+            for s in pipeline_steps
+        ]
+        
+        # Include partial sources even when abstaining
+        sources = [
+            {
+                "id": c.id,
+                "title": c.title,
+                "snippet_preview": c.snippet[:200] if len(c.snippet) > 200 else c.snippet,
+                "score": c.score,
+            }
+            for c in chunks[:5]
+        ]
+        
+        return {
+            "answer": answer,
+            "chunks": [{"id": c.id, "title": c.title, "snippet": c.snippet, "score": c.score} for c in chunks[:5]],
+            "sources": sources,
+            "trace_id": trace.id,
+            "metrics": {
+                "chunks": len(chunks),
+                "coverage": abstention_result.details.get("coverage_ratio", 0.0),
+                "tokens": 0,
+                "duration_ms": total_duration_ms,
+                "cache_hit": False,
+                "mode": "abstained",
+                "abstention_reason": abstention_result.reason.value if abstention_result.reason else "unknown",
+                "abstention_confidence": abstention_result.confidence,
+            },
+            "steps": steps_out,
+            "confidence": {
+                "overall": 0.0,
+                "factors": {
+                    "retrieval": abstention_result.details.get("avg_chunk_score", 0.0),
+                    "coverage": abstention_result.details.get("coverage_ratio", 0.0),
+                },
+                "abstained": True,
+                "abstention_reason": abstention_result.reason.value if abstention_result.reason else "unknown",
+            },
         }
     
     # =========================================================================

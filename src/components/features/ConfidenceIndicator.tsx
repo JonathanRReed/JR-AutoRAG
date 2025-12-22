@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { Shield, ShieldAlert, ShieldCheck, ShieldQuestion, Info } from "lucide-react";
+import { AlertTriangle, Shield, ShieldAlert, ShieldCheck, ShieldQuestion, ShieldX, Info } from "lucide-react";
 
 interface ConfidenceIndicatorProps {
     /** Confidence score from 0 to 1 */
@@ -10,16 +10,21 @@ interface ConfidenceIndicatorProps {
         generation?: number;
         citation?: number;
         evidence?: number;
+        coverage?: number;
     };
     /** Whether the answer passed hallucination check */
     hallucinationPass?: boolean;
     /** Whether evidence contract was satisfied */
     evidenceContractPass?: boolean;
+    /** Whether the system abstained from answering */
+    abstained?: boolean;
+    /** Reason for abstention */
+    abstentionReason?: string;
     /** Compact mode for inline display */
     compact?: boolean;
 }
 
-type ConfidenceLevel = "high" | "medium" | "low" | "unknown";
+type ConfidenceLevel = "high" | "medium" | "low" | "abstained" | "unknown";
 
 const CONFIDENCE_LEVELS: Record<ConfidenceLevel, {
     label: string;
@@ -45,6 +50,12 @@ const CONFIDENCE_LEVELS: Record<ConfidenceLevel, {
         bgColor: "bg-red-500/10",
         Icon: ShieldAlert,
     },
+    abstained: {
+        label: "Insufficient Evidence",
+        color: "text-purple-500",
+        bgColor: "bg-purple-500/10",
+        Icon: ShieldX,
+    },
     unknown: {
         label: "Unknown",
         color: "text-muted-foreground",
@@ -65,9 +76,14 @@ export function ConfidenceIndicator({
     factors,
     hallucinationPass,
     evidenceContractPass,
+    abstained = false,
+    abstentionReason,
     compact = false,
 }: ConfidenceIndicatorProps) {
-    const level = useMemo(() => getConfidenceLevel(confidence), [confidence]);
+    const level = useMemo(() => {
+        if (abstained) return "abstained";
+        return getConfidenceLevel(confidence);
+    }, [confidence, abstained]);
     const config = CONFIDENCE_LEVELS[level];
     const Icon = config.Icon;
     const percentage = Math.round(confidence * 100);
@@ -76,10 +92,10 @@ export function ConfidenceIndicator({
         return (
             <div
                 className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium ${config.bgColor} ${config.color}`}
-                title={`${config.label}: ${percentage}%`}
+                title={abstained ? `${config.label}: ${abstentionReason || "Insufficient evidence"}` : `${config.label}: ${percentage}%`}
             >
                 <Icon className="h-3.5 w-3.5" />
-                <span>{percentage}%</span>
+                <span>{abstained ? "Abstained" : `${percentage}%`}</span>
             </div>
         );
     }
@@ -97,17 +113,29 @@ export function ConfidenceIndicator({
                     </span>
                 </div>
                 <span className={`text-lg font-bold ${config.color} tabular-nums tracking-tight`}>
-                    {percentage}%
+                    {abstained ? "N/A" : `${percentage}%`}
                 </span>
             </div>
 
-            {/* Confidence Bar */}
-            <div className="h-1.5 bg-muted/40 rounded-full overflow-hidden mb-4">
-                <div
-                    className={`h-full rounded-full transition-all duration-1000 ease-out ${config.color.replace('text-', 'bg-')}`}
-                    style={{ width: `${percentage}%` }}
-                />
-            </div>
+            {/* Abstention Banner */}
+            {abstained && abstentionReason && (
+                <div className="flex items-start gap-2 p-3 mb-4 rounded-lg bg-purple-500/5 border border-purple-500/20">
+                    <AlertTriangle className="h-4 w-4 text-purple-500 mt-0.5 flex-shrink-0" />
+                    <p className="text-xs text-purple-700 dark:text-purple-300">
+                        {abstentionReason}
+                    </p>
+                </div>
+            )}
+
+            {/* Confidence Bar (only shown when not abstained) */}
+            {!abstained && (
+                <div className="h-1.5 bg-muted/40 rounded-full overflow-hidden mb-4">
+                    <div
+                        className={`h-full rounded-full transition-all duration-1000 ease-out ${config.color.replace('text-', 'bg-')}`}
+                        style={{ width: `${percentage}%` }}
+                    />
+                </div>
+            )}
 
             {/* Quality Checks */}
             <div className="flex flex-wrap gap-2 mb-4">
@@ -133,6 +161,12 @@ export function ConfidenceIndicator({
                         Evidence Contract
                     </div>
                 )}
+                {abstained && (
+                    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-medium border bg-purple-500/5 text-purple-600 border-purple-500/20">
+                        <ShieldX className="h-3 w-3" />
+                        Abstained
+                    </div>
+                )}
             </div>
 
             {/* Factor Breakdown */}
@@ -140,30 +174,35 @@ export function ConfidenceIndicator({
                 <div className="space-y-2 pt-3 border-t border-border/40">
                     <div className="flex items-center gap-1.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
                         <Info className="h-3 w-3 opacity-70" />
-                        <span>Confidence Factors</span>
+                        <span>{abstained ? "Evidence Quality" : "Confidence Factors"}</span>
                     </div>
                     <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
                         {[
                             ['Retrieval', factors.retrieval],
                             ['Generation', factors.generation],
                             ['Citations', factors.citation],
-                            ['Evidence', factors.evidence]
-                        ].map(([label, value]) => (
-                            value !== undefined && (
-                                <div key={String(label)} className="flex justify-between items-center group">
-                                    <span className="text-muted-foreground group-hover:text-foreground transition-colors">{label}</span>
-                                    <div className="flex items-center gap-2">
-                                        <div className="w-12 h-1 bg-muted/40 rounded-full overflow-hidden">
-                                            <div
-                                                className={`h-full rounded-full transition-all duration-500 ${Number(value) > 0.7 ? 'bg-emerald-500/50' : Number(value) > 0.4 ? 'bg-amber-500/50' : 'bg-red-500/50'}`}
-                                                style={{ width: `${Number(value) * 100}%` }}
-                                            />
+                            ['Evidence', factors.evidence],
+                            ['Coverage', factors.coverage]
+                        ].map(([label, value]) => {
+                            // Clamp value to 0-1 range to prevent negative or >100% display
+                            const clampedValue = value !== undefined ? Math.max(0, Math.min(1, Number(value))) : undefined;
+                            return (
+                                clampedValue !== undefined && (
+                                    <div key={String(label)} className="flex justify-between items-center group">
+                                        <span className="text-muted-foreground group-hover:text-foreground transition-colors">{label}</span>
+                                        <div className="flex items-center gap-2">
+                                            <div className="w-12 h-1 bg-muted/40 rounded-full overflow-hidden">
+                                                <div
+                                                    className={`h-full rounded-full transition-all duration-500 ${clampedValue > 0.7 ? 'bg-emerald-500/50' : clampedValue > 0.4 ? 'bg-amber-500/50' : 'bg-red-500/50'}`}
+                                                    style={{ width: `${clampedValue * 100}%` }}
+                                                />
+                                            </div>
+                                            <span className="font-mono font-medium text-foreground/80 tabular-nums">{Math.round(clampedValue * 100)}%</span>
                                         </div>
-                                        <span className="font-mono font-medium text-foreground/80 tabular-nums">{Math.round(Number(value) * 100)}%</span>
                                     </div>
-                                </div>
+                                )
                             )
-                        ))}
+                        })}
                     </div>
                 </div>
             )}
