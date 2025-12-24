@@ -191,7 +191,7 @@ export type CacheStats = {
     queries?: { hits: number; misses: number; size: number };
 };
 
-export type ProviderKind = "ollama" | "lmstudio" | "openai";
+export type ProviderKind = "ollama" | "lmstudio" | "openai" | "openrouter";
 
 export type LocalProviderInfo = {
     kind: ProviderKind;
@@ -208,6 +208,28 @@ export type RoleSelection = {
     planner: string;
     gatherer: string;
     generator: string;
+};
+
+export type OpenRouterStatus = {
+    available: boolean;
+    api_key_configured: boolean;
+    default_model: string;
+    error_message?: string;
+};
+
+export type OpenRouterModel = {
+    id: string;
+    name: string;
+    context_length?: number;
+    pricing?: Record<string, unknown>;
+};
+
+export type RAGFuzzStatus = {
+    status: string;
+    ragfuzz_enabled: boolean;
+    corpus_size: number;
+    providers_available: string[];
+    version: string;
 };
 
 export type ChatSession = {

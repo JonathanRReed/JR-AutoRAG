@@ -12,6 +12,7 @@ import { EnterpriseStatusPanel } from "@/components/features/EnterpriseStatusPan
 import { IngestPanel } from "@/components/features/IngestPanel";
 import { MetricsDashboard } from "@/components/features/MetricsDashboard";
 import { ProviderConfig } from "@/components/features/ProviderConfig";
+import { ProviderCarousel } from "@/components/features/ProviderCarousel";
 import { TraceLog } from "@/components/features/TraceLog";
 import { PresetSelector } from "@/components/features/PresetSelector";
 
@@ -1086,14 +1087,23 @@ export function App() {
                 </div>
 
                 <div className="grid gap-6">
-                  {/* Provider Configuration */}
-                  <ProviderConfig
+                  {/* Provider Carousel - Ollama, LM Studio, OpenRouter */}
+                  <ProviderCarousel
+                    config={config}
+                    setConfig={setConfig}
+                    isSavingConfig={isSavingConfig}
+                    handleSaveConfig={handleSaveConfig}
                     localProviders={localProviders}
                     localProvidersStatus={localProvidersStatus}
-                    localSelections={localSelections}
                     refreshLocalProviders={refreshLocalProviders}
+                    localSelections={localSelections}
                     setLocalSelection={setLocalSelection}
                     applyLocalProvider={applyLocalProvider}
+                    apiBaseUrl={baseUrl}
+                  />
+
+                  {/* Advanced Provider Configuration */}
+                  <ProviderConfig
                     config={config}
                     setConfig={setConfig}
                     handleSaveConfig={handleSaveConfig}

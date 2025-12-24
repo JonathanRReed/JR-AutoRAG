@@ -33,6 +33,7 @@ from .routers import (
     query,
     traces,
     metrics_routes,
+    ragfuzz_audit,
 )
 from .core.security_middleware import (
     configure_security,
@@ -170,6 +171,10 @@ app.include_router(
 )
 app.include_router(
     metrics_routes.router,
+    dependencies=[Depends(verify_api_key)],
+)
+app.include_router(
+    ragfuzz_audit.router,
     dependencies=[Depends(verify_api_key)],
 )
 

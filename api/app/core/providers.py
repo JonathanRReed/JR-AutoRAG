@@ -172,6 +172,113 @@ class CloudProvider(_HTTPProvider):
         return choices[0].get("text", "") if choices else ""
 
 
+class OpenRouterProvider(_HTTPProvider):
+    """Provider for OpenRouter - unified API for 300+ cloud models.
+    
+    OpenRouter provides access to models from OpenAI, Anthropic, Google, Meta,
+    Mistral, and many others through a single API endpoint.
+    
+    Environment variables:
+    - OPENROUTER_API_KEY: API key for authentication
+    """
+    
+    OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+    
+    def __init__(
+        self,
+        api_key: str | None = None,
+        default_model: str | None = None,
+    ) -> None:
+        super().__init__(self.OPENROUTER_BASE_URL, default_model or "openai/gpt-4o-mini")
+        self.api_key = api_key or os.environ.get("OPENROUTER_API_KEY")
+    
+    def _get_headers(self) -> dict[str, str]:
+        headers = {}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return headers
+    
+    async def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        url = f"{self.base_url}{path}"
+        headers = self._get_headers()
+        try:
+            timeout = _get_timeout("JR_PROVIDER_TIMEOUT", DEFAULT_CLOUD_TIMEOUT)
+            async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
+                response = await client.post(url, json=payload)
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as exc:
+            raise ProviderError(f"OpenRouter error {exc.response.status_code}: {exc}") from exc
+        except httpx.HTTPError as exc:
+            raise ProviderError(f"OpenRouter request failed ({type(exc).__name__}): {exc}") from exc
+    
+    async def chat(self, messages: Iterable[dict[str, Any]], **kwargs: Any) -> str:
+        model = kwargs.get("model") or self.default_model
+        payload = {
+            "model": model,
+            "messages": list(messages),
+        }
+        if kwargs.get("temperature") is not None:
+            payload["temperature"] = kwargs["temperature"]
+        if kwargs.get("max_tokens") is not None:
+            payload["max_tokens"] = kwargs["max_tokens"]
+        
+        data = await self._post("/chat/completions", payload)
+        choices = data.get("choices") or []
+        return choices[0]["message"]["content"] if choices else ""
+    
+    async def chat_stream(self, messages: Iterable[dict[str, Any]], **kwargs: Any) -> AsyncIterator[str]:
+        model = kwargs.get("model") or self.default_model
+        payload = {
+            "model": model,
+            "messages": list(messages),
+            "stream": True,
+        }
+        url = f"{self.base_url}/chat/completions"
+        headers = self._get_headers()
+        try:
+            timeout = _get_timeout("JR_PROVIDER_STREAM_TIMEOUT", DEFAULT_STREAM_TIMEOUT)
+            async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
+                async with client.stream("POST", url, json=payload) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        if not line or not line.startswith("data: "):
+                            continue
+                        data_str = line[6:]  # Remove "data: " prefix
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            data = json.loads(data_str)
+                        except json.JSONDecodeError:
+                            continue
+                        choices = data.get("choices", [])
+                        if choices:
+                            delta = choices[0].get("delta", {})
+                            content = delta.get("content", "")
+                            if content:
+                                yield content
+        except httpx.HTTPStatusError as exc:
+            raise ProviderError(f"OpenRouter error {exc.response.status_code}: {exc}") from exc
+        except httpx.HTTPError as exc:
+            raise ProviderError(f"OpenRouter request failed ({type(exc).__name__}): {exc}") from exc
+    
+    async def complete(self, prompt: str, **kwargs: Any) -> str:
+        messages = [{"role": "user", "content": prompt}]
+        return await self.chat(messages, **kwargs)
+    
+    async def list_models(self) -> list[dict[str, Any]]:
+        """Fetch available models from OpenRouter."""
+        headers = self._get_headers()
+        try:
+            async with httpx.AsyncClient(timeout=15.0, headers=headers) as client:
+                response = await client.get(f"{self.base_url}/models")
+            response.raise_for_status()
+            data = response.json()
+            return data.get("data", [])
+        except httpx.HTTPError as exc:
+            raise ProviderError(f"Failed to list OpenRouter models: {exc}") from exc
+
+
 @dataclass
 class ProviderFactory:
     """Build provider clients based on `ProviderConfig`."""
@@ -184,6 +291,11 @@ class ProviderFactory:
             return OllamaProvider(str(cfg.base_url), cfg.planner_model or cfg.generator_model)
         if "lm" in name or "studio" in name:
             return LMStudioProvider(str(cfg.base_url), cfg.generator_model)
+        if "openrouter" in name:
+            return OpenRouterProvider(
+                api_key=cfg.api_key or self.api_key,
+                default_model=cfg.generator_model,
+            )
         return CloudProvider(str(cfg.base_url), cfg.generator_model, api_key=cfg.api_key or self.api_key)
 
     def get_default_provider(self) -> LLMProvider | None:
