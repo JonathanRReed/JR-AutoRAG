@@ -220,6 +220,7 @@ class ProviderKind(str, Enum):
     OLLAMA = "ollama"
     LM_STUDIO = "lmstudio"
     OPENAI_COMPAT = "openai"
+    OPENROUTER = "openrouter"
 
 
 class LocalProviderInfo(BaseModel):

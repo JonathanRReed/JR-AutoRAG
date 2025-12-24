@@ -1,13 +1,48 @@
-"""Provider helper endpoints for discovering local runtimes."""
+"""Provider helper endpoints for discovering local and cloud runtimes."""
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+import os
+from typing import Any
 
-from ..core.providers import discover_local_providers
-from ..schemas.config import LocalProviderInfo
+from fastapi import APIRouter, HTTPException, Header
+from pydantic import BaseModel
+
+from ..core.providers import discover_local_providers, OpenRouterProvider, ProviderError
+from ..schemas.config import LocalProviderInfo, ProviderKind
 
 router = APIRouter(prefix="/providers", tags=["providers"])
+
+
+class OpenRouterStatus(BaseModel):
+    """OpenRouter provider status."""
+    available: bool
+    api_key_configured: bool
+    default_model: str
+    error_message: str | None = None
+
+
+class OpenRouterModel(BaseModel):
+    """OpenRouter model info."""
+    id: str
+    name: str
+    context_length: int | None = None
+    pricing: dict[str, Any] | None = None
+
+
+class OpenRouterTestRequest(BaseModel):
+    """Request to test OpenRouter connection."""
+    model: str | None = None
+    prompt: str = "Say 'hello' in one word."
+
+
+class OpenRouterTestResponse(BaseModel):
+    """Response from OpenRouter test."""
+    success: bool
+    model: str
+    response: str | None = None
+    error: str | None = None
+    latency_ms: float | None = None
 
 
 @router.get("/local", response_model=list[LocalProviderInfo])
@@ -21,7 +56,124 @@ async def list_local_providers() -> list[LocalProviderInfo]:
     if any(provider.status == "error" for provider in providers) and not all(
         provider.status == "error" for provider in providers
     ):
-        # Mixed success; surface warning but still return 200 payload
-        # Clients can inspect provider.status to show warnings.
         return providers
     return providers
+
+
+def _extract_openrouter_key(
+    x_openrouter_key: str | None,
+    authorization: str | None,
+) -> str | None:
+    """Prefer explicit header, fallback to Bearer auth."""
+    if x_openrouter_key:
+        return x_openrouter_key
+    if authorization and authorization.lower().startswith("bearer "):
+        return authorization.split(" ", 1)[1].strip()
+    return None
+
+
+@router.get("/openrouter/status", response_model=OpenRouterStatus)
+async def openrouter_status(
+    x_openrouter_key: str | None = Header(default=None, convert_underscores=False),
+    authorization: str | None = Header(default=None),
+) -> OpenRouterStatus:
+    """Check OpenRouter provider status and API key configuration."""
+    provided_key = _extract_openrouter_key(x_openrouter_key, authorization)
+    api_key = provided_key or os.environ.get("OPENROUTER_API_KEY")
+    provider = OpenRouterProvider(api_key=api_key)
+    
+    if not api_key:
+        return OpenRouterStatus(
+            available=False,
+            api_key_configured=False,
+            default_model=provider.default_model or "openai/gpt-4o-mini",
+            error_message="OPENROUTER_API_KEY environment variable not set",
+        )
+    
+    try:
+        models = await provider.list_models()
+        return OpenRouterStatus(
+            available=True,
+            api_key_configured=True,
+            default_model=provider.default_model or "openai/gpt-4o-mini",
+        )
+    except ProviderError as exc:
+        return OpenRouterStatus(
+            available=False,
+            api_key_configured=True,
+            default_model=provider.default_model or "openai/gpt-4o-mini",
+            error_message=str(exc),
+        )
+
+
+@router.get("/openrouter/models", response_model=list[OpenRouterModel])
+async def list_openrouter_models(
+    x_openrouter_key: str | None = Header(default=None, convert_underscores=False),
+    authorization: str | None = Header(default=None),
+) -> list[OpenRouterModel]:
+    """List available models from OpenRouter."""
+    api_key = _extract_openrouter_key(x_openrouter_key, authorization) or os.environ.get("OPENROUTER_API_KEY")
+    provider = OpenRouterProvider(api_key=api_key)
+
+    if not api_key:
+        raise HTTPException(
+            status_code=401,
+            detail="OPENROUTER_API_KEY environment variable not set",
+        )
+    
+    try:
+        models = await provider.list_models()
+        return [
+            OpenRouterModel(
+                id=m.get("id", ""),
+                name=m.get("name", m.get("id", "")),
+                context_length=m.get("context_length"),
+                pricing=m.get("pricing"),
+            )
+            for m in models
+        ]
+    except ProviderError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.post("/openrouter/test", response_model=OpenRouterTestResponse)
+async def test_openrouter(
+    request: OpenRouterTestRequest,
+    x_openrouter_key: str | None = Header(default=None, convert_underscores=False),
+    authorization: str | None = Header(default=None),
+) -> OpenRouterTestResponse:
+    """Test OpenRouter connection with a simple prompt."""
+    import time
+    
+    api_key = _extract_openrouter_key(x_openrouter_key, authorization) or os.environ.get("OPENROUTER_API_KEY")
+    provider = OpenRouterProvider(api_key=api_key)
+    model = request.model or provider.default_model or "openai/gpt-4o-mini"
+    
+    if not api_key:
+        return OpenRouterTestResponse(
+            success=False,
+            model=model,
+            error="OPENROUTER_API_KEY environment variable not set",
+        )
+    
+    start = time.perf_counter()
+    try:
+        response = await provider.chat(
+            messages=[{"role": "user", "content": request.prompt}],
+            model=model,
+        )
+        latency_ms = (time.perf_counter() - start) * 1000
+        return OpenRouterTestResponse(
+            success=True,
+            model=model,
+            response=response,
+            latency_ms=latency_ms,
+        )
+    except ProviderError as exc:
+        latency_ms = (time.perf_counter() - start) * 1000
+        return OpenRouterTestResponse(
+            success=False,
+            model=model,
+            error=str(exc),
+            latency_ms=latency_ms,
+        )
