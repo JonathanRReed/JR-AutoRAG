@@ -282,11 +282,16 @@ export function App() {
       return;
     }
     try {
-      await fetch(buildUrl(`/documents/${id}`), { method: "DELETE" });
-      setDocuments(prev => prev.filter(doc => doc.id !== id));
+      const response = await fetch(buildUrl(`/documents/${id}`), { method: "DELETE" });
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
       setStatus(`Deleted ${title}`);
+      toast({ title: "Document deleted", description: title, variant: "success" });
+      refreshAll();
     } catch (error) {
       setStatus(`Delete failed: ${toMessage(error)}`);
+      toast({ title: "Delete failed", description: toMessage(error), variant: "error" });
     }
   };
 
@@ -296,14 +301,19 @@ export function App() {
     }
     setStatus("Clearing knowledge base...");
     try {
-      await fetch(buildUrl("/documents"), {
+      const response = await fetch(buildUrl("/documents"), {
         method: "DELETE",
         headers,
       });
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
       setStatus("Knowledge base cleared");
+      toast({ title: "Knowledge base cleared", description: "All documents deleted", variant: "success" });
       refreshAll();
     } catch (error) {
       setStatus(`Clear failed: ${toMessage(error)}`);
+      toast({ title: "Clear failed", description: toMessage(error), variant: "error" });
     }
   };
 
@@ -1133,7 +1143,8 @@ export function App() {
                       onChange={async (newPreset: PresetLevel) => {
                         setActivePreset(newPreset);
                         try {
-                          await fetchJson(`/config/presets/${newPreset}`, { method: "POST" });
+                          const updated = await fetchJson<AppConfig>(`/config/presets/${newPreset}`, { method: "POST" });
+                          setConfig(updated);
                           toast({ title: `Applied ${newPreset} preset`, variant: "default" });
                         } catch (e) {
                           toast({ title: toMessage(e), variant: "error" });
@@ -1315,7 +1326,8 @@ export function App() {
                 onPresetChange={async (preset) => {
                   setActivePreset(preset);
                   try {
-                    await fetchJson(`/config/presets/${preset}`, { method: "POST" });
+                    const updated = await fetchJson<AppConfig>(`/config/presets/${preset}`, { method: "POST" });
+                    setConfig(updated);
                     toast({ title: "Preset applied", description: `Switched to ${preset} mode`, variant: "success" });
                   } catch (e) {
                     console.error("Failed to apply preset:", e);

@@ -35,6 +35,7 @@ class RetrievalMode(IntFlag):
     GRAPH = 4
     RERANK = 8
     COLBERT = 16
+    BINARY = 32
     
     @classmethod
     def from_config(cls, *, raptor: bool = False, graph: bool = False, 

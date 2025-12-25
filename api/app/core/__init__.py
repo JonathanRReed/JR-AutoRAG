@@ -12,6 +12,7 @@ from .evaluator import EvaluationScore, HeuristicEvaluator, LLMJudge
 from .gatherer import Gatherer
 from .hierarchy import DocumentTree, HierarchicalRetriever, HierarchyBuilder, HierarchyNode
 from .hybrid_retrieval import HybridConfig, HybridRetrievalEngine, RetrievalResult
+from .bq_hybrid_retrieval import BQHybridRetrievalEngine
 from .ingest import IngestPipeline
 from .memory import ConversationContext, ConversationMemory, ConversationTurn
 from .metadata_enricher import DocumentMetadata, MetadataEnricher
@@ -28,6 +29,20 @@ from .telemetry import TelemetryStore
 from .tools import CalculatorTool, DateTimeTool, Tool, ToolRegistry, ToolResult
 from .tracing import DetailedTrace, TraceSpan, Tracer, get_tracer
 from .vector_store import ChromaVectorStore, InMemoryVectorStore, VectorStore, get_vector_store
+# v2 Binary Quantization modules
+from .binary_quantization import (
+    BQConfig, BQ_VERSION, validate_dimension, float32_to_binary,
+    binary_to_bits, hamming_distance, batch_float32_to_binary,
+    get_binary_dimension, estimate_storage_savings,
+)
+from .binary_vector_store import (
+    MilvusConfig, MilvusChunk, MilvusSearchResult, MilvusVectorStore,
+    IndexStats, is_milvus_available, get_milvus_store,
+)
+from .bq_retrieval import (
+    RetrievalModeV2, RetrievalTimings, RetrievalDebug, RetrievedChunk,
+    BQRetrievalConfig, BQRetrievalService, get_bq_retrieval_service,
+)
 # SOTA Agentic components
 from .retrieval_evaluator import RetrievalEvaluator, RetrievalVerdict, EvaluationResult as RetrievalEvalResult, KnowledgeStrip
 from .adaptive_gate import AdaptiveGate, GateDecision, GateResult
@@ -84,6 +99,7 @@ __all__ = [
     "RecursiveChunker",
     "get_chunker",
     "HybridRetrievalEngine",
+    "BQHybridRetrievalEngine",
     "HybridConfig",
     "RetrievalResult",
     # Phase 2: Smart planning and compression
@@ -145,6 +161,30 @@ __all__ = [
     "InMemoryVectorStore",
     "ChromaVectorStore",
     "get_vector_store",
+    # v2 Binary Quantization
+    "BQConfig",
+    "BQ_VERSION",
+    "validate_dimension",
+    "float32_to_binary",
+    "binary_to_bits",
+    "hamming_distance",
+    "batch_float32_to_binary",
+    "get_binary_dimension",
+    "estimate_storage_savings",
+    "MilvusConfig",
+    "MilvusChunk",
+    "MilvusSearchResult",
+    "MilvusVectorStore",
+    "IndexStats",
+    "is_milvus_available",
+    "get_milvus_store",
+    "RetrievalModeV2",
+    "RetrievalTimings",
+    "RetrievalDebug",
+    "RetrievedChunk",
+    "BQRetrievalConfig",
+    "BQRetrievalService",
+    "get_bq_retrieval_service",
     "CacheManager",
     "EmbeddingCache",
     "QueryCache",
@@ -211,4 +251,3 @@ __all__ = [
     "BuildProgress",
     "get_artifact_builder",
 ]
-
