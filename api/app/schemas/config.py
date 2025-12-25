@@ -64,6 +64,25 @@ class RetrievalDefaults(BaseModel):
     use_hyde: bool = False  # Enable HyDE (Hypothetical Document Embeddings)
     abstain_when_unverified: bool = False  # Abstain when evidence is insufficient
     self_rag_critic: bool = False  # Enable Self-RAG LLM-based critic (v2.0)
+    
+    # v2 Binary Quantization settings
+    retrieval_mode: str = "float32"  # "float32" or "binary" (BQ with Milvus HAMMING)
+    bq_enabled: bool = False  # Enable binary quantization retrieval
+    bq_normalize: bool = False  # L2-normalize before thresholding
+    bq_rule: str = "sign_threshold_0"  # Quantization rule
+    bq_two_stage: bool = False  # Enable two-stage retrieval (binary + rerank)
+    bq_stage1_candidates: int = 50  # Candidates for stage 1 binary search
+    bq_fallback_enabled: bool = True  # Fallback to float32 on low confidence
+    bq_fallback_threshold: float = 500.0  # Hamming distance threshold for fallback
+    
+    # Milvus settings (for binary mode)
+    milvus_host: str = "localhost"
+    milvus_port: int = 19530
+    milvus_collection: str = "jr_autorag_chunks_bq"
+    milvus_index_type: str = "BIN_FLAT"  # "BIN_FLAT" or "BIN_IVF_FLAT"
+    milvus_metric: str = "HAMMING"
+    milvus_nlist: int = 128  # For BIN_IVF_FLAT
+    milvus_nprobe: int = 16  # For BIN_IVF_FLAT search
 
     @field_validator("raptor", mode="before")
     @classmethod
@@ -99,6 +118,18 @@ RETRIEVAL_PRESETS = {
         multi_resolution=False,
         raptor=False,
         graph=False,
+        retrieval_mode="binary",
+        bq_enabled=True,
+        bq_normalize=False,
+        bq_rule="sign_threshold_0",
+        bq_two_stage=False,
+        bq_stage1_candidates=20,
+        bq_fallback_enabled=False,
+        bq_fallback_threshold=700.0,
+        milvus_index_type="BIN_FLAT",
+        milvus_metric="HAMMING",
+        milvus_nlist=64,
+        milvus_nprobe=8,
     ),
     "fast": RetrievalDefaults(
         hybrid=True,
@@ -117,6 +148,18 @@ RETRIEVAL_PRESETS = {
         multi_resolution=False,
         raptor=False,
         graph=False,
+        retrieval_mode="binary",
+        bq_enabled=True,
+        bq_normalize=False,
+        bq_rule="sign_threshold_0",
+        bq_two_stage=False,
+        bq_stage1_candidates=50,
+        bq_fallback_enabled=True,
+        bq_fallback_threshold=600.0,
+        milvus_index_type="BIN_FLAT",
+        milvus_metric="HAMMING",
+        milvus_nlist=128,
+        milvus_nprobe=12,
     ),
     "balanced": RetrievalDefaults(
         hybrid=True,
@@ -135,6 +178,18 @@ RETRIEVAL_PRESETS = {
         raptor=False,
         graph=False,
         abstain_when_unverified=False,  # v2.0: DISABLED - coverage calc bug
+        retrieval_mode="binary",
+        bq_enabled=True,
+        bq_normalize=True,
+        bq_rule="sign_threshold_0",
+        bq_two_stage=True,
+        bq_stage1_candidates=100,
+        bq_fallback_enabled=True,
+        bq_fallback_threshold=500.0,
+        milvus_index_type="BIN_FLAT",
+        milvus_metric="HAMMING",
+        milvus_nlist=128,
+        milvus_nprobe=16,
     ),
     "thorough": RetrievalDefaults(
         hybrid=True,
@@ -157,6 +212,18 @@ RETRIEVAL_PRESETS = {
         use_hyde=True,
         abstain_when_unverified=False,  # v2.0: DISABLED - coverage calc bug
         self_rag_critic=False,  # v2.0: DISABLED - causes late failures
+        retrieval_mode="binary",
+        bq_enabled=True,
+        bq_normalize=True,
+        bq_rule="sign_threshold_0",
+        bq_two_stage=True,
+        bq_stage1_candidates=150,
+        bq_fallback_enabled=True,
+        bq_fallback_threshold=400.0,
+        milvus_index_type="BIN_FLAT",
+        milvus_metric="HAMMING",
+        milvus_nlist=128,
+        milvus_nprobe=24,
     ),
     "ultra_accurate": RetrievalDefaults(
         hybrid=True,
@@ -180,6 +247,18 @@ RETRIEVAL_PRESETS = {
         use_hyde=True,
         abstain_when_unverified=False,  # v2.0: DISABLED - coverage calc bug
         self_rag_critic=False,  # v2.0: DISABLED - causes late failures
+        retrieval_mode="float32",
+        bq_enabled=False,
+        bq_normalize=True,
+        bq_rule="sign_threshold_0",
+        bq_two_stage=False,
+        bq_stage1_candidates=200,
+        bq_fallback_enabled=True,
+        bq_fallback_threshold=400.0,
+        milvus_index_type="BIN_FLAT",
+        milvus_metric="HAMMING",
+        milvus_nlist=128,
+        milvus_nprobe=32,
     ),
 }
 

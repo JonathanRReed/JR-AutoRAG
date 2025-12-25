@@ -1,9 +1,10 @@
 import { useMemo, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { Boxes, ChevronDown, GitMerge, Layers3, Package, Sliders, Info, ShieldCheck, Loader2 } from "lucide-react";
+import { Boxes, ChevronDown, GitMerge, Layers3, Package, Sliders, Info, ShieldCheck, Loader2, Binary, Zap } from "lucide-react";
 import type { RetrievalDefaults } from "@/types";
 
 interface AdvancedRAGSettingsProps {
@@ -542,6 +543,236 @@ export function AdvancedRAGSettings({
                                         </Select>
                                     </div>
                                 ))}
+                            </div>
+                        </section>
+
+                        {/* Binary Quantization (v2) */}
+                        <section className="space-y-4 rounded-lg border border-border/60 bg-muted/10 p-4">
+                            <div className="flex items-center gap-2">
+                                <div className="h-4 w-1 rounded-full bg-primary" />
+                                <div>
+                                    <h4 className="text-sm font-semibold uppercase tracking-wider text-foreground flex items-center gap-2">
+                                        <Binary className="h-4 w-4" />
+                                        Binary Quantization (v2)
+                                    </h4>
+                                    <p className="text-xs text-muted-foreground">Memory-efficient retrieval with ~32x storage savings using binary vectors.</p>
+                                </div>
+                            </div>
+                            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                                <div className="space-y-2">
+                                    <Label htmlFor="retrievalMode" className="text-xs">Retrieval Mode</Label>
+                                    <Select
+                                        value={retrieval?.retrieval_mode ?? "float32"}
+                                        onValueChange={(value) => updateRetrieval("retrieval_mode", value)}
+                                    >
+                                        <SelectTrigger id="retrievalMode" className="h-9">
+                                            <SelectValue placeholder="Select mode" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="float32">Float32 (Standard)</SelectItem>
+                                            <SelectItem value="binary">Binary (32x smaller)</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                    <p className="text-[10px] text-muted-foreground">Binary mode uses Hamming distance for fast search</p>
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="bqEnabled" className="text-xs">Binary Quantization</Label>
+                                    <Select
+                                        value={(retrieval?.bq_enabled ?? false) ? "on" : "off"}
+                                        onValueChange={(value) => updateRetrieval("bq_enabled", value === "on")}
+                                    >
+                                        <SelectTrigger id="bqEnabled" className="h-9">
+                                            <SelectValue placeholder="Select" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="on">Enabled</SelectItem>
+                                            <SelectItem value="off">Disabled</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="bqNormalize" className="text-xs">Normalize Before Quantization</Label>
+                                    <Select
+                                        value={(retrieval?.bq_normalize ?? false) ? "on" : "off"}
+                                        onValueChange={(value) => updateRetrieval("bq_normalize", value === "on")}
+                                    >
+                                        <SelectTrigger id="bqNormalize" className="h-9">
+                                            <SelectValue placeholder="Select" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="on">L2 Normalize</SelectItem>
+                                            <SelectItem value="off">No Normalization</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                    <p className="text-[10px] text-muted-foreground">L2-normalize vectors before sign thresholding</p>
+                                </div>
+                            </div>
+                            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                                <div className="space-y-2">
+                                    <Label htmlFor="bqTwoStage" className="text-xs">Two-Stage Retrieval</Label>
+                                    <Select
+                                        value={(retrieval?.bq_two_stage ?? false) ? "on" : "off"}
+                                        onValueChange={(value) => updateRetrieval("bq_two_stage", value === "on")}
+                                    >
+                                        <SelectTrigger id="bqTwoStage" className="h-9">
+                                            <SelectValue placeholder="Select" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="on">Enabled (binary + rerank)</SelectItem>
+                                            <SelectItem value="off">Disabled</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="bqStage1Candidates" className="text-xs">Stage 1 Candidates</Label>
+                                    <Select
+                                        value={String(retrieval?.bq_stage1_candidates ?? 50)}
+                                        onValueChange={(value) => updateRetrieval("bq_stage1_candidates", Number(value))}
+                                    >
+                                        <SelectTrigger id="bqStage1Candidates" className="h-9">
+                                            <SelectValue placeholder="Select" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {[20, 50, 100, 150, 200].map(n => (
+                                                <SelectItem key={n} value={String(n)}>{n}</SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="bqFallback" className="text-xs">Fallback to Float32</Label>
+                                    <Select
+                                        value={(retrieval?.bq_fallback_enabled ?? true) ? "on" : "off"}
+                                        onValueChange={(value) => updateRetrieval("bq_fallback_enabled", value === "on")}
+                                    >
+                                        <SelectTrigger id="bqFallback" className="h-9">
+                                            <SelectValue placeholder="Select" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="on">Auto-fallback on low confidence</SelectItem>
+                                            <SelectItem value="off">No fallback</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="bqFallbackThreshold" className="text-xs">Fallback Threshold</Label>
+                                    <Select
+                                        value={String(retrieval?.bq_fallback_threshold ?? 500)}
+                                        onValueChange={(value) => updateRetrieval("bq_fallback_threshold", Number(value))}
+                                    >
+                                        <SelectTrigger id="bqFallbackThreshold" className="h-9">
+                                            <SelectValue placeholder="Select" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {[200, 300, 400, 500, 600, 700, 800].map(n => (
+                                                <SelectItem key={n} value={String(n)}>{n}</SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                    <p className="text-[10px] text-muted-foreground">Hamming distance threshold</p>
+                                </div>
+                            </div>
+                            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                                <div className="space-y-2">
+                                    <Label htmlFor="bqRule" className="text-xs">Quantization Rule</Label>
+                                    <Select
+                                        value={retrieval?.bq_rule ?? "sign_threshold_0"}
+                                        onValueChange={(value) => updateRetrieval("bq_rule", value)}
+                                    >
+                                        <SelectTrigger id="bqRule" className="h-9">
+                                            <SelectValue placeholder="Select rule" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="sign_threshold_0">Sign threshold (>= 0)</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="milvusIndexType" className="text-xs">Milvus Index Type</Label>
+                                    <Select
+                                        value={retrieval?.milvus_index_type ?? "BIN_FLAT"}
+                                        onValueChange={(value) => updateRetrieval("milvus_index_type", value)}
+                                    >
+                                        <SelectTrigger id="milvusIndexType" className="h-9">
+                                            <SelectValue placeholder="Select index" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="BIN_FLAT">BIN_FLAT</SelectItem>
+                                            <SelectItem value="BIN_IVF_FLAT">BIN_IVF_FLAT</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="milvusMetric" className="text-xs">Milvus Metric</Label>
+                                    <Select
+                                        value={retrieval?.milvus_metric ?? "HAMMING"}
+                                        onValueChange={(value) => updateRetrieval("milvus_metric", value)}
+                                    >
+                                        <SelectTrigger id="milvusMetric" className="h-9">
+                                            <SelectValue placeholder="Select metric" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="HAMMING">HAMMING</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                            </div>
+                            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                                <div className="space-y-2">
+                                    <Label htmlFor="milvusHost" className="text-xs">Milvus Host</Label>
+                                    <Input
+                                        id="milvusHost"
+                                        value={retrieval?.milvus_host ?? "localhost"}
+                                        onChange={(e) => updateRetrieval("milvus_host", e.target.value)}
+                                        placeholder="localhost"
+                                        className="h-9"
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="milvusPort" className="text-xs">Milvus Port</Label>
+                                    <Input
+                                        id="milvusPort"
+                                        type="number"
+                                        value={String(retrieval?.milvus_port ?? 19530)}
+                                        onChange={(e) => updateRetrieval("milvus_port", Number(e.target.value))}
+                                        placeholder="19530"
+                                        className="h-9"
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="milvusCollection" className="text-xs">Collection Name</Label>
+                                    <Input
+                                        id="milvusCollection"
+                                        value={retrieval?.milvus_collection ?? "jr_autorag_chunks_bq"}
+                                        onChange={(e) => updateRetrieval("milvus_collection", e.target.value)}
+                                        placeholder="jr_autorag_chunks_bq"
+                                        className="h-9"
+                                    />
+                                </div>
+                            </div>
+                            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-2">
+                                <div className="space-y-2">
+                                    <Label htmlFor="milvusNlist" className="text-xs">Milvus nlist</Label>
+                                    <Input
+                                        id="milvusNlist"
+                                        type="number"
+                                        value={String(retrieval?.milvus_nlist ?? 128)}
+                                        onChange={(e) => updateRetrieval("milvus_nlist", Number(e.target.value))}
+                                        placeholder="128"
+                                        className="h-9"
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="milvusNprobe" className="text-xs">Milvus nprobe</Label>
+                                    <Input
+                                        id="milvusNprobe"
+                                        type="number"
+                                        value={String(retrieval?.milvus_nprobe ?? 16)}
+                                        onChange={(e) => updateRetrieval("milvus_nprobe", Number(e.target.value))}
+                                        placeholder="16"
+                                        className="h-9"
+                                    />
+                                </div>
                             </div>
                         </section>
 

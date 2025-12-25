@@ -1497,6 +1497,11 @@ class Orchestrator:
             retrieval_details.update(self._retrieval.model_status())
         if hasattr(self._retrieval, "get_model_status"):
             retrieval_details.update(self._retrieval.get_model_status())
+        if hasattr(self._retrieval, "get_last_bq_debug"):
+            bq_debug = self._retrieval.get_last_bq_debug()
+            if bq_debug:
+                retrieval_details["bq_debug"] = bq_debug
+                retrieval_details["retrieval_backend"] = bq_debug.get("mode", "binary")
         retrieval_details["rerank_enabled"] = rerank_enabled
         retrieval_details["reranked"] = rerank_enabled
         if isinstance(self._retrieval, HybridRetrievalEngine):
@@ -1509,6 +1514,7 @@ class Orchestrator:
             colbert_enabled = retrieval_details.get("colbert_enabled", False)
             rerank_enabled = retrieval_details.get("rerank_enabled", rerank_enabled)
         record_step(self._make_step("retrieval", retrieval_start, retrieval_start_time, retrieval_details))
+        retrieval_backend = retrieval_details.get("retrieval_backend", "float32")
 
         # P0.1: Grounded mode no-evidence check
         # If grounded mode is active and no chunks found, return structured response
@@ -2197,6 +2203,7 @@ The retrieved evidence contains some conflicting information. When you encounter
                 "embedding_cache_hits": embedding_cache_hits,
                 "embedding_cache_misses": embedding_cache_misses,
                 "retrieval_mode": retrieval_mode,
+                "retrieval_backend": retrieval_backend,
                 "flare_retrievals": flare_retrievals,
                 "firewall_pass_rate": firewall_pass_rate,
                 "quality_rating": reflection_result.quality.value if reflection_result else "unknown",

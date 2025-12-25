@@ -49,6 +49,22 @@ export type RetrievalDefaults = {
     use_hyde?: boolean;
     abstain_when_unverified?: boolean;
     self_rag_critic?: boolean;
+    // v2 Binary Quantization settings
+    retrieval_mode?: "float32" | "binary";
+    bq_enabled?: boolean;
+    bq_normalize?: boolean;
+    bq_rule?: string;
+    bq_two_stage?: boolean;
+    bq_stage1_candidates?: number;
+    bq_fallback_enabled?: boolean;
+    bq_fallback_threshold?: number;
+    milvus_host?: string;
+    milvus_port?: number;
+    milvus_collection?: string;
+    milvus_index_type?: "BIN_FLAT" | "BIN_IVF_FLAT";
+    milvus_metric?: "HAMMING" | string;
+    milvus_nlist?: number;
+    milvus_nprobe?: number;
 };
 
 // 3.0: Stage budget configuration
