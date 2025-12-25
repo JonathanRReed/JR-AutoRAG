@@ -74,6 +74,31 @@ class _HTTPProvider(LLMProvider):
 
 
 class OllamaProvider(_HTTPProvider):
+    """Provider for local Ollama instances."""
+    
+    def __init__(self, base_url: str, default_model: str | None = None, api_key: str | None = None) -> None:
+        super().__init__(base_url, default_model)
+        self.api_key = api_key
+    
+    def _get_headers(self) -> dict[str, str] | None:
+        if self.api_key:
+            return {"Authorization": f"Bearer {self.api_key}"}
+        return None
+    
+    async def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        url = f"{self.base_url}{path}"
+        headers = self._get_headers()
+        try:
+            timeout = _get_timeout("JR_PROVIDER_TIMEOUT", DEFAULT_PROVIDER_TIMEOUT)
+            async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
+                response = await client.post(url, json=payload)
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as exc:
+            raise ProviderError(f"Ollama error {exc.response.status_code}: {exc}") from exc
+        except httpx.HTTPError as exc:
+            raise ProviderError(f"Ollama request failed ({type(exc).__name__}): {exc}") from exc
+
     async def chat(self, messages: Iterable[dict[str, Any]], **kwargs: Any) -> str:
         model = kwargs.get("model") or self.default_model or "llama3"
         payload = {
@@ -92,9 +117,10 @@ class OllamaProvider(_HTTPProvider):
             "stream": True,
         }
         url = f"{self.base_url}/api/chat"
+        headers = self._get_headers()
         try:
             timeout = _get_timeout("JR_PROVIDER_STREAM_TIMEOUT", DEFAULT_STREAM_TIMEOUT)
-            async with httpx.AsyncClient(timeout=timeout) as client:
+            async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
                 async with client.stream("POST", url, json=payload) as response:
                     response.raise_for_status()
                     async for line in response.aiter_lines():
@@ -120,6 +146,46 @@ class OllamaProvider(_HTTPProvider):
         payload = {"model": model, "prompt": prompt, "stream": False}
         data = await self._post("/api/generate", payload)
         return data.get("response", "")
+
+
+class OllamaCloudProvider(OllamaProvider):
+    """Provider for Ollama Cloud service (https://ollama.com).
+    
+    Ollama Cloud provides access to models without requiring local GPU.
+    Uses the same API as local Ollama but requires authentication.
+    
+    Environment variables:
+    - OLLAMA_API_KEY: API key from https://ollama.com/settings/keys
+    
+    Features:
+    - Free tier available with hourly/weekly limits
+    - No data retention
+    - Access to large models that may not fit on local GPUs
+    """
+    
+    OLLAMA_CLOUD_URL = "https://ollama.com"
+    
+    def __init__(
+        self,
+        api_key: str | None = None,
+        default_model: str | None = None,
+    ) -> None:
+        resolved_key = api_key or os.environ.get("OLLAMA_API_KEY")
+        super().__init__(self.OLLAMA_CLOUD_URL, default_model or "llama3", resolved_key)
+        if not self.api_key:
+            raise ProviderError("Ollama Cloud requires an API key. Set OLLAMA_API_KEY or provide api_key parameter.")
+    
+    async def list_models(self) -> list[str]:
+        """Fetch available cloud models from Ollama."""
+        headers = self._get_headers()
+        try:
+            async with httpx.AsyncClient(timeout=15.0, headers=headers) as client:
+                response = await client.get(f"{self.base_url}/api/tags")
+            response.raise_for_status()
+            data = response.json()
+            return [model.get("name", "") for model in data.get("models", []) if model.get("name")]
+        except httpx.HTTPError as exc:
+            raise ProviderError(f"Failed to list Ollama Cloud models: {exc}") from exc
 
 
 class LMStudioProvider(_HTTPProvider):
@@ -287,8 +353,17 @@ class ProviderFactory:
 
     def build(self, cfg: ProviderConfig) -> LLMProvider:
         name = (cfg.name or "").lower()
+        base_url = str(cfg.base_url).lower()
+        
+        # Check for Ollama Cloud (ollama.com URL or explicit "ollama cloud" name)
+        if "ollama.com" in base_url or "ollama_cloud" in name or "ollama cloud" in name:
+            return OllamaCloudProvider(
+                api_key=cfg.api_key or self.api_key,
+                default_model=cfg.planner_model or cfg.generator_model,
+            )
+        # Local Ollama
         if "ollama" in name:
-            return OllamaProvider(str(cfg.base_url), cfg.planner_model or cfg.generator_model)
+            return OllamaProvider(str(cfg.base_url), cfg.planner_model or cfg.generator_model, cfg.api_key)
         if "lm" in name or "studio" in name:
             return LMStudioProvider(str(cfg.base_url), cfg.generator_model)
         if "openrouter" in name:

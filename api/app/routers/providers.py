@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 
-from ..core.providers import discover_local_providers, OpenRouterProvider, ProviderError
+from ..core.providers import discover_local_providers, OpenRouterProvider, OllamaCloudProvider, ProviderError
 from ..schemas.config import LocalProviderInfo, ProviderKind
 
 router = APIRouter(prefix="/providers", tags=["providers"])
@@ -132,6 +132,40 @@ async def list_openrouter_models(
             )
             for m in models
         ]
+    except ProviderError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+def _extract_ollama_key(
+    x_ollama_key: str | None,
+    authorization: str | None,
+) -> str | None:
+    """Prefer explicit header, fallback to Bearer auth."""
+    if x_ollama_key:
+        return x_ollama_key
+    if authorization and authorization.lower().startswith("bearer "):
+        return authorization.split(" ", 1)[1].strip()
+    return None
+
+
+@router.get("/ollama-cloud/models", response_model=list[str])
+async def list_ollama_cloud_models(
+    x_ollama_key: str | None = Header(default=None, convert_underscores=False),
+    authorization: str | None = Header(default=None),
+) -> list[str]:
+    """List available models from Ollama Cloud."""
+    api_key = _extract_ollama_key(x_ollama_key, authorization) or os.environ.get("OLLAMA_API_KEY")
+    
+    if not api_key:
+        raise HTTPException(
+            status_code=401,
+            detail="OLLAMA_API_KEY not provided. Get one at https://ollama.com/settings/keys",
+        )
+    
+    try:
+        provider = OllamaCloudProvider(api_key=api_key)
+        models = await provider.list_models()
+        return models
     except ProviderError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
