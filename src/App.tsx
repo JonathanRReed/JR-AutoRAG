@@ -1093,6 +1093,7 @@ export function App() {
                     setConfig={setConfig}
                     isSavingConfig={isSavingConfig}
                     handleSaveConfig={handleSaveConfig}
+                    persistConfig={persistConfig}
                     localProviders={localProviders}
                     localProvidersStatus={localProvidersStatus}
                     refreshLocalProviders={refreshLocalProviders}

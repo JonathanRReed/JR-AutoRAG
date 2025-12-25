@@ -191,7 +191,7 @@ export type CacheStats = {
     queries?: { hits: number; misses: number; size: number };
 };
 
-export type ProviderKind = "ollama" | "lmstudio" | "openai" | "openrouter";
+export type ProviderKind = "ollama" | "ollama_cloud" | "lmstudio" | "openai" | "openrouter";
 
 export type LocalProviderInfo = {
     kind: ProviderKind;

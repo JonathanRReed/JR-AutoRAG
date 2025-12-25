@@ -218,6 +218,7 @@ class AppConfig(BaseModel):
 
 class ProviderKind(str, Enum):
     OLLAMA = "ollama"
+    OLLAMA_CLOUD = "ollama_cloud"
     LM_STUDIO = "lmstudio"
     OPENAI_COMPAT = "openai"
     OPENROUTER = "openrouter"

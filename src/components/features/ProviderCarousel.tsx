@@ -7,13 +7,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { CheckCircle2, Loader2, ChevronLeft, ChevronRight, Server, Cloud, Shield, ExternalLink } from "lucide-react";
 import type { AppConfig, LocalProviderInfo, RoleSelection, OpenRouterStatus, OpenRouterModel, RAGFuzzStatus } from "@/types";
 
-type ProviderTab = "ollama" | "lmstudio" | "openrouter";
+type ProviderTab = "ollama" | "ollama_cloud" | "lmstudio" | "openrouter";
 
 interface ProviderCarouselProps {
   config: AppConfig | null;
   setConfig: React.Dispatch<React.SetStateAction<AppConfig | null>>;
   isSavingConfig: boolean;
   handleSaveConfig: () => void;
+  persistConfig: (cfg: AppConfig, message?: string) => Promise<void>;
   localProviders: LocalProviderInfo[];
   localProvidersStatus: "idle" | "loading" | "ready" | "error";
   refreshLocalProviders: () => void;
@@ -28,6 +29,7 @@ export function ProviderCarousel({
   setConfig,
   isSavingConfig,
   handleSaveConfig,
+  persistConfig,
   localProviders,
   localProvidersStatus,
   refreshLocalProviders,
@@ -54,6 +56,17 @@ export function ProviderCarousel({
   const [ragfuzzStatus, setRagfuzzStatus] = useState<RAGFuzzStatus | null>(null);
   const [ollamaFilter, setOllamaFilter] = useState("");
   const [lmstudioFilter, setLmstudioFilter] = useState("");
+  
+  // Ollama Cloud state
+  const [ollamaCloudApiKey, setOllamaCloudApiKey] = useState("");
+  const [ollamaCloudModels, setOllamaCloudModels] = useState<string[]>([]);
+  const [ollamaCloudLoading, setOllamaCloudLoading] = useState(false);
+  const [ollamaCloudFilter, setOllamaCloudFilter] = useState("");
+  const [ollamaCloudSelection, setOllamaCloudSelection] = useState<RoleSelection>({
+    planner: "",
+    gatherer: "",
+    generator: "",
+  });
 
   const filterModels = (models: string[], term: string) => {
     if (!term.trim()) return models;
@@ -69,6 +82,7 @@ export function ProviderCarousel({
 
   const tabs: { id: ProviderTab; label: string; icon: React.ReactNode; color: string }[] = [
     { id: "ollama", label: "Ollama", icon: <Server className="h-4 w-4" />, color: "text-green-500" },
+    { id: "ollama_cloud", label: "Ollama Cloud", icon: <Cloud className="h-4 w-4" />, color: "text-green-400" },
     { id: "lmstudio", label: "LM Studio", icon: <Server className="h-4 w-4" />, color: "text-blue-500" },
     { id: "openrouter", label: "OpenRouter", icon: <Cloud className="h-4 w-4" />, color: "text-purple-500" },
   ];
@@ -149,24 +163,75 @@ export function ProviderCarousel({
     }
   };
 
-  const applyOpenRouter = () => {
+  const applyOpenRouter = async () => {
+    if (!config) return;
     const model = openRouterSelection.planner || openRouterStatus?.default_model || "openai/gpt-4o-mini";
     const selected = openRouterSelection.planner || openRouterSelection.generator || openRouterSelection.gatherer;
-    setConfig(cfg =>
-      cfg
-        ? {
-            ...cfg,
-            provider: {
-              name: "OpenRouter",
-              base_url: "https://openrouter.ai/api/v1",
-              planner_model: openRouterSelection.planner || selected || model,
-              generator_model: openRouterSelection.generator || selected || model,
-              gatherer_model: openRouterSelection.gatherer || selected || model,
-              api_key: openRouterApiKey || cfg.provider?.api_key || "",
-            },
-          }
-        : cfg,
-    );
+    const nextConfig: AppConfig = {
+      ...config,
+      provider: {
+        name: "OpenRouter",
+        base_url: "https://openrouter.ai/api/v1",
+        planner_model: openRouterSelection.planner || selected || model,
+        generator_model: openRouterSelection.generator || selected || model,
+        gatherer_model: openRouterSelection.gatherer || selected || model,
+        api_key: openRouterApiKey || config.provider?.api_key || "",
+      },
+    };
+    setConfig(nextConfig);
+    await persistConfig(nextConfig, `Applied OpenRouter (${nextConfig.provider?.planner_model})`);
+  };
+
+  const [ollamaCloudError, setOllamaCloudError] = useState<string | null>(null);
+  
+  const fetchOllamaCloudModels = async () => {
+    if (!ollamaCloudApiKey) {
+      setOllamaCloudError("Please enter your Ollama API key first");
+      return;
+    }
+    setOllamaCloudLoading(true);
+    setOllamaCloudError(null);
+    try {
+      const res = await fetch(`${apiBaseUrl}/providers/ollama-cloud/models`, {
+        headers: {
+          "x-ollama-key": ollamaCloudApiKey,
+          Authorization: `Bearer ${ollamaCloudApiKey}`,
+        },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setOllamaCloudModels(data);
+        if (data.length === 0) {
+          setOllamaCloudError("No models available. Check your API key.");
+        }
+      } else {
+        const errorData = await res.json().catch(() => ({ detail: res.statusText }));
+        setOllamaCloudError(errorData.detail || `Error: ${res.status}`);
+      }
+    } catch (err) {
+      console.error("Failed to fetch Ollama Cloud models", err);
+      setOllamaCloudError("Failed to connect to Ollama Cloud. Check your network.");
+    } finally {
+      setOllamaCloudLoading(false);
+    }
+  };
+
+  const applyOllamaCloud = async () => {
+    if (!config) return;
+    const selected = ollamaCloudSelection.planner || ollamaCloudSelection.generator || ollamaCloudSelection.gatherer || "llama3";
+    const nextConfig: AppConfig = {
+      ...config,
+      provider: {
+        name: "Ollama Cloud",
+        base_url: "https://ollama.com",
+        planner_model: ollamaCloudSelection.planner || selected,
+        generator_model: ollamaCloudSelection.generator || selected,
+        gatherer_model: ollamaCloudSelection.gatherer || selected,
+        api_key: ollamaCloudApiKey || config.provider?.api_key || "",
+      },
+    };
+    setConfig(nextConfig);
+    await persistConfig(nextConfig, `Applied Ollama Cloud (${nextConfig.provider?.planner_model})`);
   };
 
   // Get provider by type
@@ -304,6 +369,171 @@ export function ProviderCarousel({
           <CheckCircle2 className="mr-2 h-4 w-4" />
           Apply {provider.name}
         </Button>
+      </div>
+    );
+  };
+
+  const renderOllamaCloud = () => {
+    const filtered = filterModels(ollamaCloudModels, ollamaCloudFilter);
+
+    return (
+      <div className="space-y-4">
+        <div className="flex items-start gap-3 p-3 rounded-lg bg-green-500/10 border border-green-500/20">
+          <Cloud className="h-5 w-5 text-green-500 mt-0.5" />
+          <div className="text-sm">
+            <p className="font-medium text-green-600 dark:text-green-400">Ollama Cloud</p>
+            <p className="text-muted-foreground text-xs mt-1">
+              Run large models without local GPU. Free tier available with no data retention.
+            </p>
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <Label className="text-xs font-bold uppercase tracking-wider">API Key</Label>
+          <div className="flex gap-2">
+            <Input
+              type="password"
+              value={ollamaCloudApiKey}
+              onChange={(e) => setOllamaCloudApiKey(e.target.value)}
+              placeholder="Enter your Ollama API key"
+              className="flex-1"
+            />
+            <Button variant="outline" size="sm" asChild>
+              <a href="https://ollama.com/settings/keys" target="_blank" rel="noreferrer">
+                Get Key <ExternalLink className="ml-1 h-3 w-3" />
+              </a>
+            </Button>
+          </div>
+        </div>
+
+        {ollamaCloudError && (
+          <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-sm text-red-600 dark:text-red-400">
+            {ollamaCloudError}
+          </div>
+        )}
+
+        {ollamaCloudLoading ? (
+          <div className="flex items-center justify-center py-6">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          </div>
+        ) : ollamaCloudModels.length > 0 ? (
+          <>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+              <Input
+                value={ollamaCloudFilter}
+                onChange={e => setOllamaCloudFilter(e.target.value)}
+                placeholder="Search cloud models"
+                className="h-9 text-sm"
+              />
+              <div className="text-xs text-muted-foreground">
+                {filtered.length} / {ollamaCloudModels.length} shown
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                Use for all roles
+              </Label>
+              <Select
+                value={ollamaCloudSelection.planner}
+                onValueChange={(val) => setOllamaCloudSelection({ planner: val, generator: val, gatherer: val })}
+              >
+                <SelectTrigger className="h-9 text-sm bg-muted/30">
+                  <SelectValue placeholder="Select a model" />
+                </SelectTrigger>
+                <SelectContent className="max-h-[250px]">
+                  {filtered.slice(0, 50).map(model => (
+                    <SelectItem key={model} value={model} className="text-sm">
+                      {model}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-3 pt-2 border-t border-border/50">
+              <div className="space-y-1.5">
+                <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Planner</Label>
+                <Select
+                  value={ollamaCloudSelection.planner}
+                  onValueChange={(val) => setOllamaCloudSelection(prev => ({ ...prev, planner: val }))}
+                >
+                  <SelectTrigger className="h-9 text-sm bg-muted/30">
+                    <SelectValue placeholder="Select" />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-[250px]">
+                    {filtered.slice(0, 50).map(model => (
+                      <SelectItem key={model} value={model} className="text-sm">
+                        {model}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Gatherer</Label>
+                <Select
+                  value={ollamaCloudSelection.gatherer}
+                  onValueChange={(val) => setOllamaCloudSelection(prev => ({ ...prev, gatherer: val }))}
+                >
+                  <SelectTrigger className="h-9 text-sm bg-muted/30">
+                    <SelectValue placeholder="Select" />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-[250px]">
+                    {filtered.slice(0, 50).map(model => (
+                      <SelectItem key={model} value={model} className="text-sm">
+                        {model}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Generator</Label>
+                <Select
+                  value={ollamaCloudSelection.generator}
+                  onValueChange={(val) => setOllamaCloudSelection(prev => ({ ...prev, generator: val }))}
+                >
+                  <SelectTrigger className="h-9 text-sm bg-muted/30">
+                    <SelectValue placeholder="Select" />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-[250px]">
+                    {filtered.slice(0, 50).map(model => (
+                      <SelectItem key={model} value={model} className="text-sm">
+                        {model}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="text-center py-4 text-sm text-muted-foreground">
+            Enter API key and click refresh to load models
+          </div>
+        )}
+
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={fetchOllamaCloudModels}
+            disabled={ollamaCloudLoading}
+          >
+            {ollamaCloudLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Refresh Models"}
+          </Button>
+          <Button
+            onClick={() => {
+              applyOllamaCloud();
+            }}
+            disabled={isSavingConfig}
+            className="flex-1"
+          >
+            <CheckCircle2 className="mr-2 h-4 w-4" />
+            Apply Ollama Cloud
+          </Button>
+        </div>
       </div>
     );
   };
@@ -489,6 +719,7 @@ export function ProviderCarousel({
         <CardContent className="pt-6">
           {activeTab === "ollama" &&
             renderLocalProvider(ollamaProvider, "Ollama", "https://ollama.com/download", ollamaFilter, setOllamaFilter)}
+          {activeTab === "ollama_cloud" && renderOllamaCloud()}
           {activeTab === "lmstudio" &&
             renderLocalProvider(lmstudioProvider, "LM Studio", "https://lmstudio.ai/", lmstudioFilter, setLmstudioFilter)}
           {activeTab === "openrouter" && renderOpenRouter()}
