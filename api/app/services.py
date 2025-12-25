@@ -64,6 +64,16 @@ class ServiceContainer:
         
         # Load config for retrieval settings
         cfg = self.config_store.read()
+        sanitized = self._sanitize_config(cfg)
+        if sanitized.model_dump() != cfg.model_dump():
+            self.config_store.write(sanitized)
+            cfg = sanitized
+
+        from .core.auth import get_auth
+        from .core.document_acl import get_acl_enforcer, resolve_acl_defaults
+        auth_enabled = get_auth().require_auth()
+        default_public, _ = resolve_acl_defaults(auth_enabled)
+        get_acl_enforcer(default_public=default_public)
         
         # Configure hybrid retrieval from app config
         retrieval_config = _build_retrieval_config(cfg)
@@ -101,6 +111,65 @@ class ServiceContainer:
         # Register orchestrator in global state for traces.py access
         from .state import set_orchestrator
         set_orchestrator(self.orchestrator)
+
+    def _sanitize_config(
+        self,
+        cfg: "AppConfig",
+        existing: "AppConfig" | None = None,
+    ) -> "AppConfig":
+        from .core.providers import _infer_secret_key_name
+        from .core.secrets_vault import get_secrets_vault
+
+        vault = get_secrets_vault()
+
+        def store_secret(key_name: str, value: str) -> bool:
+            try:
+                vault.set(key_name, value)
+                return True
+            except Exception:
+                return False
+
+        def sanitize_provider(provider, existing_provider):
+            if provider is None:
+                return None
+            key_name = _infer_secret_key_name(provider.name, str(provider.base_url))
+            candidate = (provider.api_key or "").strip()
+            fallback = (existing_provider.api_key or "").strip() if existing_provider else ""
+
+            if candidate:
+                if store_secret(key_name, candidate):
+                    return provider.model_copy(update={"api_key": None})
+                return provider
+
+            if fallback:
+                if store_secret(key_name, fallback):
+                    return provider.model_copy(update={"api_key": None})
+                return provider.model_copy(update={"api_key": fallback})
+
+            if vault.get(key_name):
+                return provider.model_copy(update={"api_key": None})
+
+            return provider.model_copy(update={"api_key": None})
+
+        sanitized_provider = sanitize_provider(cfg.provider, existing.provider if existing else None)
+        existing_profiles = {p.name: p for p in (existing.provider_profiles if existing else [])}
+        sanitized_profiles = []
+        for profile in cfg.provider_profiles:
+            existing_profile = existing_profiles.get(profile.name)
+            provider = sanitize_provider(
+                profile.provider,
+                existing_profile.provider if existing_profile else None,
+            )
+            sanitized_profiles.append(profile.model_copy(update={"provider": provider}))
+
+        return cfg.model_copy(
+            update={"provider": sanitized_provider, "provider_profiles": sanitized_profiles}
+        )
+
+    def prepare_config_for_storage(self, cfg: "AppConfig") -> "AppConfig":
+        """Store any secrets in vault and redact them from config."""
+        current = self.config_store.read()
+        return self._sanitize_config(cfg, existing=current)
 
     def _build_bq_config(self, cfg: "AppConfig") -> tuple[BQRetrievalConfig, bool]:
         """Build BQ retrieval configuration from app config."""

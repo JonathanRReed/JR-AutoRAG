@@ -221,10 +221,24 @@ _rate_limiter: RateLimiter | None = None
 
 
 def get_rate_limiter() -> RateLimiter:
-    """Get the global rate limiter instance."""
+    """Get the global rate limiter instance.
+    
+    Environment variables:
+    - AUTORAG_RATE_LIMIT_ENABLED: Enable/disable rate limiting (default: true)
+    - AUTORAG_RATE_LIMIT_RPM: Requests per minute (default: 300)
+    - AUTORAG_RATE_LIMIT_BURST: Burst capacity (default: 50)
+    """
     global _rate_limiter
     if _rate_limiter is None:
-        _rate_limiter = RateLimiter()
+        import os
+        enabled = os.environ.get("AUTORAG_RATE_LIMIT_ENABLED", "true").lower() == "true"
+        rpm = int(os.environ.get("AUTORAG_RATE_LIMIT_RPM", "300"))
+        burst = int(os.environ.get("AUTORAG_RATE_LIMIT_BURST", "50"))
+        _rate_limiter = RateLimiter(
+            requests_per_minute=rpm,
+            burst_capacity=burst,
+            enabled=enabled,
+        )
     return _rate_limiter
 
 

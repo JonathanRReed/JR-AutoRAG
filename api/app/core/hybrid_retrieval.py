@@ -14,11 +14,13 @@ import os
 import re
 import asyncio
 import concurrent.futures
+import threading
 from datetime import datetime, timezone
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
+import httpx
 
 try:
     import torch
@@ -31,6 +33,7 @@ from .cache import get_cache_manager
 from .documents import Document, DocumentStore
 from .chunking import Chunk, ChunkingStrategy, get_chunker
 from .hierarchy import DocumentTree
+from .secrets_vault import get_secrets_vault
 
 if TYPE_CHECKING:
     from sentence_transformers import SentenceTransformer, CrossEncoder
@@ -80,6 +83,43 @@ def _get_bm25():
         except ImportError:
             _bm25_class = False
     return _bm25_class if _bm25_class else None
+
+
+class RemoteEmbeddingClient:
+    """HTTP-based embedding client for API-backed models."""
+
+    supports_semantic_chunking = False
+
+    def __init__(
+        self,
+        model: str,
+        api_key: str,
+        base_url: str = "https://api.openai.com/v1",
+        timeout: float = 30.0,
+    ) -> None:
+        self.model = model
+        self.api_key = api_key
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
+
+    def encode(self, texts, convert_to_numpy: bool = False, show_progress_bar: bool = False):
+        if isinstance(texts, str):
+            inputs = [texts]
+        else:
+            inputs = list(texts)
+
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        payload = {"model": self.model, "input": inputs}
+        with httpx.Client(timeout=self.timeout) as client:
+            response = client.post(f"{self.base_url}/embeddings", json=payload, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+        items = sorted(data.get("data", []), key=lambda item: item.get("index", 0))
+        embeddings = [item.get("embedding", []) for item in items]
+
+        if convert_to_numpy:
+            return np.array(embeddings, dtype=np.float32)
+        return embeddings
 
 
 @dataclass
@@ -217,6 +257,7 @@ class HybridRetrievalEngine:
         self._config_hash: str = ""
         self._corpus_version_counter: int = 0  # Monotonically increasing on any change
         self._doc_content_hashes: dict[str, str] = {}  # doc_id -> content_hash for incremental
+        self._index_lock = threading.RLock()
         
         # Phase 4/6/5: Hierarchical & Graph structures
         self._trees: dict[str, Any] = {}  # doc_id -> DocumentTree
@@ -231,32 +272,48 @@ class HybridRetrievalEngine:
     def _init_models(self) -> None:
         """Lazy load heavy models."""
         if self._config.embedding_model and not self._embedder_failed and self._embedder is None:
-            SentenceTransformer = _get_sentence_transformer()
-            if SentenceTransformer:
-                try:
-                    is_local = os.path.isdir(self._config.embedding_model)
-                    location = "Local path" if is_local else "HuggingFace cache/remote"
-                    print(f"Loading embedding model: {self._config.embedding_model} ({location})...")
-                    try:
-                        # Force non-meta device loading for CPU stability
-                        self._embedder = SentenceTransformer(
-                            self._config.embedding_model,
-                            device="cpu",
-                            model_kwargs={"low_cpu_mem_usage": False, "device_map": None}
-                        )
-                    except (TypeError, Exception):
-                        # Fallback for older versions or unexpected errors
-                        self._embedder = SentenceTransformer(
-                            self._config.embedding_model, 
-                            device="cpu"
-                        )
-                    print(f"Embedding model loaded successfully from {location}.")
-                except Exception as e:
-                    print(f"❌ Error: Could not load embedding model: {e}")
-                    self._embedder = None
+            model_info = EmbeddingModelPreset.get_info(self._config.embedding_model)
+            if model_info.get("requires_api"):
+                vault = get_secrets_vault()
+                api_key = vault.get("OPENAI_API_KEY") or ""
+                base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+                if not api_key:
+                    print("❌ Error: OPENAI_API_KEY not set for API-backed embedding model.")
                     self._embedder_failed = True
+                else:
+                    self._embedder = RemoteEmbeddingClient(
+                        model=self._config.embedding_model,
+                        api_key=api_key,
+                        base_url=base_url,
+                    )
+                    print(f"Embedding model configured via API: {self._config.embedding_model} ({base_url})")
             else:
-                print("⚠️ Warning: sentence-transformers not installed. Dense retrieval disabled.")
+                SentenceTransformer = _get_sentence_transformer()
+                if SentenceTransformer:
+                    try:
+                        is_local = os.path.isdir(self._config.embedding_model)
+                        location = "Local path" if is_local else "HuggingFace cache/remote"
+                        print(f"Loading embedding model: {self._config.embedding_model} ({location})...")
+                        try:
+                            # Force non-meta device loading for CPU stability
+                            self._embedder = SentenceTransformer(
+                                self._config.embedding_model,
+                                device="cpu",
+                                model_kwargs={"low_cpu_mem_usage": False, "device_map": None}
+                            )
+                        except (TypeError, Exception):
+                            # Fallback for older versions or unexpected errors
+                            self._embedder = SentenceTransformer(
+                                self._config.embedding_model, 
+                                device="cpu"
+                            )
+                        print(f"Embedding model loaded successfully from {location}.")
+                    except Exception as e:
+                        print(f"❌ Error: Could not load embedding model: {e}")
+                        self._embedder = None
+                        self._embedder_failed = True
+                else:
+                    print("⚠️ Warning: sentence-transformers not installed. Dense retrieval disabled.")
         
         if self._config.use_reranking and self._config.reranker_model and not self._reranker_failed and self._reranker is None:
             CrossEncoder = _get_cross_encoder()
@@ -295,26 +352,27 @@ class HybridRetrievalEngine:
 
         Returns True if a rebuild was triggered.
         """
-        previous = self._config
-        rebuild_needed = self._requires_rebuild(config)
-        graph_enabled = config.graph and not previous.graph
-        raptor_enabled = config.raptor and not previous.raptor
+        with self._index_lock:
+            previous = self._config
+            rebuild_needed = self._requires_rebuild(config)
+            graph_enabled = config.graph and not previous.graph
+            raptor_enabled = config.raptor and not previous.raptor
 
-        self._config = config
+            self._config = config
 
-        if previous.embedding_model != config.embedding_model:
-            self._embedder = None
-            self._embedder_failed = False
-        if (
-            previous.reranker_model != config.reranker_model
-            or previous.use_reranking != config.use_reranking
-        ):
-            self._reranker = None
-            self._reranker_failed = False
-        if previous.use_colbert != config.use_colbert or previous.colbert_model != config.colbert_model:
-            self._colbert_model = None
-            self._colbert_tokenizer = None
-            self._colbert_failed = False
+            if previous.embedding_model != config.embedding_model:
+                self._embedder = None
+                self._embedder_failed = False
+            if (
+                previous.reranker_model != config.reranker_model
+                or previous.use_reranking != config.use_reranking
+            ):
+                self._reranker = None
+                self._reranker_failed = False
+            if previous.use_colbert != config.use_colbert or previous.colbert_model != config.colbert_model:
+                self._colbert_model = None
+                self._colbert_tokenizer = None
+                self._colbert_failed = False
 
         self._init_models()
 
@@ -517,15 +575,16 @@ class HybridRetrievalEngine:
             return results
         now = datetime.now(timezone.utc)
         adjusted: list[tuple[int, float]] = []
-        for idx, score in results:
-            doc_id = self._chunks[idx][0] if idx < len(self._chunks) else ""
-            ts = self._doc_timestamps.get(doc_id)
-            if not ts:
-                adjusted.append((idx, score))
-                continue
-            age_days = max(0.0, (now - ts).total_seconds() / 86400.0)
-            decay = math.exp(-math.log(2) * age_days / half_life_days)
-            adjusted.append((idx, score * (1.0 + (recency_weight * decay))))
+        with self._index_lock:
+            for idx, score in results:
+                doc_id = self._chunks[idx][0] if idx < len(self._chunks) else ""
+                ts = self._doc_timestamps.get(doc_id)
+                if not ts:
+                    adjusted.append((idx, score))
+                    continue
+                age_days = max(0.0, (now - ts).total_seconds() / 86400.0)
+                decay = math.exp(-math.log(2) * age_days / half_life_days)
+                adjusted.append((idx, score * (1.0 + (recency_weight * decay))))
         return adjusted
 
     def _apply_diversity_rerank(
@@ -551,29 +610,30 @@ class HybridRetrievalEngine:
             token_cache[idx] = set(self._tokenize_terms(chunk.text))
             return token_cache[idx]
 
-        while pool and len(selected) < top_k:
-            best = None
-            best_score = None
-            for idx, score in pool:
-                candidate_tokens = tokens_for(idx)
-                max_sim = 0.0
-                if selected and candidate_tokens:
-                    for sel_idx, _ in selected:
-                        sel_tokens = tokens_for(sel_idx)
-                        if not sel_tokens:
-                            continue
-                        overlap = len(candidate_tokens & sel_tokens)
-                        union = len(candidate_tokens | sel_tokens)
-                        if union:
-                            max_sim = max(max_sim, overlap / union)
-                mmr_score = ((1 - diversity) * score) - (diversity * max_sim)
-                if best_score is None or mmr_score > best_score:
-                    best_score = mmr_score
-                    best = (idx, score)
-            if best is None:
-                break
-            selected.append(best)
-            pool = [c for c in pool if c[0] != best[0]]
+        with self._index_lock:
+            while pool and len(selected) < top_k:
+                best = None
+                best_score = None
+                for idx, score in pool:
+                    candidate_tokens = tokens_for(idx)
+                    max_sim = 0.0
+                    if selected and candidate_tokens:
+                        for sel_idx, _ in selected:
+                            sel_tokens = tokens_for(sel_idx)
+                            if not sel_tokens:
+                                continue
+                            overlap = len(candidate_tokens & sel_tokens)
+                            union = len(candidate_tokens | sel_tokens)
+                            if union:
+                                max_sim = max(max_sim, overlap / union)
+                    mmr_score = ((1 - diversity) * score) - (diversity * max_sim)
+                    if best_score is None or mmr_score > best_score:
+                        best_score = mmr_score
+                        best = (idx, score)
+                if best is None:
+                    break
+                selected.append(best)
+                pool = [c for c in pool if c[0] != best[0]]
         return selected
 
     def model_status(self) -> dict[str, bool]:
@@ -665,13 +725,14 @@ class HybridRetrievalEngine:
                     print(f"HybridRetrievalEngine: Failed to clear disk cache: {e}")
         
         # Clear in-memory indexes
-        self._chunks = []
-        self._embeddings = None
-        self._bm25 = None
-        self._tokenized_corpus = []
-        self._trees = {}
-        self._graph = {}
-        self._doc_content_hashes = {}
+        with self._index_lock:
+            self._chunks = []
+            self._embeddings = None
+            self._bm25 = None
+            self._tokenized_corpus = []
+            self._trees = {}
+            self._graph = {}
+            self._doc_content_hashes = {}
         
         # Increment corpus version to invalidate query caches
         self.increment_corpus_version()
@@ -818,13 +879,32 @@ class HybridRetrievalEngine:
                         self._graph_ready = True
                     
                     try:
-                        loop = asyncio.get_event_loop()
-                        if loop.is_running():
-                            # This is tricky if already in a loop.
-                            # For ingestion/rebuild, we are usually in a worker thread or sync start.
-                            import nest_asyncio
-                            nest_asyncio.apply()
-                        asyncio.run(build_g())
+                        try:
+                            asyncio.get_running_loop()
+                        except RuntimeError:
+                            asyncio.run(build_g())
+                        else:
+                            error: Exception | None = None
+                            done = threading.Event()
+
+                            def runner():
+                                nonlocal error
+                                try:
+                                    asyncio.run(build_g())
+                                except Exception as exc:
+                                    error = exc
+                                finally:
+                                    done.set()
+
+                            thread = threading.Thread(
+                                target=runner,
+                                name="autorag-graph-build",
+                                daemon=True,
+                            )
+                            thread.start()
+                            done.wait()
+                            if error:
+                                raise error
                     except Exception as e:
                         print(f"Warning: GraphRAG building async execution failed: {e}")
                         self._graph_failed = True
@@ -871,36 +951,37 @@ class HybridRetrievalEngine:
             return
 
         doc_ids = {doc.id for doc in docs if doc.id}
-        if doc_ids and self._chunks:
-            keep_indices = [i for i, (doc_id, _) in enumerate(self._chunks) if doc_id not in doc_ids]
-            if len(keep_indices) != len(self._chunks):
-                self._chunks = [self._chunks[i] for i in keep_indices]
-                if self._embeddings is not None:
-                    try:
-                        self._embeddings = self._embeddings[keep_indices]
-                    except Exception:
-                        self._embeddings = None
-                if self._tokenized_corpus:
-                    self._tokenized_corpus = [self._tokenized_corpus[i] for i in keep_indices]
-                BM25Class = _get_bm25()
-                if BM25Class and self._tokenized_corpus:
-                    try:
-                        self._bm25 = BM25Class(self._tokenized_corpus)
-                    except Exception as e:
-                        print(f"Warning: BM25 rebuild failed after doc removal: {e}")
+        with self._index_lock:
+            if doc_ids and self._chunks:
+                keep_indices = [i for i, (doc_id, _) in enumerate(self._chunks) if doc_id not in doc_ids]
+                if len(keep_indices) != len(self._chunks):
+                    self._chunks = [self._chunks[i] for i in keep_indices]
+                    if self._embeddings is not None:
+                        try:
+                            self._embeddings = self._embeddings[keep_indices]
+                        except Exception:
+                            self._embeddings = None
+                    if self._tokenized_corpus:
+                        self._tokenized_corpus = [self._tokenized_corpus[i] for i in keep_indices]
+                    BM25Class = _get_bm25()
+                    if BM25Class and self._tokenized_corpus:
+                        try:
+                            self._bm25 = BM25Class(self._tokenized_corpus)
+                        except Exception as e:
+                            print(f"Warning: BM25 rebuild failed after doc removal: {e}")
+                            self._bm25 = None
+                    else:
                         self._bm25 = None
-                else:
-                    self._bm25 = None
-                self._graph = {}
-                for i, tokens in enumerate(self._tokenized_corpus):
-                    for token in set(tokens):
-                        if len(token) > 4:
-                            self._graph.setdefault(token, set()).add(i)
-                for doc_id in doc_ids:
-                    self._trees.pop(doc_id, None)
-                    self._doc_timestamps.pop(doc_id, None)
-                    self._doc_content_hashes.pop(doc_id, None)
-                self._chunk_heading_tokens = {}
+                    self._graph = {}
+                    for i, tokens in enumerate(self._tokenized_corpus):
+                        for token in set(tokens):
+                            if len(token) > 4:
+                                self._graph.setdefault(token, set()).add(i)
+                    for doc_id in doc_ids:
+                        self._trees.pop(doc_id, None)
+                        self._doc_timestamps.pop(doc_id, None)
+                        self._doc_content_hashes.pop(doc_id, None)
+                    self._chunk_heading_tokens = {}
 
         self._init_models()
         chunker = get_chunker(
@@ -918,7 +999,6 @@ class HybridRetrievalEngine:
                 continue
             chunks = chunker.chunk(doc.text)
             for chunk in chunks:
-                self._chunks.append((doc.id, chunk))
                 new_chunks.append((doc.id, chunk))
                 new_texts.append(chunk.text)
 
@@ -933,40 +1013,47 @@ class HybridRetrievalEngine:
                     convert_to_numpy=True,
                     show_progress_bar=False,
                 )
-                if self._embeddings is None or len(self._embeddings) == 0:
-                    self._embeddings = np.array(batch_embeddings)
-                else:
-                    self._embeddings = np.vstack([self._embeddings, batch_embeddings])
+                with self._index_lock:
+                    if self._embeddings is None or len(self._embeddings) == 0:
+                        self._embeddings = np.array(batch_embeddings)
+                    else:
+                        self._embeddings = np.vstack([self._embeddings, batch_embeddings])
             except Exception as e:
                 print(f"Warning: Incremental embedding failed: {e}")
-                self._embeddings = None
+                with self._index_lock:
+                    self._embeddings = None
         else:
-            self._embeddings = None
+            with self._index_lock:
+                self._embeddings = None
 
         # Sparse index update
         new_tokenized = [self._tokenize(text) for text in new_texts]
-        start_index = len(self._tokenized_corpus)
-        self._tokenized_corpus.extend(new_tokenized)
+        with self._index_lock:
+            start_index = len(self._tokenized_corpus)
+            self._tokenized_corpus.extend(new_tokenized)
 
         BM25Class = _get_bm25()
         if BM25Class:
             try:
-                self._bm25 = BM25Class(self._tokenized_corpus)
+                bm25 = BM25Class(self._tokenized_corpus)
             except Exception as e:
                 print(f"Warning: BM25 incremental rebuild failed: {e}")
-                self._bm25 = None
+                bm25 = None
         else:
-            self._bm25 = None
+            bm25 = None
+        with self._index_lock:
+            self._bm25 = bm25
 
         # Update keyword graph for context expansion
-        if self._tokenized_corpus:
-            if not self._graph:
-                self._graph = {}
-            for offset, tokens in enumerate(new_tokenized):
-                idx = start_index + offset
-                for token in set(tokens):
-                    if len(token) > 4:
-                        self._graph.setdefault(token, set()).add(idx)
+        with self._index_lock:
+            if self._tokenized_corpus:
+                if not self._graph:
+                    self._graph = {}
+                for offset, tokens in enumerate(new_tokenized):
+                    idx = start_index + offset
+                    for token in set(tokens):
+                        if len(token) > 4:
+                            self._graph.setdefault(token, set()).add(idx)
 
         # Update hierarchical trees if enabled
         if self._config.raptor or self._config.chunking_strategy != ChunkingStrategy.FIXED:
@@ -979,24 +1066,30 @@ class HybridRetrievalEngine:
                 tree = hb.build(doc.text, doc.id, doc.title)
                 doc_chunks = [c for did, c in new_chunks if did == doc.id]
                 hb.associate_chunks(tree, doc_chunks, doc.text)
-                self._trees[doc.id] = tree
+                with self._index_lock:
+                    self._trees[doc.id] = tree
 
         # Mark GraphRAG as stale if enabled
         if self._config.graph:
-            self._graph_ready = False
-            self._graph_rag = None
-            self._graph_failed = False
+            with self._index_lock:
+                self._graph_ready = False
+                self._graph_rag = None
+                self._graph_failed = False
 
         # Update metadata caches
         for doc in docs:
             ts = self._extract_doc_timestamp(doc.metadata or {})
             if ts:
-                self._doc_timestamps[doc.id] = ts
+                with self._index_lock:
+                    self._doc_timestamps[doc.id] = ts
             content_hash = (doc.metadata or {}).get("content_hash")
             if content_hash:
-                self.register_doc_hash(doc.id, content_hash)
+                with self._index_lock:
+                    self.register_doc_hash(doc.id, content_hash)
 
-        self._build_field_tokens(self._docs.list())
+        with self._index_lock:
+            self._chunks.extend(new_chunks)
+            self._build_field_tokens(self._docs.list())
         self.increment_corpus_version()
 
         if self._persist_path and self._chunks:
@@ -1006,7 +1099,9 @@ class HybridRetrievalEngine:
         """Lazy-load persistence manager."""
         if self._index_persistence is None and self._persist_path:
             from .persistence import IndexPersistence
-            self._index_persistence = IndexPersistence(self._persist_path)
+            with self._index_lock:
+                if self._index_persistence is None:
+                    self._index_persistence = IndexPersistence(self._persist_path)
         return self._index_persistence
     
     def _compute_versions(self) -> tuple[str, str]:
@@ -1036,8 +1131,16 @@ class HybridRetrievalEngine:
         persistence = self._get_persistence()
         if not persistence:
             return False
+
+        with self._index_lock:
+            chunks = list(self._chunks)
+            embeddings = self._embeddings
+            bm25 = self._bm25
+            tokenized_corpus = list(self._tokenized_corpus)
+            trees = {id: t.to_dict() for id, t in self._trees.items()} if self._trees else {}
+            graph_data = self._graph_rag.to_dict() if self._graph_rag and self._graph_ready else None
         
-        if not self._chunks or self._embeddings is None:
+        if not chunks or embeddings is None:
             print("HybridRetrievalEngine: No index to save")
             return False
         
@@ -1060,22 +1163,22 @@ class HybridRetrievalEngine:
         try:
             persistence.save_dense_index(
                 index_name=index_name,
-                embeddings=self._embeddings,
-                chunks=self._chunks,
+                embeddings=embeddings,
+                chunks=chunks,
                 metadata=metadata,
             )
-            print(f"HybridRetrievalEngine: Saved dense index ({len(self._chunks)} chunks)")
+            print(f"HybridRetrievalEngine: Saved dense index ({len(chunks)} chunks)")
         except Exception as e:
             print(f"HybridRetrievalEngine: Failed to save dense index: {e}")
             return False
         
         # 2. Save sparse index
-        if self._bm25 and self._tokenized_corpus:
+        if bm25 and tokenized_corpus:
             try:
                 persistence.save_sparse_index(
                     index_name=index_name,
-                    bm25=self._bm25,
-                    tokenized_corpus=self._tokenized_corpus,
+                    bm25=bm25,
+                    tokenized_corpus=tokenized_corpus,
                     metadata=metadata,
                 )
                 print(f"HybridRetrievalEngine: Saved sparse index")
@@ -1083,11 +1186,11 @@ class HybridRetrievalEngine:
                 print(f"HybridRetrievalEngine: Failed to save sparse index: {e}")
 
         # 3. Save GraphRAG index
-        if self._graph_rag and self._graph_ready:
+        if graph_data:
             try:
                 persistence.save_graph(
                     index_name=index_name,
-                    graph_data=self._graph_rag.to_dict(),
+                    graph_data=graph_data,
                     metadata=metadata,
                 )
                 print("HybridRetrievalEngine: Saved knowledge graph")
@@ -1095,11 +1198,11 @@ class HybridRetrievalEngine:
                 print(f"HybridRetrievalEngine: Failed to save graph: {e}")
 
         # 4. Save RAPTOR trees
-        if self._trees:
+        if trees:
             try:
                 persistence.save_trees(
                     index_name=index_name,
-                    trees={id: t.to_dict() for id, t in self._trees.items()},
+                    trees=trees,
                     metadata=metadata,
                 )
                 print("HybridRetrievalEngine: Saved document trees")
@@ -1127,10 +1230,11 @@ class HybridRetrievalEngine:
             if embeddings is None or chunks is None:
                 return False
             
-            self._embeddings = embeddings
-            self._chunks = chunks
-            self._corpus_version = corpus_version
-            self._config_hash = config_hash
+            with self._index_lock:
+                self._embeddings = embeddings
+                self._chunks = chunks
+                self._corpus_version = corpus_version
+                self._config_hash = config_hash
             print(f"HybridRetrievalEngine: Loaded dense index ({len(chunks)} chunks)")
         except Exception as e:
             print(f"HybridRetrievalEngine: Failed to load dense index: {e}")
@@ -1140,22 +1244,25 @@ class HybridRetrievalEngine:
         try:
             bm25, tokenized, _ = persistence.load_sparse_index(index_name)
             if bm25 and tokenized:
-                self._bm25 = bm25
-                self._tokenized_corpus = tokenized
+                with self._index_lock:
+                    self._bm25 = bm25
+                    self._tokenized_corpus = tokenized
                 print("HybridRetrievalEngine: Loaded sparse index")
                 if len(self._tokenized_corpus) != len(self._chunks):
                     print("HybridRetrievalEngine: Sparse index size mismatch; rebuilding")
-                    self._tokenized_corpus = [self._tokenize(c.text) for _, c in self._chunks]
-                    BM25Class = _get_bm25()
-                    self._bm25 = BM25Class(self._tokenized_corpus) if BM25Class else None
+                    with self._index_lock:
+                        self._tokenized_corpus = [self._tokenize(c.text) for _, c in self._chunks]
+                        BM25Class = _get_bm25()
+                        self._bm25 = BM25Class(self._tokenized_corpus) if BM25Class else None
         except Exception as e:
             print(f"HybridRetrievalEngine: Failed to load sparse index: {e}")
             # Rebuild BM25 if load fails but chunks exist
             if self._chunks:
-                self._tokenized_corpus = [self._tokenize(c.text) for _, c in self._chunks]
-                BM25Class = _get_bm25()
-                if BM25Class:
-                    self._bm25 = BM25Class(self._tokenized_corpus)
+                with self._index_lock:
+                    self._tokenized_corpus = [self._tokenize(c.text) for _, c in self._chunks]
+                    BM25Class = _get_bm25()
+                    if BM25Class:
+                        self._bm25 = BM25Class(self._tokenized_corpus)
 
         # 3. Load GraphRAG data
         if self._config.graph:
@@ -1163,8 +1270,9 @@ class HybridRetrievalEngine:
                 graph_data, _ = persistence.load_graph(index_name)
                 if graph_data:
                     from .graph_rag import GraphRAG
-                    self._graph_rag = GraphRAG.from_dict(graph_data)
-                    self._graph_ready = True
+                    with self._index_lock:
+                        self._graph_rag = GraphRAG.from_dict(graph_data)
+                        self._graph_ready = True
                     print("HybridRetrievalEngine: Loaded knowledge graph")
             except Exception as e:
                 print(f"HybridRetrievalEngine: Failed to load graph: {e}")
@@ -1175,7 +1283,8 @@ class HybridRetrievalEngine:
                 trees_data, _ = persistence.load_trees(index_name)
                 if trees_data:
                     from .hierarchy import DocumentTree
-                    self._trees = {id: DocumentTree.from_dict(d) for id, d in trees_data.items()}
+                    with self._index_lock:
+                        self._trees = {id: DocumentTree.from_dict(d) for id, d in trees_data.items()}
                     print(f"HybridRetrievalEngine: Loaded {len(self._trees)} document trees")
                 else:
                     # Rebuild trees in parallel if missing but config says we need them
@@ -1185,12 +1294,13 @@ class HybridRetrievalEngine:
                 self._rebuild_trees_parallel()
 
         docs = self._docs.list()
-        self._doc_timestamps = {}
-        for doc in docs:
-            ts = self._extract_doc_timestamp(doc.metadata or {})
-            if ts:
-                self._doc_timestamps[doc.id] = ts
-        self._build_field_tokens(docs)
+        with self._index_lock:
+            self._doc_timestamps = {}
+            for doc in docs:
+                ts = self._extract_doc_timestamp(doc.metadata or {})
+                if ts:
+                    self._doc_timestamps[doc.id] = ts
+            self._build_field_tokens(docs)
         
         return True
 
@@ -1216,15 +1326,19 @@ class HybridRetrievalEngine:
         with concurrent.futures.ThreadPoolExecutor() as executor:
             # Enumerate to track progress
             results = list(executor.map(process_doc, enumerate(docs)))
-            for doc_id, tree in results:
-                self._trees[doc_id] = tree
+            with self._index_lock:
+                for doc_id, tree in results:
+                    self._trees[doc_id] = tree
         
         if on_progress:
             on_progress("building_hierarchy", len(docs), len(docs))
     
     def _dense_search(self, query: str, top_k: int) -> list[tuple[int, float]]:
         """Dense vector similarity search."""
-        if self._embedder is None or self._embeddings is None:
+        with self._index_lock:
+            embedder = self._embedder
+            embeddings = self._embeddings
+        if embedder is None or embeddings is None:
             self._last_cache = {"embedding_cache": "skipped"}
             return []
         cached = self._cache_manager.embeddings.get(query)
@@ -1232,13 +1346,13 @@ class HybridRetrievalEngine:
             query_embedding = np.array(cached)
             self._last_cache = {"embedding_cache": "hit"}
         else:
-            query_embedding = self._embedder.encode([query], convert_to_numpy=True)[0]
+            query_embedding = embedder.encode([query], convert_to_numpy=True)[0]
             self._cache_manager.embeddings.set(query, query_embedding.tolist())
             self._last_cache = {"embedding_cache": "miss"}
         
         # Cosine similarity
-        similarities = np.dot(self._embeddings, query_embedding) / (
-            np.linalg.norm(self._embeddings, axis=1) * np.linalg.norm(query_embedding)
+        similarities = np.dot(embeddings, query_embedding) / (
+            np.linalg.norm(embeddings, axis=1) * np.linalg.norm(query_embedding)
         )
         
         top_indices = np.argsort(similarities)[::-1][:top_k]
@@ -1253,37 +1367,38 @@ class HybridRetrievalEngine:
         proximity_weight: float = 0.0,
     ) -> list[tuple[int, float]]:
         """BM25 keyword search."""
-        if self._bm25 is None:
-            return self._fallback_sparse_search(
-                query,
-                top_k,
-                title_boost=title_boost,
-                heading_boost=heading_boost,
-                proximity_weight=proximity_weight,
-            )
-        
-        query_tokens = self._tokenize(query)
-        scores = self._bm25.get_scores(query_tokens)
-        query_terms = {t for t in self._tokenize_terms(query) if len(t) > 2}
-        top_indices = np.argsort(scores)[::-1][:top_k]
-        adjusted: list[tuple[int, float]] = []
-        for idx in top_indices:
-            base_score = float(scores[idx])
-            if base_score <= 0:
-                continue
-            base_score += self._field_boost(
-                int(idx),
-                query_terms,
-                title_boost=title_boost,
-                heading_boost=heading_boost,
-            )
-            if proximity_weight > 0 and query_terms:
-                chunk_idx = int(idx)
-                if chunk_idx < len(self._chunks):
-                    chunk_terms = self._tokenize_terms(self._chunks[chunk_idx][1].text)
-                    base_score += proximity_weight * self._term_proximity(query_terms, chunk_terms)
-            adjusted.append((int(idx), base_score))
-        return adjusted
+        with self._index_lock:
+            if self._bm25 is None:
+                return self._fallback_sparse_search(
+                    query,
+                    top_k,
+                    title_boost=title_boost,
+                    heading_boost=heading_boost,
+                    proximity_weight=proximity_weight,
+                )
+            
+            query_tokens = self._tokenize(query)
+            scores = self._bm25.get_scores(query_tokens)
+            query_terms = {t for t in self._tokenize_terms(query) if len(t) > 2}
+            top_indices = np.argsort(scores)[::-1][:top_k]
+            adjusted: list[tuple[int, float]] = []
+            for idx in top_indices:
+                base_score = float(scores[idx])
+                if base_score <= 0:
+                    continue
+                base_score += self._field_boost(
+                    int(idx),
+                    query_terms,
+                    title_boost=title_boost,
+                    heading_boost=heading_boost,
+                )
+                if proximity_weight > 0 and query_terms:
+                    chunk_idx = int(idx)
+                    if chunk_idx < len(self._chunks):
+                        chunk_terms = self._tokenize_terms(self._chunks[chunk_idx][1].text)
+                        base_score += proximity_weight * self._term_proximity(query_terms, chunk_terms)
+                adjusted.append((int(idx), base_score))
+            return adjusted
 
     def _fallback_sparse_search(
         self,
@@ -1294,69 +1409,74 @@ class HybridRetrievalEngine:
         proximity_weight: float = 0.0,
     ) -> list[tuple[int, float]]:
         """Fallback sparse search using token overlap when BM25 isn't available."""
-        if not self._tokenized_corpus:
-            return []
-        query_terms = {t for t in self._tokenize_terms(query) if len(t) > 2}
-        query_tokens = set(self._tokenize(query))
-        if not query_tokens:
-            return []
-        scores = []
-        for idx, tokens in enumerate(self._tokenized_corpus):
-            overlap = query_tokens.intersection(tokens)
-            if overlap:
-                base_score = float(len(overlap))
-                base_score += self._field_boost(
-                    idx,
-                    query_terms,
-                    title_boost=title_boost,
-                    heading_boost=heading_boost,
-                )
-                if proximity_weight > 0 and query_terms:
-                    if idx < len(self._chunks):
-                        chunk_terms = self._tokenize_terms(self._chunks[idx][1].text)
-                        base_score += proximity_weight * self._term_proximity(query_terms, chunk_terms)
-                scores.append((idx, base_score))
-        if not scores:
-            return []
-        scores.sort(key=lambda x: x[1], reverse=True)
-        return scores[:top_k]
+        with self._index_lock:
+            if not self._tokenized_corpus:
+                return []
+            query_terms = {t for t in self._tokenize_terms(query) if len(t) > 2}
+            query_tokens = set(self._tokenize(query))
+            if not query_tokens:
+                return []
+            scores = []
+            for idx, tokens in enumerate(self._tokenized_corpus):
+                overlap = query_tokens.intersection(tokens)
+                if overlap:
+                    base_score = float(len(overlap))
+                    base_score += self._field_boost(
+                        idx,
+                        query_terms,
+                        title_boost=title_boost,
+                        heading_boost=heading_boost,
+                    )
+                    if proximity_weight > 0 and query_terms:
+                        if idx < len(self._chunks):
+                            chunk_terms = self._tokenize_terms(self._chunks[idx][1].text)
+                            base_score += proximity_weight * self._term_proximity(query_terms, chunk_terms)
+                    scores.append((idx, base_score))
+            if not scores:
+                return []
+            scores.sort(key=lambda x: x[1], reverse=True)
+            return scores[:top_k]
 
     def get_document_trees(self) -> dict[str, DocumentTree]:
         """Expose built document trees for RAPTOR-style retrieval."""
-        return dict(self._trees)
+        with self._index_lock:
+            return dict(self._trees)
 
     def get_keyword_graph_index(self) -> dict[str, set[int]]:
         """Expose keyword graph index (term -> chunk indices)."""
-        return {
-            term: set(indices) for term, indices in self._graph.items()
-        } if self._graph else {}
+        with self._index_lock:
+            return {
+                term: set(indices) for term, indices in self._graph.items()
+            } if self._graph else {}
 
     def get_chunk_records(self) -> list[tuple[str, Chunk]]:
         """Return chunk records for downstream multi-resolution retrieval."""
-        return list(self._chunks)
+        with self._index_lock:
+            return list(self._chunks)
 
     def _literal_search(self, query: str, top_k: int) -> tuple[list[tuple[int, float]], int]:
         """Literal grep-style scoring for exact phrase/token matches."""
-        if not self._chunks:
-            return [], 0
-        cleaned = query.strip().lower()
-        if not cleaned:
-            return [], 0
-        tokens = [t for t in self._tokenize(cleaned) if len(t) > 2]
-        scores: list[tuple[int, float]] = []
-        for idx, (_, chunk) in enumerate(self._chunks):
-            text = chunk.text.lower()
-            score = 0.0
-            if cleaned and cleaned in text:
-                score += 5.0 + text.count(cleaned)
-            if tokens:
-                score += sum(1.0 for token in tokens if token in text)
-            if score > 0:
-                scores.append((idx, score))
-        if not scores:
-            return [], 0
-        scores.sort(key=lambda x: x[1], reverse=True)
-        return scores[:top_k], len(scores)
+        with self._index_lock:
+            if not self._chunks:
+                return [], 0
+            cleaned = query.strip().lower()
+            if not cleaned:
+                return [], 0
+            tokens = [t for t in self._tokenize(cleaned) if len(t) > 2]
+            scores: list[tuple[int, float]] = []
+            for idx, (_, chunk) in enumerate(self._chunks):
+                text = chunk.text.lower()
+                score = 0.0
+                if cleaned and cleaned in text:
+                    score += 5.0 + text.count(cleaned)
+                if tokens:
+                    score += sum(1.0 for token in tokens if token in text)
+                if score > 0:
+                    scores.append((idx, score))
+            if not scores:
+                return [], 0
+            scores.sort(key=lambda x: x[1], reverse=True)
+            return scores[:top_k], len(scores)
     
     def _reciprocal_rank_fusion(
         self,
@@ -1388,10 +1508,11 @@ class HybridRetrievalEngine:
         
         # Prepare query-document pairs
         pairs = []
-        for idx, _ in candidates:
-            if idx < len(self._chunks):
-                _, chunk = self._chunks[idx]
-                pairs.append((query, chunk.text))
+        with self._index_lock:
+            for idx, _ in candidates:
+                if idx < len(self._chunks):
+                    _, chunk = self._chunks[idx]
+                    pairs.append((query, chunk.text))
         
         if not pairs:
             return candidates[:top_k]
@@ -1428,12 +1549,15 @@ class HybridRetrievalEngine:
         
         scored: list[tuple[int, float]] = []
         limit = min(len(candidates), self._config.colbert_top_k)
-        for idx, _ in candidates[:limit]:
-            if idx >= len(self._chunks):
-                continue
-            _, chunk = self._chunks[idx]
+        with self._index_lock:
+            chunk_texts = [
+                (idx, self._chunks[idx][1].text)
+                for idx, _ in candidates[:limit]
+                if idx < len(self._chunks)
+            ]
+        for idx, text in chunk_texts:
             try:
-                chunk_embed = self._encode_colbert(chunk.text)
+                chunk_embed = self._encode_colbert(text)
                 score = self._colbert_similarity(query_embed, chunk_embed)
                 scored.append((idx, score))
             except Exception as exc:
@@ -1656,58 +1780,60 @@ class HybridRetrievalEngine:
         results: list[RetrievalResult] = []
         allowed_ids = set(document_ids) if document_ids else None
         
-        # Hierarchy/Graph Expansion (Phase 4/6)
-        expanded_indices = set(idx for idx, _ in final_results)
-        
-        # 1. Graph expansion: Find related chunks via shared keywords
-        if self._config.graph and allowed_ids is None:
-            query_tokens = self._tokenize(text)
-            for token in query_tokens:
-                if token in self._graph:
-                    # Add top related chunks for each keyword
-                    expanded_indices.update(list(self._graph[token])[:2])
-        
-        retrieval_method = "hybrid" if len(result_lists) > 1 else (
-            "dense" if dense_results else "sparse" if sparse_results else "literal"
-        )
+        with self._index_lock:
+            # Hierarchy/Graph Expansion (Phase 4/6)
+            expanded_indices = set(idx for idx, _ in final_results)
+            
+            # 1. Graph expansion: Find related chunks via shared keywords
+            if self._config.graph and allowed_ids is None:
+                query_tokens = self._tokenize(text)
+                for token in query_tokens:
+                    if token in self._graph:
+                        # Add top related chunks for each keyword
+                        expanded_indices.update(list(self._graph[token])[:2])
+            
+            retrieval_method = "hybrid" if len(result_lists) > 1 else (
+                "dense" if dense_results else "sparse" if sparse_results else "literal"
+            )
 
-        for idx, score in final_results:
-            if idx < len(self._chunks):
-                doc_id, chunk = self._chunks[idx]
-                if allowed_ids is not None and doc_id not in allowed_ids:
-                    continue
-                doc = id_to_doc.get(doc_id)
-                if not doc: continue
-                
-                # 2. Hierarchy expansion (RAPTOR): Get parent summary
-                extra_context = []
-                if self._config.raptor and doc_id in self._trees:
-                    from .hierarchy import HierarchicalRetriever
-                    hr = HierarchicalRetriever(self._trees[doc_id])
-                    extra_context = hr.get_context_chain(f"{chunk.index}")
-                
-                # Create a transient document for the chunk
-                chunk_text = chunk.text
-                if extra_context:
-                    # Prepend hierarchical context to chunk text
-                    context_str = "\n".join(extra_context)
-                    chunk_text = f"[Hierarchy Context]\n{context_str}\n\n[Chunk Content]\n{chunk.text}"
+            for idx, score in final_results:
+                if idx < len(self._chunks):
+                    doc_id, chunk = self._chunks[idx]
+                    if allowed_ids is not None and doc_id not in allowed_ids:
+                        continue
+                    doc = id_to_doc.get(doc_id)
+                    if not doc:
+                        continue
+                    
+                    # 2. Hierarchy expansion (RAPTOR): Get parent summary
+                    extra_context = []
+                    if self._config.raptor and doc_id in self._trees:
+                        from .hierarchy import HierarchicalRetriever
+                        hr = HierarchicalRetriever(self._trees[doc_id])
+                        extra_context = hr.get_context_chain(f"{chunk.index}")
+                    
+                    # Create a transient document for the chunk
+                    chunk_text = chunk.text
+                    if extra_context:
+                        # Prepend hierarchical context to chunk text
+                        context_str = "\n".join(extra_context)
+                        chunk_text = f"[Hierarchy Context]\n{context_str}\n\n[Chunk Content]\n{chunk.text}"
 
-                chunk_doc = Document(
-                    id=f"{doc.id}-{chunk.index}",
-                    title=doc.title,
-                    text=chunk_text,
-                    metadata=doc.metadata,
-                )
-                results.append(RetrievalResult(
-                    document=chunk_doc,
-                    score=score,
-                    chunk_text=chunk.text,
-                    retrieval_method=retrieval_method,
-                    chunk_id=f"{doc.id}-{chunk.index}",
-                    start_char=chunk.start_char,
-                    end_char=chunk.end_char,
-                ))
+                    chunk_doc = Document(
+                        id=f"{doc.id}-{chunk.index}",
+                        title=doc.title,
+                        text=chunk_text,
+                        metadata=doc.metadata,
+                    )
+                    results.append(RetrievalResult(
+                        document=chunk_doc,
+                        score=score,
+                        chunk_text=chunk.text,
+                        retrieval_method=retrieval_method,
+                        chunk_id=f"{doc.id}-{chunk.index}",
+                        start_char=chunk.start_char,
+                        end_char=chunk.end_char,
+                    ))
         
         return results
 

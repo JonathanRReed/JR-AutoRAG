@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 
-from ..core.providers import discover_local_providers, OpenRouterProvider, OllamaCloudProvider, ProviderError
+from ..core.providers import (
+    discover_local_providers,
+    OpenRouterProvider,
+    OllamaCloudProvider,
+    ProviderError,
+)
 from ..schemas.config import LocalProviderInfo, ProviderKind
 
 router = APIRouter(prefix="/providers", tags=["providers"])
@@ -79,15 +83,15 @@ async def openrouter_status(
 ) -> OpenRouterStatus:
     """Check OpenRouter provider status and API key configuration."""
     provided_key = _extract_openrouter_key(x_openrouter_key, authorization)
-    api_key = provided_key or os.environ.get("OPENROUTER_API_KEY")
-    provider = OpenRouterProvider(api_key=api_key)
+    provider = OpenRouterProvider(api_key=provided_key)
+    api_key = provider.api_key
     
     if not api_key:
         return OpenRouterStatus(
             available=False,
             api_key_configured=False,
             default_model=provider.default_model or "openai/gpt-4o-mini",
-            error_message="OPENROUTER_API_KEY environment variable not set",
+            error_message="OpenRouter API key not configured",
         )
     
     try:
@@ -112,13 +116,14 @@ async def list_openrouter_models(
     authorization: str | None = Header(default=None),
 ) -> list[OpenRouterModel]:
     """List available models from OpenRouter."""
-    api_key = _extract_openrouter_key(x_openrouter_key, authorization) or os.environ.get("OPENROUTER_API_KEY")
-    provider = OpenRouterProvider(api_key=api_key)
+    provided_key = _extract_openrouter_key(x_openrouter_key, authorization)
+    provider = OpenRouterProvider(api_key=provided_key)
+    api_key = provider.api_key
 
     if not api_key:
         raise HTTPException(
             status_code=401,
-            detail="OPENROUTER_API_KEY environment variable not set",
+            detail="OpenRouter API key not configured",
         )
     
     try:
@@ -154,16 +159,14 @@ async def list_ollama_cloud_models(
     authorization: str | None = Header(default=None),
 ) -> list[str]:
     """List available models from Ollama Cloud."""
-    api_key = _extract_ollama_key(x_ollama_key, authorization) or os.environ.get("OLLAMA_API_KEY")
-    
-    if not api_key:
-        raise HTTPException(
-            status_code=401,
-            detail="OLLAMA_API_KEY not provided. Get one at https://ollama.com/settings/keys",
-        )
-    
+    provided_key = _extract_ollama_key(x_ollama_key, authorization)
+
     try:
-        provider = OllamaCloudProvider(api_key=api_key)
+        provider = OllamaCloudProvider(api_key=provided_key)
+    except ProviderError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+    try:
         models = await provider.list_models()
         return models
     except ProviderError as exc:
@@ -179,15 +182,16 @@ async def test_openrouter(
     """Test OpenRouter connection with a simple prompt."""
     import time
     
-    api_key = _extract_openrouter_key(x_openrouter_key, authorization) or os.environ.get("OPENROUTER_API_KEY")
-    provider = OpenRouterProvider(api_key=api_key)
+    provided_key = _extract_openrouter_key(x_openrouter_key, authorization)
+    provider = OpenRouterProvider(api_key=provided_key)
+    api_key = provider.api_key
     model = request.model or provider.default_model or "openai/gpt-4o-mini"
     
     if not api_key:
         return OpenRouterTestResponse(
             success=False,
             model=model,
-            error="OPENROUTER_API_KEY environment variable not set",
+            error="OpenRouter API key not configured",
         )
     
     start = time.perf_counter()

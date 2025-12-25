@@ -22,6 +22,7 @@ interface ProviderCarouselProps {
   setLocalSelection: (baseUrl: string, field: keyof RoleSelection, value: string) => void;
   applyLocalProvider: (provider: LocalProviderInfo) => void;
   apiBaseUrl?: string;
+  isConnected?: boolean;
 }
 
 export function ProviderCarousel({
@@ -37,6 +38,7 @@ export function ProviderCarousel({
   setLocalSelection,
   applyLocalProvider,
   apiBaseUrl = "",
+  isConnected = false,
 }: ProviderCarouselProps) {
   const [activeTab, setActiveTab] = useState<ProviderTab>("ollama");
   
@@ -103,9 +105,11 @@ export function ProviderCarousel({
 
   useEffect(() => {
     refreshLocalProviders();
-    fetchOpenRouterStatus();
-    fetchRagfuzzStatus();
-  }, []);
+    if (apiBaseUrl && isConnected) {
+      fetchOpenRouterStatus();
+      fetchRagfuzzStatus();
+    }
+  }, [apiBaseUrl, isConnected]);
 
   const fetchOpenRouterStatus = async () => {
     try {
@@ -124,8 +128,9 @@ export function ProviderCarousel({
           fetchOpenRouterModels();
         }
       }
-    } catch (err) {
-      console.error("Failed to fetch OpenRouter status", err);
+      // Silently ignore 429 rate limit errors - will retry on next render
+    } catch {
+      // Network errors are expected during API startup
     }
   };
 

@@ -11,6 +11,7 @@ from typing import Any, AsyncIterator
 import httpx
 
 from ..schemas.config import LocalProviderInfo, ProviderConfig, ProviderKind
+from .secrets_vault import get_secrets_vault
 
 DEFAULT_PROVIDER_TIMEOUT = 300.0
 DEFAULT_STREAM_TIMEOUT = 300.0
@@ -26,6 +27,43 @@ def _get_timeout(env_key: str, default: float) -> float:
     except ValueError:
         return default
     return value if value > 0 else default
+
+
+def _infer_secret_key_name(name: str, base_url: str) -> str:
+    lowered = (name or "").lower()
+    base = (base_url or "").lower()
+    if "openrouter" in lowered or "openrouter" in base:
+        return "OPENROUTER_API_KEY"
+    if "ollama.com" in base or "ollama cloud" in lowered or "ollama_cloud" in lowered:
+        return "OLLAMA_API_KEY"
+    if "lm" in lowered or "studio" in lowered:
+        return "LM_STUDIO_API_KEY"
+    if "openai" in lowered or "api.openai.com" in base:
+        return "OPENAI_API_KEY"
+    if "anthropic" in lowered or "claude" in lowered:
+        return "ANTHROPIC_API_KEY"
+    if "google" in lowered or "gemini" in lowered:
+        return "GOOGLE_API_KEY"
+    sanitized = "".join(ch if ch.isalnum() else "_" for ch in (name or "PROVIDER").upper())
+    return f"{sanitized}_API_KEY"
+
+
+def resolve_provider_api_key(
+    name: str,
+    base_url: str,
+    api_key: str | None = None,
+    fallback: str | None = None,
+) -> str | None:
+    if api_key:
+        trimmed = api_key.strip()
+        if trimmed:
+            return trimmed
+    if fallback:
+        trimmed = fallback.strip()
+        if trimmed:
+            return trimmed
+    vault = get_secrets_vault()
+    return vault.get(_infer_secret_key_name(name, base_url))
 
 
 class ProviderError(RuntimeError):
@@ -82,7 +120,11 @@ class OllamaProvider(_HTTPProvider):
     
     def _get_headers(self) -> dict[str, str] | None:
         if self.api_key:
-            return {"Authorization": f"Bearer {self.api_key}"}
+            return {
+                "Authorization": f"Bearer {self.api_key}",
+                "X-API-Key": self.api_key,
+                "X-Ollama-Key": self.api_key,
+            }
         return None
     
     async def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -170,7 +212,7 @@ class OllamaCloudProvider(OllamaProvider):
         api_key: str | None = None,
         default_model: str | None = None,
     ) -> None:
-        resolved_key = api_key or os.environ.get("OLLAMA_API_KEY")
+        resolved_key = resolve_provider_api_key("ollama cloud", self.OLLAMA_CLOUD_URL, api_key)
         super().__init__(self.OLLAMA_CLOUD_URL, default_model or "llama3", resolved_key)
         if not self.api_key:
             raise ProviderError("Ollama Cloud requires an API key. Set OLLAMA_API_KEY or provide api_key parameter.")
@@ -256,7 +298,7 @@ class OpenRouterProvider(_HTTPProvider):
         default_model: str | None = None,
     ) -> None:
         super().__init__(self.OPENROUTER_BASE_URL, default_model or "openai/gpt-4o-mini")
-        self.api_key = api_key or os.environ.get("OPENROUTER_API_KEY")
+        self.api_key = resolve_provider_api_key("openrouter", self.OPENROUTER_BASE_URL, api_key)
     
     def _get_headers(self) -> dict[str, str]:
         headers = {}
@@ -354,24 +396,25 @@ class ProviderFactory:
     def build(self, cfg: ProviderConfig) -> LLMProvider:
         name = (cfg.name or "").lower()
         base_url = str(cfg.base_url).lower()
+        resolved_key = resolve_provider_api_key(cfg.name, str(cfg.base_url), cfg.api_key, self.api_key)
         
         # Check for Ollama Cloud (ollama.com URL or explicit "ollama cloud" name)
         if "ollama.com" in base_url or "ollama_cloud" in name or "ollama cloud" in name:
             return OllamaCloudProvider(
-                api_key=cfg.api_key or self.api_key,
+                api_key=resolved_key,
                 default_model=cfg.planner_model or cfg.generator_model,
             )
         # Local Ollama
         if "ollama" in name:
-            return OllamaProvider(str(cfg.base_url), cfg.planner_model or cfg.generator_model, cfg.api_key)
+            return OllamaProvider(str(cfg.base_url), cfg.planner_model or cfg.generator_model, resolved_key)
         if "lm" in name or "studio" in name:
             return LMStudioProvider(str(cfg.base_url), cfg.generator_model)
         if "openrouter" in name:
             return OpenRouterProvider(
-                api_key=cfg.api_key or self.api_key,
+                api_key=resolved_key,
                 default_model=cfg.generator_model,
             )
-        return CloudProvider(str(cfg.base_url), cfg.generator_model, api_key=cfg.api_key or self.api_key)
+        return CloudProvider(str(cfg.base_url), cfg.generator_model, api_key=resolved_key)
 
     def get_default_provider(self) -> LLMProvider | None:
         """Get a default local provider for background tasks like GraphRAG.
@@ -414,7 +457,15 @@ async def discover_models(cfg: ProviderConfig) -> list[str]:
     """Fetch available model names for a provider."""
 
     base = str(cfg.base_url).rstrip("/")
-    headers = {"Authorization": f"Bearer {cfg.api_key}"} if cfg.api_key else None
+    base_lower = base.lower()
+    api_key = resolve_provider_api_key(cfg.name, base, cfg.api_key)
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
+
+    def _models_url(base_url: str) -> str:
+        if base_url.endswith("/v1"):
+            return f"{base_url}/models"
+        return f"{base_url}/v1/models"
+
     async with httpx.AsyncClient(timeout=15.0, headers=headers) as client:
         kind = (cfg.name or "").lower()
         try:
@@ -423,13 +474,20 @@ async def discover_models(cfg: ProviderConfig) -> list[str]:
                 resp.raise_for_status()
                 data = resp.json()
                 return [model.get("name", "") for model in data.get("models", []) if model.get("name")]
+            if "openrouter" in kind or "openrouter.ai" in base_lower:
+                if not api_key:
+                    raise ProviderError("OpenRouter requires an API key.")
+                resp = await client.get(_models_url(base))
+                resp.raise_for_status()
+                data = resp.json()
+                return [item.get("id", "") for item in data.get("data", []) if item.get("id")]
             if "lm" in kind or "studio" in kind:
-                resp = await client.get(f"{base}/v1/models")
+                resp = await client.get(_models_url(base))
                 resp.raise_for_status()
                 data = resp.json()
                 return [item.get("id", "") for item in data.get("data", []) if item.get("id")]
             # Fallback for OpenAI-compatible clouds
-            resp = await client.get(f"{base}/v1/models")
+            resp = await client.get(_models_url(base))
             resp.raise_for_status()
             data = resp.json()
             return [item.get("id", "") for item in data.get("data", []) if item.get("id")]

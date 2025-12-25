@@ -108,7 +108,11 @@ class SemanticChunker:
     
     def _find_semantic_boundaries(self, sentences: list[str]) -> list[int]:
         """Find indices where semantic shifts occur."""
-        if not self._embedder or len(sentences) < 3:
+        if (
+            not self._embedder
+            or getattr(self._embedder, "supports_semantic_chunking", True) is False
+            or len(sentences) < 3
+        ):
             return []
         
         # Embed all sentences
@@ -284,4 +288,3 @@ def get_chunker(
         return RecursiveChunker(target_size=target_size, overlap=overlap)
     else:
         return FixedChunker(target_size=target_size, overlap=overlap)
-

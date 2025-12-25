@@ -12,6 +12,7 @@ Key capabilities:
 
 from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -98,14 +99,16 @@ For each claim that cannot be supported by any chunk, do one of:
 Keep all correctly cited information intact. 
 Output ONLY the corrected answer text, nothing else."""
 
-    def __init__(self, max_repair_attempts: int = 2) -> None:
+    def __init__(self, max_repair_attempts: int = 2, repair_timeout: float = 30.0) -> None:
         """Initialize citation verifier.
         
         Args:
             max_repair_attempts: Max LLM repair attempts before giving up
+            repair_timeout: Timeout in seconds for each repair attempt
         """
         self._patterns = [re.compile(p) for p in self.CITATION_PATTERNS]
         self._max_repair_attempts = max_repair_attempts
+        self._repair_timeout = repair_timeout
     
     def extract_citations(self, text: str) -> list[tuple[str, str]]:
         """Extract all citation IDs and their full match text from answer.
@@ -222,10 +225,13 @@ Output ONLY the corrected answer text, nothing else."""
             )
             
             try:
-                repaired = await provider.chat([
-                    {"role": "system", "content": "You are a citation repair assistant. Fix invalid citations."},
-                    {"role": "user", "content": prompt},
-                ])
+                repaired = await asyncio.wait_for(
+                    provider.chat([
+                        {"role": "system", "content": "You are a citation repair assistant. Fix invalid citations."},
+                        {"role": "user", "content": prompt},
+                    ]),
+                    timeout=self._repair_timeout,
+                )
                 
                 # Verify the repaired answer
                 new_result = self.verify(repaired.strip(), chunks)

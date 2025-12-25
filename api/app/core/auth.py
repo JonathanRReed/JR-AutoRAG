@@ -111,12 +111,27 @@ class APIKeyAuth:
         """Check if authentication is enabled."""
         return self._enabled
     
+    def has_keys(self) -> bool:
+        """Return True if any API keys are configured."""
+        return len(self._keys) > 0
+
     def require_auth(self) -> bool:
         """Check if authentication is required.
         
-        Returns True if auth is enabled AND keys are configured.
+        Returns True if auth is enabled.
         """
-        return self._enabled and len(self._keys) > 0
+        return self._enabled
+
+    def _scope_allows(self, scopes: list[str], required_scope: str | None) -> bool:
+        if required_scope is None:
+            return True
+        if "admin" in scopes:
+            return True
+        if required_scope == "read":
+            return "read" in scopes or "write" in scopes
+        if required_scope == "write":
+            return "write" in scopes
+        return required_scope in scopes
     
     def generate_key(self, name: str, scopes: list[str] | None = None) -> tuple[str, APIKey]:
         """Generate a new API key.
@@ -165,13 +180,21 @@ class APIKeyAuth:
         if not api_key.enabled:
             return False
         
-        if required_scope and required_scope not in api_key.scopes:
+        if not self._scope_allows(api_key.scopes, required_scope):
             return False
         
         # Update last used
         api_key.last_used = datetime.utcnow()
         
         return True
+
+    def get_scopes(self, key: str) -> list[str]:
+        """Return scopes for a plaintext key, or empty list if unknown."""
+        key_hash = self._hash_key(key)
+        api_key = self._keys.get(key_hash)
+        if not api_key:
+            return []
+        return list(api_key.scopes)
     
     def revoke(self, key: str) -> bool:
         """Revoke an API key (disable it)."""

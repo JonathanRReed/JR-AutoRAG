@@ -18,6 +18,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from enum import IntFlag
 from typing import Any, Generic, TypeVar
+from threading import RLock
 
 
 T = TypeVar("T")
@@ -81,6 +82,7 @@ class LRUCache(Generic[T]):
         max_size: int = 1000,
         default_ttl: float | None = 3600,  # 1 hour default
     ) -> None:
+        self._lock = RLock()
         self._max_size = max_size
         self._default_ttl = default_ttl
         self._cache: OrderedDict[str, CacheEntry[T]] = OrderedDict()
@@ -94,87 +96,93 @@ class LRUCache(Generic[T]):
     def get(self, key: str) -> T | None:
         """Get item from cache."""
         cache_key = self._make_key(key)
-        
-        if cache_key not in self._cache:
-            self._misses += 1
-            return None
-        
-        entry = self._cache[cache_key]
-        
-        # Check expiration
-        if entry.is_expired:
-            del self._cache[cache_key]
-            self._misses += 1
-            return None
-        
-        # Move to end (most recently used)
-        self._cache.move_to_end(cache_key)
-        entry.touch()
-        self._hits += 1
-        
-        return entry.value
+        with self._lock:
+            if cache_key not in self._cache:
+                self._misses += 1
+                return None
+            
+            entry = self._cache[cache_key]
+            
+            # Check expiration
+            if entry.is_expired:
+                del self._cache[cache_key]
+                self._misses += 1
+                return None
+            
+            # Move to end (most recently used)
+            self._cache.move_to_end(cache_key)
+            entry.touch()
+            self._hits += 1
+            
+            return entry.value
     
     def set(self, key: str, value: T, ttl: float | None = None) -> None:
         """Set item in cache."""
         cache_key = self._make_key(key)
-        
-        # Remove if exists
-        if cache_key in self._cache:
-            del self._cache[cache_key]
-        
-        # Evict oldest if at capacity
-        while len(self._cache) >= self._max_size:
-            self._cache.popitem(last=False)
-        
-        # Add new entry
-        self._cache[cache_key] = CacheEntry(
-            key=cache_key,
-            value=value,
-            created_at=time.time(),
-            ttl_seconds=ttl if ttl is not None else self._default_ttl,
-        )
+        with self._lock:
+            # Remove if exists
+            if cache_key in self._cache:
+                del self._cache[cache_key]
+            
+            # Evict oldest if at capacity
+            while len(self._cache) >= self._max_size:
+                self._cache.popitem(last=False)
+            
+            # Add new entry
+            self._cache[cache_key] = CacheEntry(
+                key=cache_key,
+                value=value,
+                created_at=time.time(),
+                ttl_seconds=ttl if ttl is not None else self._default_ttl,
+            )
     
     def delete(self, key: str) -> bool:
         """Delete item from cache."""
         cache_key = self._make_key(key)
-        if cache_key in self._cache:
-            del self._cache[cache_key]
-            return True
-        return False
+        with self._lock:
+            if cache_key in self._cache:
+                del self._cache[cache_key]
+                return True
+            return False
     
     def clear(self) -> None:
         """Clear all cached items."""
-        self._cache.clear()
-        self._hits = 0
-        self._misses = 0
+        with self._lock:
+            self._cache.clear()
+            self._hits = 0
+            self._misses = 0
     
     def cleanup_expired(self) -> int:
         """Remove expired entries. Returns count removed."""
-        expired = [
-            key for key, entry in self._cache.items()
-            if entry.is_expired
-        ]
-        for key in expired:
-            del self._cache[key]
-        return len(expired)
+        with self._lock:
+            expired = [
+                key for key, entry in self._cache.items()
+                if entry.is_expired
+            ]
+            for key in expired:
+                del self._cache[key]
+            return len(expired)
     
     @property
     def size(self) -> int:
-        return len(self._cache)
+        with self._lock:
+            return len(self._cache)
     
     @property
     def hit_rate(self) -> float:
-        total = self._hits + self._misses
-        return self._hits / total if total > 0 else 0.0
+        with self._lock:
+            total = self._hits + self._misses
+            return self._hits / total if total > 0 else 0.0
     
     def stats(self) -> dict[str, Any]:
-        return {
-            "size": self.size,
-            "max_size": self._max_size,
-            "hits": self._hits,
-            "misses": self._misses,
-            "hit_rate": self.hit_rate,
-        }
+        with self._lock:
+            return {
+                "size": len(self._cache),
+                "max_size": self._max_size,
+                "hits": self._hits,
+                "misses": self._misses,
+                "hit_rate": self.hit_rate,
+            }
 
 
 class EmbeddingCache:

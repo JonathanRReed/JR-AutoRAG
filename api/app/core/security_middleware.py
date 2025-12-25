@@ -6,6 +6,7 @@ into a cohesive security layer for production deployments.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import time
 from typing import Callable, Optional
@@ -45,10 +46,10 @@ PUBLIC_PATHS = {
 
 # Scope requirements per route prefix
 ROUTE_SCOPES = {
-    "/query": "query",
-    "/documents": "ingest",
+    "/query": "read",
+    "/documents": "write",
     "/config": "admin",
-    "/evaluation": "eval",
+    "/evaluation": "read",
     "/admin": "admin",
     "/api/keys": "admin",
 }
@@ -105,13 +106,24 @@ async def verify_api_key(
     auth = get_auth()
     path = request.url.path
     
+    # Default user context to None for downstream consumers
+    request.state.user_id = None
+    request.state.scopes = []
+
     # Skip auth for public paths
     if path in PUBLIC_PATHS:
         return None
     
-    # If auth is not enabled or required, allow
+    # If auth is not enabled, allow
     if not auth.require_auth():
         return None
+
+    # Fail closed if auth enabled but no keys configured
+    if not auth.has_keys():
+        raise HTTPException(
+            status_code=500,
+            detail="Authentication is enabled but no API keys are configured. Set AUTORAG_API_KEYS.",
+        )
     
     # Auth is required - verify key
     if not api_key:
@@ -127,12 +139,18 @@ async def verify_api_key(
             headers={"WWW-Authenticate": "ApiKey"},
         )
     
-    # Determine required scope based on route
+    # Determine required scope based on route/method
     required_scope = None
-    for prefix, scope in ROUTE_SCOPES.items():
-        if path.startswith(prefix):
-            required_scope = scope
-            break
+    if path.startswith("/documents"):
+        if request.method.upper() in {"GET", "HEAD", "OPTIONS"}:
+            required_scope = "read"
+        else:
+            required_scope = "write"
+    else:
+        for prefix, scope in ROUTE_SCOPES.items():
+            if path.startswith(prefix):
+                required_scope = scope
+                break
     
     if not auth.verify(api_key, required_scope=required_scope):
         audit_log = get_audit_log()
@@ -146,15 +164,19 @@ async def verify_api_key(
             detail="Invalid API key or insufficient permissions.",
         )
     
+    scopes = auth.get_scopes(api_key)
     # Log successful auth
     audit_log = get_audit_log()
+    user_id = hashlib.sha256(api_key.encode()).hexdigest()[:16]
     audit_log.log_auth(
         success=True,
-        user_id=api_key[:8] + "...",  # Log partial key for identification
+        user_id=user_id + "...",  # Log short hash for identification
         ip_address=request.client.host if request.client else None,
     )
     
-    return api_key[:8]  # Return partial key as user identifier
+    request.state.user_id = user_id
+    request.state.scopes = scopes
+    return user_id  # Return short hash as user identifier
 
 
 # =============================================================================
