@@ -1111,6 +1111,7 @@ export function App() {
                     setLocalSelection={setLocalSelection}
                     applyLocalProvider={applyLocalProvider}
                     apiBaseUrl={baseUrl}
+                    isConnected={isConnected}
                   />
 
                   {/* Advanced Provider Configuration */}

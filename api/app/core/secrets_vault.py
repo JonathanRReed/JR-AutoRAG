@@ -285,6 +285,7 @@ class SecretsVault:
         "HUGGINGFACE_TOKEN",
         "OLLAMA_API_KEY",
         "LM_STUDIO_API_KEY",
+        "OPENROUTER_API_KEY",
     }
     
     def __init__(
@@ -318,7 +319,11 @@ class SecretsVault:
                 print(f"Warning: Could not initialize encrypted vault: {e}")
         
         if not self._keychain and not self._vault:
-            print("Warning: No secure secret storage available. Secrets will only be read from environment variables.")
+            print(
+                "Warning: No secure secret storage available. "
+                "Keys entered in the UI will be stored in config.json (plaintext). "
+                "Install keyring or cryptography to enable secure storage."
+            )
     
     def get(self, key: str) -> Optional[str]:
         """Get a secret value.

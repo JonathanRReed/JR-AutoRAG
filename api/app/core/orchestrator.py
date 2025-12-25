@@ -14,6 +14,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import re
 import time
 from datetime import datetime
@@ -63,6 +64,7 @@ from .self_rag import SelfRAGCritic, SelfRAGConfig, get_self_rag_critic
 from .query_mode import QueryMode, build_no_evidence_answer
 from .stage_budgets import StageBudgetConfig, StageBudgetEnforcer, get_budget_enforcer
 from .persistence import get_disk_query_cache, CacheEvent
+from .pii_detector import get_pii_detector
 
 logger = logging.getLogger("autorag.pipeline")
 
@@ -583,11 +585,16 @@ class Orchestrator:
             status=status,
         )
 
-    def _cache_config_hash(self, document_ids: list[str] | None) -> str:
+    def _cache_config_hash(
+        self,
+        document_ids: list[str] | None,
+        cache_scope: str | None = None,
+    ) -> str:
         config = self._config
         provider = config.provider if config else None
         payload = {
             "document_ids": document_ids or [],
+            "cache_scope": cache_scope or "",
             "retrieval": config.retrieval.model_dump() if config else {},
             "provider": {
                 "name": provider.name if provider else "",
@@ -599,6 +606,18 @@ class Orchestrator:
         }
         encoded = json.dumps(payload, sort_keys=True, default=str)
         return hashlib.sha256(encoded.encode()).hexdigest()[:16]
+
+    def _maybe_redact_pii(self, text: str) -> tuple[str, bool]:
+        if not text:
+            return text, False
+        flag = os.environ.get("AUTORAG_PII_REDACT", "false").lower()
+        if flag not in ("true", "1", "yes", "on"):
+            return text, False
+        detector = get_pii_detector()
+        result = detector.detect(text)
+        if not result.has_pii:
+            return text, False
+        return detector.redact(text, result.matches), True
 
     # Human-readable stage messages for progress updates
     STAGE_MESSAGES = {
@@ -639,6 +658,7 @@ class Orchestrator:
         history: list[dict[str, str]] | None = None,
         trace_id: str | None = None,
         query_mode: QueryMode | None = None,  # P0.1: Grounded vs Open Domain
+        cache_scope: str | None = None,
     ) -> dict:
         if trace_id is None:
             trace_id = hashlib.md5(f"{query}{time.time()}".encode()).hexdigest()[:12]
@@ -730,7 +750,7 @@ class Orchestrator:
             return list(seen.values())
 
         cache_manager = get_cache_manager()
-        cache_hash = self._cache_config_hash(document_ids)
+        cache_hash = self._cache_config_hash(document_ids, cache_scope)
         
         # G3: Get corpus version and retrieval mode for versioned cache keys
         cache_corpus_version = ""
@@ -774,6 +794,7 @@ class Orchestrator:
             retrieval_mode=int(cache_retrieval_mode),
             preset_id=current_preset_id,
             model_ids=model_ids,
+            scope_key=cache_scope,
         )
         cache_event = disk_cache.get_last_event()
         
@@ -796,7 +817,17 @@ class Orchestrator:
             )
             record_step(cache_step)
             # Return cached result with updated trace
-            cached_result["steps"] = [step.__dict__ if hasattr(step, '__dict__') else step for step in pipeline_steps]
+            cached_result["steps"] = [
+                {
+                    "name": s.name,
+                    "duration_ms": s.duration_ms,
+                    "details": s.details,
+                    "status": s.status,
+                    "started_at": s.started_at.isoformat(),
+                    "completed_at": s.completed_at.isoformat(),
+                }
+                for s in pipeline_steps
+            ]
             cached_result["from_cache"] = True
             return cached_result
         
@@ -2020,12 +2051,17 @@ The retrieved evidence contains some conflicting information. When you encounter
         # If citations are invalid and we have a provider, attempt repair
         if not citation_result.all_valid and self._provider is not None:
             try:
-                citation_result = await self._citation_verifier.verify_and_repair(
-                    answer, chunks, self._provider
+                citation_result = await asyncio.wait_for(
+                    self._citation_verifier.verify_and_repair(
+                        answer, chunks, self._provider
+                    ),
+                    timeout=45.0,  # Overall timeout for citation repair
                 )
                 answer = citation_result.verified_answer
                 citation_details = citation_result.to_trace_dict()
                 citation_details["repair_applied"] = True
+            except asyncio.TimeoutError:
+                citation_details["repair_error"] = "Citation repair timed out"
             except Exception as e:
                 citation_details["repair_error"] = str(e)
         
@@ -2172,6 +2208,7 @@ The retrieved evidence contains some conflicting information. When you encounter
             )
 
         # Calculate final metrics
+        answer, pii_redacted = self._maybe_redact_pii(answer)
         total_tokens = len(context.split()) if context else 0
         coverage = 0.0
         if plan.steps:
@@ -2214,6 +2251,7 @@ The retrieved evidence contains some conflicting information. When you encounter
                 "colbert_enabled": colbert_enabled,
                 "precision_stats": precision_stats,
                 "rerank_enabled": rerank_enabled,
+                "pii_redacted": pii_redacted,
             },
             steps=pipeline_steps,
             started_at=pipeline_start,
@@ -2268,6 +2306,7 @@ The retrieved evidence contains some conflicting information. When you encounter
                 "colbert_enabled": colbert_enabled,
                 "precision_stats": precision_stats,
                 "rerank_enabled": rerank_enabled,
+                "pii_redacted": pii_redacted,
             },
             "confidence": {
                 "overall": reflection_result.confidence if reflection_result else 0.5,
@@ -2325,6 +2364,7 @@ The retrieved evidence contains some conflicting information. When you encounter
             retrieval_mode=int(retrieval_mode_flags),
             preset_id=current_preset_id,
             model_ids=model_ids,
+            scope_key=cache_scope,
         )
         
         return result
@@ -2416,6 +2456,7 @@ Be helpful, accurate, and concise."""
         
         total_duration_ms = sum(s.duration_ms for s in pipeline_steps)
         
+        answer, pii_redacted = self._maybe_redact_pii(answer)
         trace = self._telemetry.record(
             prompt=query,
             answer=answer,
@@ -2426,6 +2467,7 @@ Be helpful, accurate, and concise."""
                 "duration_ms": total_duration_ms,
                 "cache_hit": False,
                 "mode": "direct_no_retrieval",
+                "pii_redacted": pii_redacted,
             },
             steps=pipeline_steps,
             started_at=pipeline_start,
@@ -2455,6 +2497,7 @@ Be helpful, accurate, and concise."""
                 "duration_ms": total_duration_ms,
                 "cache_hit": False,
                 "mode": "direct_no_retrieval",
+                "pii_redacted": pii_redacted,
             },
             "steps": steps_out,
         }
@@ -2543,6 +2586,7 @@ Be helpful, accurate, and concise."""
         answer = self._abstention_rules.format_abstention_response(
             abstention_result, query, include_details=False
         )
+        answer, pii_redacted = self._maybe_redact_pii(answer)
         
         trace = self._telemetry.record(
             prompt=query,
@@ -2555,6 +2599,7 @@ Be helpful, accurate, and concise."""
                 "cache_hit": False,
                 "mode": "abstained",
                 "abstention_reason": abstention_result.reason.value if abstention_result.reason else "unknown",
+                "pii_redacted": pii_redacted,
             },
             steps=pipeline_steps,
             started_at=pipeline_start,
@@ -2597,6 +2642,7 @@ Be helpful, accurate, and concise."""
                 "mode": "abstained",
                 "abstention_reason": abstention_result.reason.value if abstention_result.reason else "unknown",
                 "abstention_confidence": abstention_result.confidence,
+                "pii_redacted": pii_redacted,
             },
             "steps": steps_out,
             "confidence": {

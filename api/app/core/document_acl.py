@@ -25,6 +25,20 @@ if TYPE_CHECKING:
 logger = logging.getLogger("autorag.acl")
 
 
+def _env_flag(key: str, default: bool) -> bool:
+    raw = os.environ.get(key)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"true", "1", "yes", "on"}
+
+
+def resolve_acl_defaults(auth_enabled: bool) -> tuple[bool, bool]:
+    """Return (default_public, new_doc_public) based on env and auth state."""
+    default_public = _env_flag("AUTORAG_ACL_DEFAULT_PUBLIC", True)
+    new_doc_public = _env_flag("AUTORAG_ACL_NEW_DOC_PUBLIC", not auth_enabled)
+    return default_public, new_doc_public
+
+
 # =============================================================================
 # ACL Types
 # =============================================================================
@@ -192,6 +206,11 @@ class ACLStore:
             self._save()
             return True
         return False
+
+    def clear(self) -> None:
+        """Delete all ACLs."""
+        self._acls = {}
+        self._save()
     
     def list_by_owner(self, owner: str) -> list[DocumentACL]:
         """List all ACLs owned by a user."""
@@ -228,7 +247,7 @@ class ACLEnforcer:
     def check_access(
         self,
         document_id: str,
-        user_id: str,
+        user_id: str | None,
         action: str = "read",
     ) -> tuple[bool, str]:
         """Check if user can access a document.
@@ -244,17 +263,26 @@ class ACLEnforcer:
         acl = self.store.get(document_id)
         
         if acl is None:
+            if action == "write":
+                if not user_id and self.default_public:
+                    return True, "No ACL defined, default public write (unauthenticated)"
+                return False, "No ACL defined for write access"
             if self.default_public:
                 return True, "No ACL defined, default public access"
-            else:
-                return False, "No ACL defined, default private"
+            return False, "No ACL defined, default private"
         
         if action == "write":
+            if not user_id:
+                return False, "Missing user context for write access"
             if acl.can_write(user_id):
                 return True, "User has write access"
             return False, "User lacks write permission"
         
         # Default to read check
+        if not user_id:
+            if acl.is_public:
+                return True, "Public document"
+            return False, "Missing user context for private document"
         if acl.can_read(user_id):
             return True, "User has read access"
         return False, "User lacks read permission"
@@ -262,7 +290,7 @@ class ACLEnforcer:
     def filter_by_access(
         self,
         chunks: list["EvidenceChunk"],
-        user_id: str,
+        user_id: str | None,
     ) -> list["EvidenceChunk"]:
         """Filter chunks to only those the user can access.
         
@@ -274,10 +302,18 @@ class ACLEnforcer:
             Filtered list of accessible chunks
         """
         if not user_id:
-            # No user context - return all if default public
             if self.default_public:
                 return chunks
-            return []
+            # Allow only explicitly public docs when default is private.
+            accessible = []
+            for chunk in chunks:
+                doc_id = self._get_document_id(chunk)
+                if not doc_id:
+                    continue
+                acl = self.store.get(doc_id)
+                if acl and acl.is_public:
+                    accessible.append(chunk)
+            return accessible
         
         accessible = []
         denied_count = 0
@@ -354,11 +390,14 @@ def get_acl_store() -> ACLStore:
     return _acl_store
 
 
-def get_acl_enforcer() -> ACLEnforcer:
+def get_acl_enforcer(default_public: bool | None = None) -> ACLEnforcer:
     """Get the global ACL enforcer."""
     global _acl_enforcer
     if _acl_enforcer is None:
-        _acl_enforcer = ACLEnforcer(store=get_acl_store())
+        initial_default = default_public if default_public is not None else True
+        _acl_enforcer = ACLEnforcer(store=get_acl_store(), default_public=initial_default)
+    elif default_public is not None:
+        _acl_enforcer.default_public = default_public
     return _acl_enforcer
 
 
@@ -368,4 +407,5 @@ __all__ = [
     "ACLEnforcer",
     "get_acl_store",
     "get_acl_enforcer",
+    "resolve_acl_defaults",
 ]

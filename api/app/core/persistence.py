@@ -124,6 +124,7 @@ class DiskEmbeddingCache:
             "UPDATE embeddings SET hit_count = hit_count + 1 WHERE key = ?",
             (key,)
         )
+        conn.commit()
         
         # Deserialize embedding
         embedding_bytes = row[0]
@@ -269,6 +270,7 @@ class CacheEvent:
     corpus_version: str = ""
     retrieval_mode: int = 1
     preset_id: str = ""
+    scope_key: str = ""
     timestamp: float = 0.0
     
     def __post_init__(self) -> None:
@@ -283,6 +285,7 @@ class CacheEvent:
             "corpus_version": self.corpus_version,
             "retrieval_mode": self.retrieval_mode,
             "preset_id": self.preset_id,
+            "scope_key": self.scope_key[:12] + "..." if len(self.scope_key) > 12 else self.scope_key,
         }
 
 
@@ -355,12 +358,14 @@ class DiskQueryCache:
         retrieval_mode: int,
         preset_id: str,
         model_ids: dict[str, str] | None = None,
+        scope_key: str | None = None,
     ) -> str:
         """Create versioned cache key."""
         normalized = self._normalize_query(query)
         model_str = json.dumps(model_ids or {}, sort_keys=True)
         
-        combined = f"{normalized}|v{corpus_version}|m{retrieval_mode}|p{preset_id}|{model_str}"
+        scope = scope_key or ""
+        combined = f"{normalized}|v{corpus_version}|m{retrieval_mode}|p{preset_id}|s{scope}|{model_str}"
         return hashlib.sha256(combined.encode()).hexdigest()[:32]
     
     def get(
@@ -370,12 +375,13 @@ class DiskQueryCache:
         retrieval_mode: int = 1,
         preset_id: str = "balanced",
         model_ids: dict[str, str] | None = None,
+        scope_key: str | None = None,
     ) -> dict[str, Any] | None:
         """Get cached query result.
         
         Returns None on miss. Records cache event for tracing.
         """
-        key = self._make_key(query, corpus_version, retrieval_mode, preset_id, model_ids)
+        key = self._make_key(query, corpus_version, retrieval_mode, preset_id, model_ids, scope_key)
         conn = self._get_conn()
         
         cursor = conn.execute(
@@ -393,6 +399,7 @@ class DiskQueryCache:
                 corpus_version=corpus_version,
                 retrieval_mode=retrieval_mode,
                 preset_id=preset_id,
+                scope_key=scope_key or "",
             )
             return None
         
@@ -409,6 +416,7 @@ class DiskQueryCache:
                 corpus_version=corpus_version,
                 retrieval_mode=retrieval_mode,
                 preset_id=preset_id,
+                scope_key=scope_key or "",
             )
             return None
         
@@ -421,6 +429,7 @@ class DiskQueryCache:
                 corpus_version=corpus_version,
                 retrieval_mode=retrieval_mode,
                 preset_id=preset_id,
+                scope_key=scope_key or "",
             )
             return None
         
@@ -429,6 +438,7 @@ class DiskQueryCache:
             "UPDATE query_cache SET hit_count = hit_count + 1 WHERE key = ?",
             (key,)
         )
+        conn.commit()
         
         self._last_event = CacheEvent(
             hit=True,
@@ -436,6 +446,7 @@ class DiskQueryCache:
             corpus_version=corpus_version,
             retrieval_mode=retrieval_mode,
             preset_id=preset_id,
+            scope_key=scope_key or "",
         )
         
         return pickle.loads(result_bytes)
@@ -448,9 +459,10 @@ class DiskQueryCache:
         retrieval_mode: int = 1,
         preset_id: str = "balanced",
         model_ids: dict[str, str] | None = None,
+        scope_key: str | None = None,
     ) -> None:
         """Cache query result."""
-        key = self._make_key(query, corpus_version, retrieval_mode, preset_id, model_ids)
+        key = self._make_key(query, corpus_version, retrieval_mode, preset_id, model_ids, scope_key)
         normalized = self._normalize_query(query)
         model_str = json.dumps(model_ids or {}, sort_keys=True)
         conn = self._get_conn()

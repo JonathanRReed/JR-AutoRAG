@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+from ..core.auth import get_auth
+from ..core.document_acl import get_acl_enforcer, resolve_acl_defaults
 from ..core.telemetry import PipelineStep
 from ..schemas.query import QueryRequest, QueryResponse, TraceOut, TraceStepOut
 from ..services import ServiceContainer, get_container
@@ -15,19 +19,95 @@ from ..services import ServiceContainer, get_container
 router = APIRouter(prefix="/query", tags=["query"])
 
 
+def _make_cache_scope(user_id: str | None, document_ids: list[str] | None) -> str | None:
+    if not user_id and not document_ids:
+        return None
+    parts = [user_id or "public"]
+    if document_ids:
+        parts.append(",".join(sorted(document_ids)))
+    digest = hashlib.sha256("|".join(parts).encode()).hexdigest()
+    return digest[:16]
+
+
+def _json_default(value: object) -> str:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return str(value)
+
+
+def _resolve_query_access(
+    payload: QueryRequest,
+    request: Request,
+    container: ServiceContainer,
+) -> tuple[list[str] | None, str | None]:
+    user_id = getattr(request.state, "user_id", None)
+    scopes = getattr(request.state, "scopes", [])
+    auth_enabled = get_auth().require_auth()
+
+    if not auth_enabled:
+        document_ids = payload.document_ids
+        return document_ids, _make_cache_scope(None, document_ids)
+
+    default_public, _ = resolve_acl_defaults(auth_enabled)
+    enforcer = get_acl_enforcer(default_public=default_public)
+
+    if "admin" in scopes:
+        return payload.document_ids, _make_cache_scope(user_id, payload.document_ids)
+
+    docs = container.document_store.list()
+
+    if payload.document_ids:
+        allowed = [
+            doc_id
+            for doc_id in payload.document_ids
+            if enforcer.check_access(doc_id, user_id, "read")[0]
+        ]
+        if not allowed:
+            raise HTTPException(status_code=403, detail="No access to requested documents")
+        return allowed, _make_cache_scope(user_id, allowed)
+
+    if not docs:
+        return None, _make_cache_scope(user_id, None)
+
+    allowed_ids = [
+        doc.id for doc in docs if enforcer.check_access(doc.id, user_id, "read")[0]
+    ]
+    if not allowed_ids:
+        raise HTTPException(status_code=403, detail="No accessible documents")
+
+    if len(allowed_ids) == len(docs):
+        return None, _make_cache_scope(user_id, None)
+    return allowed_ids, _make_cache_scope(user_id, allowed_ids)
+
+
 @router.post("", response_model=QueryResponse)
-async def ask(payload: QueryRequest, container: ServiceContainer = Depends(get_container)):
+async def ask(
+    payload: QueryRequest,
+    request: Request,
+    container: ServiceContainer = Depends(get_container),
+):
     if not payload.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty")
-    result = await container.orchestrator.answer(payload.question, document_ids=payload.document_ids)
+    document_ids, cache_scope = _resolve_query_access(payload, request, container)
+    result = await container.orchestrator.answer(
+        payload.question,
+        document_ids=document_ids,
+        history=payload.history,
+        cache_scope=cache_scope,
+    )
     return QueryResponse(**result)
 
 
 @router.post("/stream")
-async def ask_stream(payload: QueryRequest, container: ServiceContainer = Depends(get_container)):
+async def ask_stream(
+    payload: QueryRequest,
+    request: Request,
+    container: ServiceContainer = Depends(get_container),
+):
     if not payload.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty")
 
+    document_ids, cache_scope = _resolve_query_access(payload, request, container)
     queue: asyncio.Queue[dict | None] = asyncio.Queue()
 
     def serialize_step(step: PipelineStep) -> dict:
@@ -57,12 +137,13 @@ async def ask_stream(payload: QueryRequest, container: ServiceContainer = Depend
         try:
             result = await container.orchestrator.answer(
                 payload.question,
-                document_ids=payload.document_ids,
+                document_ids=document_ids,
                 on_step=on_step,
                 on_token=on_token,
                 on_stage=on_stage,
                 on_progress=on_progress,
                 history=payload.history,
+                cache_scope=cache_scope,
             )
             await queue.put({"type": "result", "data": result})
         except Exception as exc:
@@ -77,7 +158,14 @@ async def ask_stream(payload: QueryRequest, container: ServiceContainer = Depend
             item = await queue.get()
             if item is None:
                 break
-            yield f"data: {json.dumps(item)}\n\n"
+            try:
+                payload = json.dumps(item, default=_json_default)
+            except Exception as exc:
+                payload = json.dumps(
+                    {"type": "error", "data": {"message": f"Stream serialization error: {exc}"}},
+                    default=_json_default,
+                )
+            yield f"data: {payload}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
