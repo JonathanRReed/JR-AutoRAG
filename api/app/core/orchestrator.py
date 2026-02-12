@@ -57,7 +57,7 @@ from .trace_export import create_trace_bundle, TraceBundle
 from .artifact_builder import get_artifact_builder, ArtifactStatus
 from .cache import RetrievalMode
 from .hyde import HyDEGenerator, get_hyde_generator
-from .abstention import AbstentionRules, AbstentionConfig, get_abstention_rules
+from .abstention import AbstentionConfig, AbstentionResult, AbstentionRules, get_abstention_rules
 # Self-RAG critic for v2.0
 from .self_rag import SelfRAGCritic, SelfRAGConfig, get_self_rag_critic
 # 3.0 Enhancements
@@ -181,7 +181,6 @@ class Orchestrator:
             self._graph_ready = False
         
         # Sync artifact status with builder for UI (G4)
-        from .artifact_builder import ArtifactStatus
         if self._hierarchy_ready:
             self._artifact_builder.set_status("raptor", ArtifactStatus.READY)
             self._artifact_builder.set_items("raptor", sum(len(t.nodes) for t in self._document_trees.values()))

@@ -50,7 +50,7 @@ const STEP_ICONS: Record<string, typeof Target> = {
     reflection: Activity,
 };
 
-const STEP_COLORS: Record<string, { bg: string; border: string; text: string }> = {
+const STEP_COLORS = {
     completed: { bg: "bg-primary", border: "border-primary", text: "text-primary" },
     passed: { bg: "bg-emerald-500", border: "border-emerald-500", text: "text-emerald-600" },
     repaired: { bg: "bg-amber-500", border: "border-amber-500", text: "text-amber-600" },
@@ -58,13 +58,25 @@ const STEP_COLORS: Record<string, { bg: string; border: string; text: string }> 
     running: { bg: "bg-secondary", border: "border-secondary", text: "text-secondary-foreground" },
     skipped: { bg: "bg-muted", border: "border-muted", text: "text-muted-foreground" },
     pending: { bg: "bg-muted/50", border: "border-border", text: "text-muted-foreground" },
-};
+} as const;
 
-const normalizeStatus = (status: string) => {
+type StepStatus = keyof typeof STEP_COLORS;
+
+const normalizeStatus = (status: string): StepStatus => {
     if (status === "passed") return "passed";
     if (status === "repaired") return "repaired";
     if (status === "failed" || status === "error") return "failed";
-    return status;
+    return status in STEP_COLORS ? (status as StepStatus) : "pending";
+};
+
+const asDisplayText = (value: unknown): string | null => {
+    if (value === null || value === undefined) {
+        return null;
+    }
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+        return String(value);
+    }
+    return null;
 };
 
 function formatDuration(ms: number): string {
@@ -93,7 +105,7 @@ function TimelineStep({
     const Icon = STEP_ICONS[step.name] ?? Target;
     const statusClass = isActive ? "running" : normalizeStatus(step.status);
     const statusLabel = isActive ? "running" : step.status;
-    const colors = STEP_COLORS[statusClass] || STEP_COLORS.pending;
+    const colors = STEP_COLORS[statusClass];
     const percentage = totalDuration > 0 ? (step.duration_ms / totalDuration) * 100 : 0;
     const durationClass = getDurationClass(step.duration_ms);
     const isSuccess = ["completed", "passed", "repaired"].includes(statusClass);
@@ -155,24 +167,24 @@ function TimelineStep({
                 {/* Step details (expandable in the future) */}
                 {step.details && Object.keys(step.details).length > 0 && (
                     <div className="mt-3 flex flex-wrap gap-1.5">
-                        {step.details.total_chunks !== undefined && (
+                        {asDisplayText(step.details.total_chunks) && (
                             <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
-                                {step.details.total_chunks} chunks
+                                {asDisplayText(step.details.total_chunks)} chunks
                             </span>
                         )}
-                        {step.details.query_type && (
+                        {asDisplayText(step.details.query_type) && (
                             <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
-                                {step.details.query_type}
+                                {asDisplayText(step.details.query_type)}
                             </span>
                         )}
-                        {step.details.model && (
+                        {asDisplayText(step.details.model) && (
                             <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[10px] font-mono text-muted-foreground">
-                                {step.details.model}
+                                {asDisplayText(step.details.model)}
                             </span>
                         )}
-                        {step.details.quality && (
+                        {asDisplayText(step.details.quality) && (
                             <span className="inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-[10px] text-primary">
-                                {step.details.quality}
+                                {asDisplayText(step.details.quality)}
                             </span>
                         )}
                     </div>

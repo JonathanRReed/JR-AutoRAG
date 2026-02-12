@@ -7,24 +7,26 @@ from functools import lru_cache
 from pathlib import Path
 
 from .core import (
+    BQConfig,
+    BQHybridRetrievalEngine,
+    # v2 Binary Quantization
+    BQRetrievalConfig,
+    ChunkingStrategy,
     ConfigStore,
     DocumentStore,
     Gatherer,
-    IngestPipeline,
-    Orchestrator,
-    ProviderFactory,
-    TelemetryStore,
     HybridConfig,
-    ChunkingStrategy,
-    BQHybridRetrievalEngine,
-    Planner,
-    SmartPlanner,  # Phase 2: Smart planning
-    # v2 Binary Quantization
-    BQRetrievalConfig,
+    IngestPipeline,
     MilvusConfig,
-    BQConfig,
+    Orchestrator,
+    Planner,
+    ProviderFactory,
     RetrievalModeV2,
+    SmartPlanner,  # Phase 2: Smart planning
+    TelemetryStore,
 )
+from .schemas.config import AppConfig
+
 
 def _build_retrieval_config(cfg: "AppConfig") -> HybridConfig:
     return HybridConfig(
@@ -61,7 +63,7 @@ class ServiceContainer:
             legacy_json_path=data_dir / "documents.json",
         )
         self.telemetry = TelemetryStore(data_dir / "traces.json")
-        
+
         # Load config for retrieval settings
         cfg = self.config_store.read()
         sanitized = self._sanitize_config(cfg)
@@ -74,7 +76,7 @@ class ServiceContainer:
         auth_enabled = get_auth().require_auth()
         default_public, _ = resolve_acl_defaults(auth_enabled)
         get_acl_enforcer(default_public=default_public)
-        
+
         # Configure hybrid retrieval from app config
         retrieval_config = _build_retrieval_config(cfg)
 
@@ -85,20 +87,25 @@ class ServiceContainer:
             bq_config=bq_config,
             bq_enabled=bq_enabled,
         )
-        
+
         # Try loading cached index first - only rebuild if invalid/stale
         if not self.retrieval_engine.load_index():
             print("HybridRetrievalEngine: No valid cached index, building fresh...")
             self.retrieval_engine.build()
         else:
             print("HybridRetrievalEngine: Loaded cached index successfully!")
-        
-        self.ingest = IngestPipeline(self.document_store, self.retrieval_engine)
+
+        self.provider_factory = ProviderFactory()
+        self.ingest = IngestPipeline(
+            self.document_store,
+            self.retrieval_engine,
+            config_getter=self.config_store.read,
+            data_dir=data_dir,
+        )
         self.gatherer = Gatherer(self.retrieval_engine)
         self.simple_planner = Planner(cfg)
         self.smart_planner = SmartPlanner(cfg)
         self.planner = self.smart_planner if cfg.retrieval.planner_mode != "simple" else self.simple_planner
-        self.provider_factory = ProviderFactory()
         self.orchestrator = Orchestrator(
             planner=self.planner,
             retrieval=self.retrieval_engine,
@@ -107,7 +114,7 @@ class ServiceContainer:
             telemetry=self.telemetry,
         )
         self.orchestrator.rebuild(cfg)
-        
+
         # Register orchestrator in global state for traces.py access
         from .state import set_orchestrator
         set_orchestrator(self.orchestrator)
@@ -177,7 +184,7 @@ class ServiceContainer:
         from .core.hybrid_retrieval import EmbeddingModelPreset
         model_info = EmbeddingModelPreset.get_info(cfg.retrieval.embedding_model)
         embedding_dim = model_info.get("dimensions", 768)
-        
+
         milvus_config = MilvusConfig(
             host=getattr(cfg.retrieval, "milvus_host", "localhost"),
             port=getattr(cfg.retrieval, "milvus_port", 19530),
@@ -187,19 +194,19 @@ class ServiceContainer:
             nlist=getattr(cfg.retrieval, "milvus_nlist", 128),
             nprobe=getattr(cfg.retrieval, "milvus_nprobe", 16),
         )
-        
+
         bq_config = BQConfig(
             rule=getattr(cfg.retrieval, "bq_rule", "sign_threshold_0"),
             normalize=getattr(cfg.retrieval, "bq_normalize", False),
         )
-        
+
         retrieval_mode = RetrievalModeV2.from_string(
             getattr(cfg.retrieval, "retrieval_mode", "float32")
         )
         bq_enabled = bool(getattr(cfg.retrieval, "bq_enabled", False)) or (
             retrieval_mode == RetrievalModeV2.BINARY
         )
-        
+
         bq_retrieval_config = BQRetrievalConfig(
             default_mode=retrieval_mode,
             top_k=cfg.retrieval.top_n,

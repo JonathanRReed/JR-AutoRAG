@@ -7,6 +7,11 @@ export type ProviderConfig = {
     api_key?: string;
 };
 
+export type ApiClientSettings = {
+    baseUrl: string;
+    apiKey?: string;
+};
+
 export type ProviderProfile = {
     name: string;
     provider: ProviderConfig;
@@ -65,6 +70,12 @@ export type RetrievalDefaults = {
     milvus_metric?: "HAMMING" | string;
     milvus_nlist?: number;
     milvus_nprobe?: number;
+    langextract_enabled?: boolean;
+    langextract_profile_default?: string;
+    langextract_model_source?: "planner" | "gatherer" | "generator";
+    langextract_timeout_sec?: number;
+    langextract_max_chars?: number;
+    langextract_max_synthetic_facts?: number;
 };
 
 // 3.0: Stage budget configuration

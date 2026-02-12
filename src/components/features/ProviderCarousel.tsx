@@ -22,6 +22,7 @@ interface ProviderCarouselProps {
   setLocalSelection: (baseUrl: string, field: keyof RoleSelection, value: string) => void;
   applyLocalProvider: (provider: LocalProviderInfo) => void;
   apiBaseUrl?: string;
+  apiKey?: string;
   isConnected?: boolean;
 }
 
@@ -38,6 +39,7 @@ export function ProviderCarousel({
   setLocalSelection,
   applyLocalProvider,
   apiBaseUrl = "",
+  apiKey = "",
   isConnected = false,
 }: ProviderCarouselProps) {
   const [activeTab, setActiveTab] = useState<ProviderTab>("ollama");
@@ -112,14 +114,18 @@ export function ProviderCarousel({
   }, [apiBaseUrl, isConnected]);
 
   const fetchOpenRouterStatus = async () => {
+    const authHeaders: Record<string, string> = {};
+    const trimmedApiKey = apiKey.trim();
+    if (trimmedApiKey) {
+      authHeaders["X-API-Key"] = trimmedApiKey;
+    }
+    if (openRouterApiKey) {
+      authHeaders["x-openrouter-key"] = openRouterApiKey;
+      authHeaders.Authorization = `Bearer ${openRouterApiKey}`;
+    }
     try {
       const res = await fetch(`${apiBaseUrl}/providers/openrouter/status`, {
-        headers: openRouterApiKey
-          ? {
-              "x-openrouter-key": openRouterApiKey,
-              Authorization: `Bearer ${openRouterApiKey}`,
-            }
-          : undefined,
+        headers: Object.keys(authHeaders).length ? authHeaders : undefined,
       });
       if (res.ok) {
         const data = await res.json();
@@ -136,14 +142,18 @@ export function ProviderCarousel({
 
   const fetchOpenRouterModels = async () => {
     setOpenRouterLoading(true);
+    const authHeaders: Record<string, string> = {};
+    const trimmedApiKey = apiKey.trim();
+    if (trimmedApiKey) {
+      authHeaders["X-API-Key"] = trimmedApiKey;
+    }
+    if (openRouterApiKey) {
+      authHeaders["x-openrouter-key"] = openRouterApiKey;
+      authHeaders.Authorization = `Bearer ${openRouterApiKey}`;
+    }
     try {
       const res = await fetch(`${apiBaseUrl}/providers/openrouter/models`, {
-        headers: openRouterApiKey
-          ? {
-              "x-openrouter-key": openRouterApiKey,
-              Authorization: `Bearer ${openRouterApiKey}`,
-            }
-          : undefined,
+        headers: Object.keys(authHeaders).length ? authHeaders : undefined,
       });
       if (res.ok) {
         const data = await res.json();
@@ -157,8 +167,15 @@ export function ProviderCarousel({
   };
 
   const fetchRagfuzzStatus = async () => {
+    const authHeaders: Record<string, string> = {};
+    const trimmedApiKey = apiKey.trim();
+    if (trimmedApiKey) {
+      authHeaders["X-API-Key"] = trimmedApiKey;
+    }
     try {
-      const res = await fetch(`${apiBaseUrl}/rag/audit/health`);
+      const res = await fetch(`${apiBaseUrl}/rag/audit/health`, {
+        headers: Object.keys(authHeaders).length ? authHeaders : undefined,
+      });
       if (res.ok) {
         const data = await res.json();
         setRagfuzzStatus(data);
@@ -197,11 +214,16 @@ export function ProviderCarousel({
     setOllamaCloudLoading(true);
     setOllamaCloudError(null);
     try {
+      const authHeaders: Record<string, string> = {
+        "x-ollama-key": ollamaCloudApiKey,
+        Authorization: `Bearer ${ollamaCloudApiKey}`,
+      };
+      const trimmedApiKey = apiKey.trim();
+      if (trimmedApiKey) {
+        authHeaders["X-API-Key"] = trimmedApiKey;
+      }
       const res = await fetch(`${apiBaseUrl}/providers/ollama-cloud/models`, {
-        headers: {
-          "x-ollama-key": ollamaCloudApiKey,
-          Authorization: `Bearer ${ollamaCloudApiKey}`,
-        },
+        headers: authHeaders,
       });
       if (res.ok) {
         const data = await res.json();

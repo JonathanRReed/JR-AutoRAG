@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import secrets
 import uuid
 from datetime import datetime
 from typing import Any
@@ -29,20 +30,47 @@ from ..services import ServiceContainer, get_container
 router = APIRouter(prefix="/rag/audit", tags=["ragfuzz"])
 
 
+def _is_production_env() -> bool:
+    env = (
+        os.environ.get("AUTORAG_ENV")
+        or os.environ.get("ENVIRONMENT")
+        or os.environ.get("NODE_ENV")
+        or ""
+    ).strip().lower()
+    return env in {"prod", "production"}
+
+
+def _flag_enabled(raw: str | None, default: bool) -> bool:
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"true", "1", "yes", "on"}
+
+
 def _check_ragfuzz_enabled() -> None:
-    """Check if RAGFuzz endpoints are enabled. Enabled by default."""
-    enabled = os.environ.get("AUTORAG_RAGFUZZ_ENABLED", "true").lower()
-    if enabled in ("false", "0", "no", "off"):
+    """Check if RAGFuzz endpoints are enabled.
+
+    Defaults:
+    - Development: enabled
+    - Production: disabled
+    """
+    default_enabled = not _is_production_env()
+    enabled = _flag_enabled(os.environ.get("AUTORAG_RAGFUZZ_ENABLED"), default_enabled)
+    if not enabled:
         raise HTTPException(
             status_code=403,
-            detail="RAGFuzz endpoints are disabled. Remove AUTORAG_RAGFUZZ_ENABLED=false to enable.",
+            detail="RAGFuzz endpoints are disabled. Set AUTORAG_RAGFUZZ_ENABLED=true to enable.",
         )
 
 
 def _verify_ragfuzz_secret(x_ragfuzz_secret: str | None = Header(None)) -> None:
     """Verify RAGFuzz shared secret if configured."""
     expected = os.environ.get("AUTORAG_RAGFUZZ_SECRET")
-    if expected and x_ragfuzz_secret != expected:
+    if _is_production_env() and not expected:
+        raise HTTPException(
+            status_code=503,
+            detail="AUTORAG_RAGFUZZ_SECRET is required in production.",
+        )
+    if expected and (not x_ragfuzz_secret or not secrets.compare_digest(x_ragfuzz_secret, expected)):
         raise HTTPException(
             status_code=401,
             detail="Invalid or missing X-RagFuzz-Secret header",
@@ -114,6 +142,8 @@ async def ragfuzz_health(
 ) -> HealthResponse:
     """Health check endpoint for RAGFuzz integration."""
     _check_ragfuzz_enabled()
+    default_enabled = not _is_production_env()
+    enabled = _flag_enabled(os.environ.get("AUTORAG_RAGFUZZ_ENABLED"), default_enabled)
     
     corpus_size = 0
     try:
@@ -133,7 +163,7 @@ async def ragfuzz_health(
     
     return HealthResponse(
         status="ok",
-        ragfuzz_enabled=True,
+        ragfuzz_enabled=enabled,
         corpus_size=corpus_size,
         providers_available=providers,
         version="1.0.0",

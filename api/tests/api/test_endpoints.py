@@ -36,7 +36,13 @@ def test_config_roundtrip(client: TestClient) -> None:
 
 
 def test_document_ingest_query_and_evaluation(client: TestClient) -> None:
-    payload = {"title": "Intro", "text": "JR AutoRAG lets admins build RAG pipelines.", "sync": True}
+    payload = {
+        "title": "Intro",
+        "text": "JR AutoRAG lets admins build RAG pipelines.",
+        "sync": True,
+        "langextract_profile_override": "generic_entities_v1",
+        "langextract_prompt_override": "Extract factual entities only.",
+    }
     ingest = client.post("/documents/text", json=payload)
     assert ingest.status_code == 200
     data = ingest.json()
@@ -45,6 +51,7 @@ def test_document_ingest_query_and_evaluation(client: TestClient) -> None:
     docs = client.get("/documents")
     assert docs.status_code == 200
     assert len(docs.json()) == 1
+    assert docs.json()[0]["metadata"]["langextract_status"] == "disabled"
 
     question = {"question": "What is JR AutoRAG?"}
     query_resp = client.post("/query", json=question)
@@ -59,3 +66,19 @@ def test_document_ingest_query_and_evaluation(client: TestClient) -> None:
     eval_data = eval_resp.json()
     assert eval_data["responses"], "evaluation should include responses"
     assert eval_data["average_coverage"] >= 0
+
+
+def test_upload_accepts_langextract_override_fields(client: TestClient) -> None:
+    upload = client.post(
+        "/documents/upload",
+        data={
+            "title": "Upload Intro",
+            "sync": "true",
+            "langextract_profile_override": "contract_terms_v1",
+            "langextract_prompt_override": "Extract obligations and deadlines.",
+        },
+        files={"file": ("intro.txt", b"Upload text for ingestion.", "text/plain")},
+    )
+    assert upload.status_code == 200
+    body = upload.json()
+    assert body["chunk_count"] >= 1

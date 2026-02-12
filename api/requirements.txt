@@ -17,3 +17,4 @@ ruff==0.6.9
 sentence-transformers>=2.2.0
 chromadb>=0.4.0
 rank_bm25>=0.2.2
+langextract[openai]>=1.1.1

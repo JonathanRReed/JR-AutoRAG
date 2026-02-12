@@ -17,6 +17,8 @@ class IngestTextRequest(BaseModel):
     text: str
     metadata: dict[str, str] | None = None
     sync: bool = False
+    langextract_profile_override: str | None = None
+    langextract_prompt_override: str | None = None
 
 
 class IngestResponse(BaseModel):

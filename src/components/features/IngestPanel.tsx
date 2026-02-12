@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import {
     Calendar,
@@ -43,6 +44,11 @@ interface IngestPanelProps {
     waitForDocumentReady: (documentId: string, label?: string) => Promise<void>;
     fileInputRef: React.RefObject<HTMLInputElement | null>;
     formatDateTime: (value?: string) => string;
+    langextractProfileOverride: string;
+    setLangextractProfileOverride: (value: string) => void;
+    langextractPromptOverride: string;
+    setLangextractPromptOverride: (value: string) => void;
+    langextractDefaultProfile?: string;
 }
 
 function InlineHint({ label, detail }: { label: string; detail: string }) {
@@ -74,9 +80,15 @@ export function IngestPanel({
     waitForDocumentReady,
     fileInputRef,
     formatDateTime,
+    langextractProfileOverride,
+    setLangextractProfileOverride,
+    langextractPromptOverride,
+    setLangextractPromptOverride,
+    langextractDefaultProfile,
 }: IngestPanelProps) {
     const [uploadQueue, setUploadQueue] = useState<UploadProgress[]>([]);
     const [isDragOver, setIsDragOver] = useState(false);
+    const profileOptions = ["generic_entities_v1", "compliance_risk_v1", "contract_terms_v1"];
 
     const processFiles = async (files: FileList | File[]) => {
         const fileArray = Array.from(files);
@@ -192,6 +204,44 @@ export function IngestPanel({
                         onChange={event => setIngestSync(event.target.checked)}
                         className="h-4 w-4 accent-primary"
                     />
+                </div>
+
+                <div className="rounded-lg border border-border/60 bg-muted/20 p-4 space-y-4">
+                    <div className="space-y-1">
+                        <Label className="text-sm font-medium text-foreground">LangExtract per-document overrides</Label>
+                        <p className="text-xs text-muted-foreground">
+                            Optional: override extraction profile and prompt for this ingest request only.
+                        </p>
+                    </div>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                        <div className="space-y-2">
+                            <Label htmlFor="langextractProfileOverride" className="text-xs">Profile Override</Label>
+                            <Select value={langextractProfileOverride} onValueChange={setLangextractProfileOverride}>
+                                <SelectTrigger id="langextractProfileOverride" className="h-9">
+                                    <SelectValue placeholder="Use global default" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="__global__">
+                                        Use global ({langextractDefaultProfile || "generic_entities_v1"})
+                                    </SelectItem>
+                                    {profileOptions.map(profile => (
+                                        <SelectItem key={profile} value={profile}>{profile}</SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="langextractPromptOverride" className="text-xs">Prompt Override (optional)</Label>
+                            <Textarea
+                                id="langextractPromptOverride"
+                                rows={3}
+                                value={langextractPromptOverride}
+                                onChange={e => setLangextractPromptOverride(e.target.value)}
+                                placeholder="Optional extraction prompt for this document..."
+                                className="resize-none"
+                            />
+                        </div>
+                    </div>
                 </div>
 
                 {/* Upload Zone */}

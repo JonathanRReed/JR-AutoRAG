@@ -74,10 +74,10 @@ JR AutoRAG ships with **secure defaults**:
 - **Localhost-only binding** by default (use `--expose` flag for network access)
 - **API key authentication** (enable via `AUTORAG_AUTH_ENABLED=true`)
 - **Rate limiting** (100 requests/minute default)
-- **Request size limits** (10MB default)
+- **Request size limits** (50MB default)
 - **Security headers** (XSS, clickjacking, content-type sniffing protection)
 
-See [SECURITY.md](./SECURITY.md) for production deployment guidance including:
+See [SECURITY.md](./Public/SECURITY.md) for production deployment guidance including:
 - TLS configuration with Nginx/Caddy
 - Secrets management best practices
 - Reverse proxy recipes
@@ -90,6 +90,7 @@ See [SECURITY.md](./SECURITY.md) for production deployment guidance including:
 | `AUTORAG_API_KEYS` | - | Comma-separated API keys |
 | `AUTORAG_ALLOWED_ORIGINS` | `localhost` | CORS allowed origins |
 | `AUTORAG_EXPOSE` | `false` | Allow non-localhost binding |
+| `AUTORAG_RATE_LIMIT_ENABLED` | `true` | Enable request rate limiting |
 | `AUTORAG_RATE_LIMIT_RPM` | `100` | Requests per minute limit |
 
 ## Local development (manual control)
@@ -216,7 +217,7 @@ python -c "from app.core.eval_gates import run_eval_gates_cli; exit(run_eval_gat
 1. `bun run build` and serve `dist/` (Bun, nginx, S3+CloudFront, etc.).
 2. Deploy FastAPI (Uvicorn/Gunicorn, Fly.io, Render, etc.). Point frontend `BUN_PUBLIC_API_BASE_URL` to it.
 3. **Enable security**: Set `AUTORAG_AUTH_ENABLED=true` and configure API keys.
-4. **Use TLS**: Put behind Nginx/Caddy with HTTPS (see [SECURITY.md](./SECURITY.md)).
+4. **Use TLS**: Put behind Nginx/Caddy with HTTPS (see [SECURITY.md](./Public/SECURITY.md)).
 5. Persist `data/` (config, documents, traces) on shared storage/volume for stateful runs.
 
 ## Onboarding
@@ -225,5 +226,5 @@ See the checklist in [`Public/onboarding.txt`](./Public/onboarding.txt) for a 5-
 
 ## Documentation
 
-- [SECURITY.md](./SECURITY.md) - Security configuration and production deployment
+- [SECURITY.md](./Public/SECURITY.md) - Security configuration and production deployment
 - [Product.md](./Product.md) - Product overview and architecture details

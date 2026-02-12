@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
+from typing import Literal
 
 from pydantic import AnyHttpUrl, BaseModel, field_validator
 
@@ -40,7 +41,7 @@ class RetrievalDefaults(BaseModel):
     graph: bool = False  # Graph retrieval (future)
     coverage_target: float = 0.7  # Target 70% coverage
     max_context_tokens: int = 4096  # Safe default for most local models
-    
+
     # New hybrid retrieval options
     chunking_strategy: str = "semantic"  # "fixed", "semantic", or "recursive"
     embedding_model: str = "BAAI/bge-base-en-v1.5"  # Sentence transformer model
@@ -64,7 +65,7 @@ class RetrievalDefaults(BaseModel):
     use_hyde: bool = False  # Enable HyDE (Hypothetical Document Embeddings)
     abstain_when_unverified: bool = False  # Abstain when evidence is insufficient
     self_rag_critic: bool = False  # Enable Self-RAG LLM-based critic (v2.0)
-    
+
     # v2 Binary Quantization settings
     retrieval_mode: str = "float32"  # "float32" or "binary" (BQ with Milvus HAMMING)
     bq_enabled: bool = False  # Enable binary quantization retrieval
@@ -74,7 +75,7 @@ class RetrievalDefaults(BaseModel):
     bq_stage1_candidates: int = 50  # Candidates for stage 1 binary search
     bq_fallback_enabled: bool = True  # Fallback to float32 on low confidence
     bq_fallback_threshold: float = 500.0  # Hamming distance threshold for fallback
-    
+
     # Milvus settings (for binary mode)
     milvus_host: str = "localhost"
     milvus_port: int = 19530
@@ -83,6 +84,14 @@ class RetrievalDefaults(BaseModel):
     milvus_metric: str = "HAMMING"
     milvus_nlist: int = 128  # For BIN_IVF_FLAT
     milvus_nprobe: int = 16  # For BIN_IVF_FLAT search
+
+    # LangExtract enrichment (disabled by default)
+    langextract_enabled: bool = False
+    langextract_profile_default: str = "generic_entities_v1"
+    langextract_model_source: Literal["planner", "gatherer", "generator"] = "gatherer"
+    langextract_timeout_sec: int = 20
+    langextract_max_chars: int = 12000
+    langextract_max_synthetic_facts: int = 200
 
     @field_validator("raptor", mode="before")
     @classmethod
@@ -265,7 +274,7 @@ RETRIEVAL_PRESETS = {
 
 class StageBudgetDefaults(BaseModel):
     """Per-stage timeout and token budget configuration (P0.2)."""
-    
+
     # Timeouts (milliseconds)
     planner_timeout_ms: int = 3000
     gatherer_timeout_ms: int = 12000
@@ -274,7 +283,7 @@ class StageBudgetDefaults(BaseModel):
     generation_timeout_ms: int = 20000
     verification_timeout_ms: int = 5000
     total_timeout_ms: int = 60000
-    
+
     # Token budgets
     retrieval_token_budget: int = 8000
     rerank_pool_budget: int = 50
@@ -287,10 +296,10 @@ class AppConfig(BaseModel):
     provider: ProviderConfig | None = None
     provider_profiles: list[ProviderProfile] = []
     retrieval: RetrievalDefaults = RetrievalDefaults()
-    
+
     # P0.1: Query mode switch (grounded = docs only, open_domain = LLM can use knowledge)
     query_mode: str = "grounded"
-    
+
     # P0.2: Stage budgets for timeouts and token limits
     stage_budgets: StageBudgetDefaults = StageBudgetDefaults()
 

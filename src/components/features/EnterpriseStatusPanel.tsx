@@ -48,6 +48,7 @@ interface ArtifactStatusPayload {
 
 interface EnterpriseStatusProps {
     baseUrl: string;
+    apiKey?: string;
 }
 
 function StatusBadge({ status }: { status: string }) {
@@ -70,7 +71,7 @@ function StatusBadge({ status }: { status: string }) {
     );
 }
 
-export function EnterpriseStatusPanel({ baseUrl }: EnterpriseStatusProps) {
+export function EnterpriseStatusPanel({ baseUrl, apiKey = "" }: EnterpriseStatusProps) {
     const { toast } = useToast();
     const [artifactStatus, setArtifactStatus] = useState<ArtifactStatus>({
         graph_rag: { status: "not_built" },
@@ -106,9 +107,15 @@ export function EnterpriseStatusPanel({ baseUrl }: EnterpriseStatusProps) {
     const fetchStatus = async () => {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 5000);
+        const headers: Record<string, string> = {};
+        const trimmedApiKey = apiKey.trim();
+        if (trimmedApiKey) {
+            headers["X-API-Key"] = trimmedApiKey;
+        }
 
         try {
             const res = await fetch(`${baseUrl}/api/artifacts/status`, {
+                headers: Object.keys(headers).length ? headers : undefined,
                 signal: controller.signal
             });
             clearTimeout(timeoutId);
@@ -149,8 +156,15 @@ export function EnterpriseStatusPanel({ baseUrl }: EnterpriseStatusProps) {
             description: "Preparing bundle execution logs...",
         });
 
+        const headers: Record<string, string> = {};
+        const trimmedApiKey = apiKey.trim();
+        if (trimmedApiKey) {
+            headers["X-API-Key"] = trimmedApiKey;
+        }
         try {
-            const res = await fetch(`${baseUrl}/api/traces/download`);
+            const res = await fetch(`${baseUrl}/api/traces/download`, {
+                headers: Object.keys(headers).length ? headers : undefined,
+            });
             if (res.ok) {
                 const blob = await res.blob();
                 const url = window.URL.createObjectURL(blob);
@@ -187,11 +201,16 @@ export function EnterpriseStatusPanel({ baseUrl }: EnterpriseStatusProps) {
             description: `Triggering ${type || "Artifact"} generation pipeline in background...`,
         });
 
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        const trimmedApiKey = apiKey.trim();
+        if (trimmedApiKey) {
+            headers["X-API-Key"] = trimmedApiKey;
+        }
         try {
             // Updated to use Query Parameter as per FastAPI spec
             const res = await fetch(`${baseUrl}/api/artifacts/build?force=true`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers,
                 // Empty body since we using query param, but keeping empty object just in case middleware needs valid JSON
                 body: JSON.stringify({})
             });
@@ -229,7 +248,7 @@ export function EnterpriseStatusPanel({ baseUrl }: EnterpriseStatusProps) {
         }
 
         return () => clearInterval(interval);
-    }, [baseUrl, isPolling]);
+    }, [baseUrl, isPolling, apiKey]);
 
     return (
         <Card className="overflow-hidden border-border/50 shadow-lg bg-background/60 backdrop-blur-xl transition-all duration-500 hover:border-border/80">
