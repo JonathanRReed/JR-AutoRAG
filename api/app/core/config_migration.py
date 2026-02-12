@@ -39,7 +39,7 @@ V2_NEW_FIELDS = {
         "description": "Abstain when evidence insufficient",
         "requires_reindex": False,
     },
-    
+
     # Phase 2
     "self_rag_critic": {
         "default": False,
@@ -56,7 +56,7 @@ V2_NEW_FIELDS = {
         "description": "Automatic weight optimization",
         "requires_reindex": False,
     },
-    
+
     # Phase 3
     "contextual_enrichment": {
         "default": False,
@@ -73,7 +73,7 @@ V2_NEW_FIELDS = {
         "description": "Parse JSON/CSV/YAML",
         "requires_reindex": True,  # Changes ingestion
     },
-    
+
     # Phase 4
     "circuit_breakers": {
         "default": True,
@@ -83,6 +83,37 @@ V2_NEW_FIELDS = {
     "cost_tracking": {
         "default": True,
         "description": "Track API costs",
+        "requires_reindex": False,
+    },
+    # LangExtract enrichment defaults
+    "langextract_enabled": {
+        "default": False,
+        "description": "Enable ingestion-time LangExtract enrichment",
+        "requires_reindex": False,
+    },
+    "langextract_profile_default": {
+        "default": "generic_entities_v1",
+        "description": "Default LangExtract profile",
+        "requires_reindex": False,
+    },
+    "langextract_model_source": {
+        "default": "gatherer",
+        "description": "Model role used for extraction",
+        "requires_reindex": False,
+    },
+    "langextract_timeout_sec": {
+        "default": 20,
+        "description": "LangExtract request timeout seconds",
+        "requires_reindex": False,
+    },
+    "langextract_max_chars": {
+        "default": 12000,
+        "description": "Maximum source characters for extraction",
+        "requires_reindex": False,
+    },
+    "langextract_max_synthetic_facts": {
+        "default": 200,
+        "description": "Maximum synthetic facts appended to ingestion text",
         "requires_reindex": False,
     },
 }
@@ -117,12 +148,12 @@ V2_PRESET_UPGRADES = {
 
 class ConfigMigrator:
     """Migrate configs from v1 to v2.0."""
-    
+
     CURRENT_VERSION = "2.0.0"
-    
+
     def __init__(self, backup_dir: str | None = None) -> None:
         """Initialize migrator.
-        
+
         Args:
             backup_dir: Directory for config backups (default: same as config)
         """
@@ -145,11 +176,11 @@ class ConfigMigrator:
         """Create backup of original config."""
         if not self.backup_dir and not original_path:
             return None
-        
+
         backup_dir = self.backup_dir or original_path.parent
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_path = backup_dir / f"config_backup_{timestamp}.json"
-        
+
         try:
             with open(backup_path, "w") as f:
                 json.dump(config, f, indent=2)
@@ -164,11 +195,11 @@ class ConfigMigrator:
         original_path: Path | None = None,
     ) -> tuple[dict[str, Any], MigrationResult]:
         """Migrate a config dict to v2.0.
-        
+
         Args:
             config: Original config dictionary
             original_path: Path to original file (for backup)
-            
+
         Returns:
             Tuple of (migrated_config, migration_result)
         """
@@ -176,29 +207,29 @@ class ConfigMigrator:
         changes: list[str] = []
         warnings: list[str] = []
         requires_reindex = False
-        
+
         # Create backup
         backup_path = self._backup_config(config, original_path)
-        
+
         # Create new config (copy)
         new_config = config.copy()
-        
+
         # Get retrieval section
         retrieval = new_config.get("retrieval", {})
         if isinstance(retrieval, dict):
             retrieval = retrieval.copy()
         else:
             retrieval = {}
-        
+
         # Add new v2.0 fields
         for field_name, field_info in V2_NEW_FIELDS.items():
             if field_name not in retrieval:
                 retrieval[field_name] = field_info["default"]
                 changes.append(f"Added '{field_name}' = {field_info['default']}")
-                
+
                 if field_info["requires_reindex"]:
                     requires_reindex = True
-        
+
         # Apply preset upgrades if a preset is set
         preset = new_config.get("preset", retrieval.get("preset", ""))
         if preset and preset.lower() in V2_PRESET_UPGRADES:
@@ -210,18 +241,18 @@ class ConfigMigrator:
 
         # Update retrieval section
         new_config["retrieval"] = retrieval
-        
+
         # Set version
         new_config["version"] = self.CURRENT_VERSION
         changes.append(f"Updated version to {self.CURRENT_VERSION}")
-        
+
         # Add warnings for breaking changes
         if requires_reindex:
             warnings.append(
                 "Some new features require re-indexing for full effect. "
                 "Run re-index to enable: contextual_enrichment, multi_granularity, structured_data_parsing"
             )
-        
+
         result = MigrationResult(
             success=True,
             version_from=version_from,
@@ -231,20 +262,20 @@ class ConfigMigrator:
             requires_reindex=requires_reindex,
             backup_path=backup_path,
         )
-        
+
         return new_config, result
 
     def migrate_file(self, config_path: str | Path) -> MigrationResult:
         """Migrate a config file in place.
-        
+
         Args:
             config_path: Path to config file
-            
+
         Returns:
             MigrationResult
         """
         path = Path(config_path)
-        
+
         if not path.exists():
             return MigrationResult(
                 success=False,
@@ -252,7 +283,7 @@ class ConfigMigrator:
                 version_to=self.CURRENT_VERSION,
                 warnings=[f"Config file not found: {path}"],
             )
-        
+
         try:
             with open(path) as f:
                 config = json.load(f)
@@ -263,7 +294,7 @@ class ConfigMigrator:
                 version_to=self.CURRENT_VERSION,
                 warnings=[f"Failed to read config: {e}"],
             )
-        
+
         if not self.needs_migration(config):
             return MigrationResult(
                 success=True,
@@ -271,9 +302,9 @@ class ConfigMigrator:
                 version_to=self.CURRENT_VERSION,
                 changes=["No migration needed - already at v2.0"],
             )
-        
+
         new_config, result = self.migrate(config, path)
-        
+
         # Write migrated config
         try:
             with open(path, "w") as f:
@@ -282,7 +313,7 @@ class ConfigMigrator:
         except Exception as e:
             result.success = False
             result.warnings.append(f"Failed to write migrated config: {e}")
-        
+
         return result
 
 

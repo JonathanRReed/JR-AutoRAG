@@ -69,6 +69,7 @@ interface ChatInterfaceProps {
     setSelectedDocumentIds: React.Dispatch<React.SetStateAction<string[]>>;
     providerConfig?: ProviderConfig;
     baseUrl?: string;
+    apiKey?: string;
     activeStage?: string | null;
     progress?: ProgressData | null;
     history?: { role: string; content: string }[];
@@ -887,6 +888,7 @@ export function ChatInterface({
     setSelectedDocumentIds,
     providerConfig,
     baseUrl,
+    apiKey,
     activeStage,
     progress,
     history = [],
@@ -1583,6 +1585,7 @@ export function ChatInterface({
                         type={viewingArtifact}
                         onClose={() => setViewingArtifact(null)}
                         baseUrl={baseUrl}
+                        apiKey={apiKey}
                     />
                 )
             }

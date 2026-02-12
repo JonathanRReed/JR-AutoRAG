@@ -11,12 +11,12 @@ from __future__ import annotations
 import hashlib
 import io
 import mimetypes
-import os
+import shutil
 import subprocess
 import tempfile
-import shutil
-import zipfile
 import xml.etree.ElementTree as ET
+import zipfile
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -47,11 +47,16 @@ try:  # pragma: no cover
 except ImportError:  # pragma: no cover
     pytesseract = None  # type: ignore
 
+from ..schemas.config import AppConfig
+from .audit import AuditAction, AuditEntry, get_audit_log
 from .documents import DocumentStore
+from .langextract_enricher import LangExtractEnricher
 from .retrieval import RetrievalEngine
 
 _INDEX_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="autorag-index")
 _INDEX_LOCK = Lock()
+_LANGEXTRACT_SYNTHETIC_BEGIN = "[[LANGEXTRACT_SYNTHETIC_FACTS_BEGIN]]"
+_LANGEXTRACT_SYNTHETIC_END = "[[LANGEXTRACT_SYNTHETIC_FACTS_END]]"
 
 
 @dataclass
@@ -66,16 +71,24 @@ class IngestResult:
 
 class IngestPipeline:
     """Handles text/file ingestion with incremental indexing support.
-    
+
     Key features (A1 requirement):
     - Content hashing for change detection
-    - Skip re-processing of unchanged documents  
+    - Skip re-processing of unchanged documents
     - Contextualize chunks with document metadata
     """
 
-    def __init__(self, store: DocumentStore, retrieval: RetrievalEngine) -> None:
+    def __init__(
+        self,
+        store: DocumentStore,
+        retrieval: RetrievalEngine,
+        config_getter: Callable[[], AppConfig] | None = None,
+        data_dir: Path | None = None,
+    ) -> None:
         self._store = store
         self._retrieval = retrieval
+        self._config_getter = config_getter
+        self._langextract = LangExtractEnricher(data_dir=data_dir)
 
     def ingest_text(
         self,
@@ -83,22 +96,35 @@ class IngestPipeline:
         text: str,
         metadata: dict[str, str] | None = None,
         sync: bool = False,
+        langextract_profile_override: str | None = None,
+        langextract_prompt_override: str | None = None,
     ) -> IngestResult:
         """Ingest text with content hash tracking for change detection."""
         meta = self._prepare_metadata(metadata)
         meta.setdefault("processing_status", "processing")
-        
+
+        langextract_result = self._run_langextract(
+            text=text,
+            profile_override=langextract_profile_override,
+            prompt_override=langextract_prompt_override,
+        )
+        augmented_text = self._append_langextract_sections(text, langextract_result.get("synthetic_sections", []))
+        self._apply_langextract_metadata(meta, langextract_result)
+
         # Compute content hash for change detection (A1)
-        content_hash = self._compute_content_hash(text)
+        content_hash = self._compute_content_hash(augmented_text)
         meta["content_hash"] = content_hash
-        
-        chunks = self._chunk(text)
+
+        chunks = self._chunk(augmented_text)
         # Contextualize chunks with document header (D2)
         contextualized = self._contextualize_chunks(chunks, title, meta)
         combined = "\n\n".join(contextualized)
-        
+
         doc = self._store.add(title=title, text=combined, metadata=meta)
-        
+
+        self._persist_langextract_artifact(doc.id, title, langextract_result, doc)
+        self._log_langextract_audit(doc.id, title, langextract_result)
+
         # Run indexing in a shared background worker to keep API responsive
         def do_build() -> None:
             try:
@@ -116,15 +142,15 @@ class IngestPipeline:
                 doc.metadata["processing_status"] = "error"
                 doc.metadata["processing_error"] = str(exc)
                 self._store.upsert(doc)
-        
+
         if sync:
             do_build()
         else:
             _INDEX_EXECUTOR.submit(do_build)
-        
+
         return IngestResult(
-            document_id=doc.id, 
-            title=doc.title, 
+            document_id=doc.id,
+            title=doc.title,
             chunk_count=len(chunks),
             was_modified=True,
             content_hash=content_hash,
@@ -136,6 +162,8 @@ class IngestPipeline:
         content: bytes,
         metadata: dict[str, str] | None = None,
         sync: bool = False,
+        langextract_profile_override: str | None = None,
+        langextract_prompt_override: str | None = None,
     ) -> IngestResult:
         meta = {**(metadata or {})}
         meta.setdefault("filename", title)
@@ -143,26 +171,33 @@ class IngestPipeline:
         meta.setdefault("content_type", mimetypes.guess_type(meta["filename"])[0] or "text/plain")
         meta["filesize"] = str(len(content))
         text = self._extract_text(content, meta)
-        return self.ingest_text(title=title, text=text, metadata=meta, sync=sync)
+        return self.ingest_text(
+            title=title,
+            text=text,
+            metadata=meta,
+            sync=sync,
+            langextract_profile_override=langextract_profile_override,
+            langextract_prompt_override=langextract_prompt_override,
+        )
 
     def ingest_incremental(
-        self, 
-        title: str, 
-        text: str, 
+        self,
+        title: str,
+        text: str,
         metadata: dict[str, str] | None = None,
     ) -> IngestResult:
         """Incremental ingest: skip if document content unchanged (A1).
-        
+
         Args:
             title: Document title (used as identifier)
             text: Document text content
             metadata: Optional metadata dict
-            
+
         Returns:
             IngestResult with was_modified=False if skipped
         """
         content_hash = self._compute_content_hash(text)
-        
+
         # Check if document exists with same hash
         existing = self._store.get_by_title(title)
         if existing:
@@ -176,9 +211,165 @@ class IngestPipeline:
                     was_modified=False,
                     content_hash=content_hash,
                 )
-        
+
         # Proceed with full ingest (duplicate titles handled in store)
         return self.ingest_text(title=title, text=text, metadata=metadata)
+
+    def _run_langextract(
+        self,
+        text: str,
+        profile_override: str | None,
+        prompt_override: str | None,
+    ) -> dict[str, object]:
+        cfg = self._read_config()
+        if cfg is None:
+            return {
+                "status": "disabled",
+                "profile": "",
+                "model_source": "",
+                "entities_count": 0,
+                "relations_count": 0,
+                "claims_count": 0,
+                "warnings_count": 0,
+                "synthetic_sections": [],
+                "error": None,
+                "raw": None,
+            }
+
+        override_bundle = {
+            "langextract_profile_override": profile_override,
+            "langextract_prompt_override": prompt_override,
+        }
+        if not self._langextract.is_enabled(cfg, per_doc_override=override_bundle):
+            return {
+                "status": "disabled",
+                "profile": "",
+                "model_source": getattr(cfg.retrieval, "langextract_model_source", "gatherer"),
+                "entities_count": 0,
+                "relations_count": 0,
+                "claims_count": 0,
+                "warnings_count": 0,
+                "synthetic_sections": [],
+                "error": None,
+                "raw": None,
+            }
+
+        profile = (profile_override or "").strip() or getattr(
+            cfg.retrieval,
+            "langextract_profile_default",
+            "generic_entities_v1",
+        )
+        model_source = getattr(cfg.retrieval, "langextract_model_source", "gatherer")
+        timeout = int(getattr(cfg.retrieval, "langextract_timeout_sec", 20))
+        max_chars = int(getattr(cfg.retrieval, "langextract_max_chars", 12000))
+        max_facts = int(getattr(cfg.retrieval, "langextract_max_synthetic_facts", 200))
+
+        return self._langextract.extract(
+            text=text,
+            provider=cfg.provider,
+            profile=profile,
+            prompt_override=prompt_override,
+            timeout=timeout,
+            model_source=model_source,
+            max_chars=max_chars,
+            max_synthetic_facts=max_facts,
+        )
+
+    def _append_langextract_sections(self, text: str, sections: list[str]) -> str:
+        if not sections:
+            return text
+        body = "\n\n".join(section for section in sections if section.strip())
+        if not body:
+            return text
+        clean_text = text.rstrip()
+        return (
+            f"{clean_text}\n\n{_LANGEXTRACT_SYNTHETIC_BEGIN}\n"
+            f"{body}\n{_LANGEXTRACT_SYNTHETIC_END}\n"
+        )
+
+    def _apply_langextract_metadata(
+        self,
+        metadata: dict[str, str],
+        result: dict[str, object],
+    ) -> None:
+        metadata["langextract_status"] = str(result.get("status", "disabled"))
+        metadata["langextract_profile"] = str(result.get("profile", ""))
+        metadata["langextract_model_source"] = str(result.get("model_source", ""))
+        metadata["langextract_entities_count"] = str(result.get("entities_count", 0))
+        metadata["langextract_relations_count"] = str(result.get("relations_count", 0))
+        metadata["langextract_claims_count"] = str(result.get("claims_count", 0))
+        metadata["langextract_warnings_count"] = str(result.get("warnings_count", 0))
+        error = str(result.get("error", "") or "").strip()
+        if error:
+            metadata["langextract_error"] = error
+        else:
+            metadata.pop("langextract_error", None)
+
+    def _persist_langextract_artifact(
+        self,
+        doc_id: str,
+        title: str,
+        result: dict[str, object],
+        doc,
+    ) -> None:
+        status = str(result.get("status", "disabled"))
+        if status == "disabled":
+            return
+        payload = {
+            "document_id": doc_id,
+            "title": title,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "status": status,
+            "profile": result.get("profile"),
+            "model_source": result.get("model_source"),
+            "model_id": result.get("model_id"),
+            "provider": result.get("provider"),
+            "entities_count": result.get("entities_count", 0),
+            "relations_count": result.get("relations_count", 0),
+            "claims_count": result.get("claims_count", 0),
+            "warnings_count": result.get("warnings_count", 0),
+            "error": result.get("error"),
+            "synthetic_sections": result.get("synthetic_sections", []),
+            "raw": result.get("raw"),
+        }
+        try:
+            artifact = self._langextract.persist_artifact(doc_id, payload)
+            doc.metadata["langextract_artifact_path"] = str(artifact)
+            self._store.upsert(doc)
+        except Exception as exc:
+            doc.metadata["langextract_error"] = str(exc)
+            self._store.upsert(doc)
+
+    def _log_langextract_audit(self, doc_id: str, title: str, result: dict[str, object]) -> None:
+        status = str(result.get("status", "disabled"))
+        details = {
+            "document_id": doc_id,
+            "title": title,
+            "langextract_status": status,
+            "langextract_profile": str(result.get("profile", "")),
+            "langextract_model_source": str(result.get("model_source", "")),
+            "langextract_entities_count": int(result.get("entities_count", 0) or 0),
+            "langextract_relations_count": int(result.get("relations_count", 0) or 0),
+            "langextract_claims_count": int(result.get("claims_count", 0) or 0),
+            "langextract_warnings_count": int(result.get("warnings_count", 0) or 0),
+            "langextract_enabled": status != "disabled",
+        }
+        get_audit_log().log(
+            AuditEntry(
+                timestamp=datetime.utcnow(),
+                action=AuditAction.INGEST,
+                details=details,
+                success=True,
+            )
+        )
+
+    def _read_config(self) -> AppConfig | None:
+        if self._config_getter is None:
+            return None
+        try:
+            return self._config_getter()
+        except Exception:
+            return None
 
     def _compute_content_hash(self, text: str) -> str:
         """Compute SHA-256 hash of document content for change detection."""
@@ -191,7 +382,7 @@ class IngestPipeline:
         metadata: dict[str, str] | None,
     ) -> list[str]:
         """Add header context to each chunk for better interpretability (D2).
-        
+
         Makes isolated snippets self-contained with document info.
         """
         header_parts = [f"[Document: {doc_title}]"]
@@ -204,7 +395,7 @@ class IngestPipeline:
                 header_parts.append(f"[Date: {upload_date}]")
             if "author" in metadata:
                 header_parts.append(f"[Author: {metadata['author']}]")
-        
+
         header = " ".join(header_parts)
         return [f"{header}\n{chunk}" for chunk in chunks]
 

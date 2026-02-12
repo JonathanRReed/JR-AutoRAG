@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BarChart3, FileText, MessageSquare, Moon, Settings, Sun } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -73,6 +73,12 @@ const tabs: { id: TabId; label: string; icon: typeof Settings }[] = [
 export function App() {
   const { toast } = useToast();
   const [baseUrl, setBaseUrl] = useState(defaultBaseUrl);
+  const [apiKey, setApiKey] = useState(() => {
+    if (typeof window === "undefined") {
+      return "";
+    }
+    return sessionStorage.getItem("jr-autorag-api-key") || "";
+  });
   const [status, setStatus] = useState("");
   const [isConnected, setIsConnected] = useState(false); // New state for reliable connection tracking
   const [config, setConfig] = useState<AppConfig | null>(null);
@@ -121,6 +127,8 @@ export function App() {
   const [isUploadingFile, setIsUploadingFile] = useState(false);
   const [isClearingCache, setIsClearingCache] = useState(false);
   const [ingestSync, setIngestSync] = useState(true);
+  const [langextractProfileOverride, setLangextractProfileOverride] = useState("__global__");
+  const [langextractPromptOverride, setLangextractPromptOverride] = useState("");
   const [activeTab, setActiveTab] = useState<TabId>(() => {
     if (typeof window === "undefined") return "config";
     const saved = localStorage.getItem("activeTab");
@@ -149,7 +157,18 @@ export function App() {
     return false;
   });
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const headers = useMemo(() => ({ "Content-Type": "application/json" }), []);
+  const buildHeaders = useCallback(
+    (extra?: HeadersInit) => {
+      const merged = new Headers(extra);
+      const trimmedKey = apiKey.trim();
+      if (trimmedKey) {
+        merged.set("X-API-Key", trimmedKey);
+      }
+      return merged;
+    },
+    [apiKey],
+  );
+  const headers = useMemo(() => buildHeaders({ "Content-Type": "application/json" }), [buildHeaders]);
   const [activePreset, setActivePreset] = useState<PresetLevel>(() => {
     if (typeof window !== "undefined") {
       const saved = localStorage.getItem("jr-autorag-preset") as PresetLevel | null;
@@ -174,6 +193,18 @@ export function App() {
   }, [activePreset]);
 
   useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const trimmed = apiKey.trim();
+    if (trimmed) {
+      sessionStorage.setItem("jr-autorag-api-key", trimmed);
+    } else {
+      sessionStorage.removeItem("jr-autorag-api-key");
+    }
+  }, [apiKey]);
+
+  useEffect(() => {
     if (isDarkMode) {
       document.documentElement.classList.add("dark");
     } else {
@@ -192,7 +223,10 @@ export function App() {
 
   const fetchJson = async <T,>(path: string, init?: RequestInit): Promise<T> => {
     try {
-      const response = await fetch(buildUrl(path), init);
+      const response = await fetch(buildUrl(path), {
+        ...init,
+        headers: buildHeaders(init?.headers),
+      });
       if (!response.ok) {
         throw new Error(await response.text());
       }
@@ -210,7 +244,7 @@ export function App() {
   useEffect(() => {
     const check = async () => {
       try {
-        await fetch(buildUrl("/healthz"), { method: "GET" });
+        await fetch(buildUrl("/healthz"), { method: "GET", headers: buildHeaders() });
         setIsConnected(true);
       } catch (e) {
         setIsConnected(false);
@@ -223,7 +257,7 @@ export function App() {
     // Periodically check every 20 seconds
     const id = setInterval(check, 20000);
     return () => clearInterval(id);
-  }, [baseUrl]);
+  }, [baseUrl, buildHeaders]);
 
   const refreshLocalProviders = async () => {
     setLocalProvidersStatus("loading");
@@ -282,7 +316,7 @@ export function App() {
       return;
     }
     try {
-      const response = await fetch(buildUrl(`/documents/${id}`), { method: "DELETE" });
+      const response = await fetch(buildUrl(`/documents/${id}`), { method: "DELETE", headers: buildHeaders() });
       if (!response.ok) {
         throw new Error(await response.text());
       }
@@ -572,10 +606,22 @@ export function App() {
   const handleIngest = async () => {
     setIsIngesting(true);
     try {
+      const payload: Record<string, unknown> = {
+        title: ingestTitle,
+        text: ingestText,
+        sync: ingestSync,
+      };
+      if (langextractProfileOverride !== "__global__") {
+        payload.langextract_profile_override = langextractProfileOverride;
+      }
+      const promptOverride = langextractPromptOverride.trim();
+      if (promptOverride) {
+        payload.langextract_prompt_override = promptOverride;
+      }
       const result = await fetchJson<IngestResponse>("/documents/text", {
         method: "POST",
         headers,
-        body: JSON.stringify({ title: ingestTitle, text: ingestText, sync: ingestSync }),
+        body: JSON.stringify(payload),
       });
       setStatus(`Processing ${result.title}...`);
       setIngestText("");
@@ -805,7 +851,7 @@ export function App() {
   const handleCancelQuery = async () => {
     if (!currentTraceId) return;
     try {
-      await fetch(buildUrl(`/query/cancel?trace_id=${currentTraceId}`), { method: "POST" });
+      await fetch(buildUrl(`/query/cancel?trace_id=${currentTraceId}`), { method: "POST", headers: buildHeaders() });
       setStatus("Query cancelled");
       toast({ title: "Query cancelled", variant: "info" });
       setIsQuerying(false);
@@ -973,8 +1019,16 @@ export function App() {
       formData.append("title", title || file.name);
       formData.append("file", file);
       formData.append("sync", String(ingestSync));
+      if (langextractProfileOverride !== "__global__") {
+        formData.append("langextract_profile_override", langextractProfileOverride);
+      }
+      const promptOverride = langextractPromptOverride.trim();
+      if (promptOverride) {
+        formData.append("langextract_prompt_override", promptOverride);
+      }
       const resp = await fetch(buildUrl("/documents/upload"), {
         method: "POST",
+        headers: buildHeaders(),
         body: formData,
       });
       if (!resp.ok) {
@@ -1049,12 +1103,20 @@ export function App() {
 
           <div className="flex items-center gap-4">
             {/* API URL */}
-            <div className="hidden sm:flex items-center gap-2">
+            <div className="hidden lg:flex items-center gap-2">
               <Input
                 className="w-48 text-xs"
                 value={baseUrl}
                 onChange={e => setBaseUrl(e.target.value)}
                 placeholder="API URL"
+              />
+              <Input
+                className="w-40 text-xs"
+                value={apiKey}
+                onChange={e => setApiKey(e.target.value)}
+                type="password"
+                autoComplete="off"
+                placeholder="X-API-Key (session)"
               />
               <Button size="sm" variant="outline" onClick={handleTestConnection}>
                 {apiReady ? "Connected" : "Connect"}
@@ -1111,6 +1173,7 @@ export function App() {
                     setLocalSelection={setLocalSelection}
                     applyLocalProvider={applyLocalProvider}
                     apiBaseUrl={baseUrl}
+                    apiKey={apiKey}
                     isConnected={isConnected}
                   />
 
@@ -1234,6 +1297,11 @@ export function App() {
                     handleDeleteAllDocuments={handleDeleteAllDocuments}
                     waitForDocumentReady={waitForDocumentReady}
                     formatDateTime={formatDateTime}
+                    langextractProfileOverride={langextractProfileOverride}
+                    setLangextractProfileOverride={setLangextractProfileOverride}
+                    langextractPromptOverride={langextractPromptOverride}
+                    setLangextractPromptOverride={setLangextractPromptOverride}
+                    langextractDefaultProfile={config?.retrieval?.langextract_profile_default}
                   />
 
                   <div className="bg-card rounded-lg border border-border/60 shadow-sm flex flex-col min-h-0">
@@ -1315,6 +1383,7 @@ export function App() {
                 progress={progress ? { ...progress, progress: progress.progress || 0 } : undefined}
                 providerConfig={config?.provider}
                 baseUrl={baseUrl}
+                apiKey={apiKey}
                 onNewChat={handleNewChat}
                 onCancel={handleCancelQuery}
                 savedSessions={savedSessions}
@@ -1340,7 +1409,7 @@ export function App() {
             <div className={`h-full animate-in fade-in slide-in-from-bottom-2 duration-300 ${activeTab !== "metrics" ? "hidden" : ""}`}>
               {/* Metrics & Traces */}
               <div className="space-y-6 max-w-5xl mx-auto">
-                <EnterpriseStatusPanel baseUrl={baseUrl} />
+                <EnterpriseStatusPanel baseUrl={baseUrl} apiKey={apiKey} />
 
                 <MetricsDashboard traces={traces} />
                 <TraceLog

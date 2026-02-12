@@ -7,7 +7,7 @@ This document covers security configuration, best practices, and deployment guid
 By default, JR AutoRAG runs with **safe local defaults**:
 - CORS allows only localhost origins
 - Authentication is disabled (for local development)
-- Rate limiting is disabled
+- Rate limiting is enabled (`100` req/min, burst `20`)
 - Server binds to localhost only
 
 For production, enable security features via environment variables:
@@ -16,9 +16,6 @@ For production, enable security features via environment variables:
 # Enable authentication
 export AUTORAG_AUTH_ENABLED=true
 export AUTORAG_API_KEYS="your-secret-key-1,your-secret-key-2"
-
-# Enable rate limiting
-export AUTORAG_RATE_LIMIT_ENABLED=true
 
 # Configure CORS for your domain
 export AUTORAG_ALLOWED_ORIGINS="https://app.yourdomain.com,https://admin.yourdomain.com"
@@ -59,10 +56,9 @@ API keys have associated scopes that control access:
 
 | Scope | Access |
 |-------|--------|
-| `query` | Query endpoints (`/query/*`) |
-| `ingest` | Document endpoints (`/documents/*`) |
-| `admin` | Configuration and admin endpoints |
-| `eval` | Evaluation endpoints (`/evaluation/*`) |
+| `read` | Query/monitoring/read-only endpoints |
+| `write` | Document ingest/update/delete and write actions |
+| `admin` | Config/admin/ragfuzz/cache/artifact build controls |
 
 By default, keys from `AUTORAG_API_KEYS` have all scopes.
 
@@ -112,6 +108,10 @@ To expose the API beyond localhost:
 # Enable exposed mode
 export AUTORAG_EXPOSE=true
 
+# REQUIRED in exposed mode: enable authentication first
+export AUTORAG_AUTH_ENABLED=true
+export AUTORAG_API_KEYS="your-secret-key"
+
 # Configure allowed origins (REQUIRED when exposed)
 export AUTORAG_ALLOWED_ORIGINS="https://yourdomain.com"
 
@@ -120,6 +120,8 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
 > ⚠️ **Warning**: Never expose the API without authentication enabled and proper CORS configuration.
+
+When `AUTORAG_EXPOSE=true`, JR AutoRAG will refuse non-public requests unless `AUTORAG_AUTH_ENABLED=true`.
 
 ### TLS/HTTPS
 
@@ -179,9 +181,9 @@ Caddy automatically handles TLS certificate provisioning via Let's Encrypt.
 Rate limiting prevents abuse and ensures fair usage.
 
 **Environment Variables:**
-- `AUTORAG_RATE_LIMIT_ENABLED`: Set to `true` to enable
-- `AUTORAG_RATE_LIMIT_RPM`: Requests per minute (default: 60)
-- `AUTORAG_RATE_LIMIT_BURST`: Burst capacity (default: 10)
+- `AUTORAG_RATE_LIMIT_ENABLED`: Set to `true` to enable (default: `true`)
+- `AUTORAG_RATE_LIMIT_RPM`: Requests per minute (default: 100)
+- `AUTORAG_RATE_LIMIT_BURST`: Burst capacity (default: 20)
 
 Rate limits are applied per API key (if authenticated) or per IP address.
 
@@ -267,7 +269,6 @@ Before deploying to production:
 - [ ] Enable authentication (`AUTORAG_AUTH_ENABLED=true`)
 - [ ] Configure strong API keys
 - [ ] Set appropriate CORS origins
-- [ ] Enable rate limiting
 - [ ] Configure TLS via reverse proxy
 - [ ] Review and rotate API keys regularly
 - [ ] Set up audit log monitoring
@@ -283,10 +284,13 @@ Before deploying to production:
 | `AUTORAG_API_KEYS` | (none) | Comma-separated API keys |
 | `AUTORAG_ALLOWED_ORIGINS` | localhost only | CORS allowed origins |
 | `AUTORAG_EXPOSE` | `false` | Allow non-localhost binding |
-| `AUTORAG_RATE_LIMIT_ENABLED` | `false` | Enable rate limiting |
-| `AUTORAG_RATE_LIMIT_RPM` | `60` | Requests per minute |
+| `AUTORAG_RATE_LIMIT_ENABLED` | `true` | Enable rate limiting |
+| `AUTORAG_RATE_LIMIT_RPM` | `100` | Requests per minute |
+| `AUTORAG_RATE_LIMIT_BURST` | `20` | Burst capacity |
 | `AUTORAG_MAX_REQUEST_SIZE` | `52428800` | Max request body (50MB) |
 | `AUTORAG_VAULT_KEY` | (auto) | Encryption key for secrets vault |
+| `AUTORAG_RAGFUZZ_ENABLED` | `true` in dev, `false` in prod | Enable RAGFuzz audit endpoints |
+| `AUTORAG_RAGFUZZ_SECRET` | (none) | Shared secret for `/rag/audit/*` endpoints (required in prod) |
 
 ## Reporting Security Issues
 

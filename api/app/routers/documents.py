@@ -61,6 +61,8 @@ def ingest_text(
             text=payload.text,
             metadata=payload.metadata,
             sync=payload.sync,
+            langextract_profile_override=payload.langextract_profile_override,
+            langextract_prompt_override=payload.langextract_prompt_override,
         )
         if enforcer.store.get(result.document_id) is None:
             owner_id = user_id or "anonymous"
@@ -117,6 +119,8 @@ async def ingest_file(
     file: UploadFile = File(...),
     title: str = Form(...),
     sync: bool = Form(False),
+    langextract_profile_override: str | None = Form(None),
+    langextract_prompt_override: str | None = Form(None),
     container: ServiceContainer = Depends(get_container),
 ):
     auth_enabled = get_auth().require_auth()
@@ -142,6 +146,8 @@ async def ingest_file(
                 "content_type": file.content_type or "application/octet-stream",
             },
             sync=sync,
+            langextract_profile_override=langextract_profile_override,
+            langextract_prompt_override=langextract_prompt_override,
         )
         if enforcer.store.get(result.document_id) is None:
             owner_id = user_id or "anonymous"

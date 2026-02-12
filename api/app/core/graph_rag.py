@@ -14,6 +14,7 @@ Paper: https://arxiv.org/abs/2404.16130
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any

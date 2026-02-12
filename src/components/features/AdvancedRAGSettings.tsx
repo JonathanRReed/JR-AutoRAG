@@ -67,6 +67,10 @@ export function AdvancedRAGSettings({
     const denseKOptions = [5, 10, 15, 20, 30, 40, 50];
     const sparseKOptions = [10, 20, 30, 40, 60, 80, 100];
     const rerankPoolOptions = [10, 20, 30, 40, 50, 60, 80, 100];
+    const langExtractProfiles = ["generic_entities_v1", "compliance_risk_v1", "contract_terms_v1"];
+    const langExtractTimeouts = [10, 15, 20, 30, 45, 60];
+    const langExtractMaxChars = [4000, 8000, 12000, 16000, 24000];
+    const langExtractMaxFacts = [50, 100, 150, 200, 300, 500];
     const embeddingModels = [
         "BAAI/bge-base-en-v1.5",
         "BAAI/bge-large-en-v1.5",
@@ -683,7 +687,7 @@ export function AdvancedRAGSettings({
                                             <SelectValue placeholder="Select rule" />
                                         </SelectTrigger>
                                         <SelectContent>
-                                            <SelectItem value="sign_threshold_0">Sign threshold (>= 0)</SelectItem>
+                                            <SelectItem value="sign_threshold_0">Sign threshold (&gt;= 0)</SelectItem>
                                         </SelectContent>
                                     </Select>
                                 </div>
@@ -772,6 +776,118 @@ export function AdvancedRAGSettings({
                                         placeholder="16"
                                         className="h-9"
                                     />
+                                </div>
+                            </div>
+                        </section>
+
+                        {/* LangExtract Enrichment */}
+                        <section className="space-y-4 rounded-lg border border-border/60 bg-muted/10 p-4">
+                            <div className="flex items-center gap-2">
+                                <div className="h-4 w-1 rounded-full bg-primary" />
+                                <div>
+                                    <h4 className="text-sm font-semibold uppercase tracking-wider text-foreground">
+                                        LangExtract Enrichment
+                                    </h4>
+                                    <p className="text-xs text-muted-foreground">
+                                        Optional ingestion-time structured fact extraction (fail-open).
+                                    </p>
+                                </div>
+                            </div>
+                            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                                <div className="space-y-2">
+                                    <Label htmlFor="langextractEnabled" className="text-xs">Enabled</Label>
+                                    <Select
+                                        value={(retrieval?.langextract_enabled ?? false) ? "on" : "off"}
+                                        onValueChange={(value) => updateRetrieval("langextract_enabled", value === "on")}
+                                    >
+                                        <SelectTrigger id="langextractEnabled" className="h-9">
+                                            <SelectValue placeholder="Select mode" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="off">Disabled</SelectItem>
+                                            <SelectItem value="on">Enabled</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="langextractProfileDefault" className="text-xs">Default Profile</Label>
+                                    <Select
+                                        value={retrieval?.langextract_profile_default ?? "generic_entities_v1"}
+                                        onValueChange={(value) => updateRetrieval("langextract_profile_default", value)}
+                                    >
+                                        <SelectTrigger id="langextractProfileDefault" className="h-9">
+                                            <SelectValue placeholder="Select profile" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {langExtractProfiles.map(profile => (
+                                                <SelectItem key={profile} value={profile}>{profile}</SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="langextractModelSource" className="text-xs">Model Source</Label>
+                                    <Select
+                                        value={retrieval?.langextract_model_source ?? "gatherer"}
+                                        onValueChange={(value) => updateRetrieval("langextract_model_source", value)}
+                                    >
+                                        <SelectTrigger id="langextractModelSource" className="h-9">
+                                            <SelectValue placeholder="Select role" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="planner">planner</SelectItem>
+                                            <SelectItem value="gatherer">gatherer</SelectItem>
+                                            <SelectItem value="generator">generator</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="langextractTimeout" className="text-xs">Timeout (sec)</Label>
+                                    <Select
+                                        value={String(retrieval?.langextract_timeout_sec ?? 20)}
+                                        onValueChange={(value) => updateRetrieval("langextract_timeout_sec", Number(value))}
+                                    >
+                                        <SelectTrigger id="langextractTimeout" className="h-9">
+                                            <SelectValue placeholder="Select timeout" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {langExtractTimeouts.map(option => (
+                                                <SelectItem key={option} value={String(option)}>{option}</SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="langextractMaxChars" className="text-xs">Max Source Chars</Label>
+                                    <Select
+                                        value={String(retrieval?.langextract_max_chars ?? 12000)}
+                                        onValueChange={(value) => updateRetrieval("langextract_max_chars", Number(value))}
+                                    >
+                                        <SelectTrigger id="langextractMaxChars" className="h-9">
+                                            <SelectValue placeholder="Select max chars" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {langExtractMaxChars.map(option => (
+                                                <SelectItem key={option} value={String(option)}>{option}</SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="langextractMaxFacts" className="text-xs">Max Synthetic Facts</Label>
+                                    <Select
+                                        value={String(retrieval?.langextract_max_synthetic_facts ?? 200)}
+                                        onValueChange={(value) => updateRetrieval("langextract_max_synthetic_facts", Number(value))}
+                                    >
+                                        <SelectTrigger id="langextractMaxFacts" className="h-9">
+                                            <SelectValue placeholder="Select cap" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {langExtractMaxFacts.map(option => (
+                                                <SelectItem key={option} value={String(option)}>{option}</SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
                                 </div>
                             </div>
                         </section>

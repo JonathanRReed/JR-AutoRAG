@@ -6,9 +6,10 @@ interface ArtifactViewerProps {
     type: 'graph_rag' | 'raptor';
     onClose: () => void;
     baseUrl?: string;
+    apiKey?: string;
 }
 
-export function ArtifactViewer({ type, onClose, baseUrl }: ArtifactViewerProps) {
+export function ArtifactViewer({ type, onClose, baseUrl, apiKey = "" }: ArtifactViewerProps) {
     const [data, setData] = useState<any>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -19,7 +20,14 @@ export function ArtifactViewer({ type, onClose, baseUrl }: ArtifactViewerProps) 
             try {
                 const root = baseUrl ? baseUrl.replace(/\/$/, "") : "";
                 const endpoint = type === 'graph_rag' ? '/api/artifacts/graph' : '/api/artifacts/raptor';
-                const res = await fetch(`${root}${endpoint}`);
+                const headers: Record<string, string> = {};
+                const trimmedApiKey = apiKey.trim();
+                if (trimmedApiKey) {
+                    headers["X-API-Key"] = trimmedApiKey;
+                }
+                const res = await fetch(`${root}${endpoint}`, {
+                    headers: Object.keys(headers).length ? headers : undefined,
+                });
                 if (!res.ok) throw new Error("Failed to fetch artifact data");
                 const json = await res.json();
                 setData(json);
@@ -30,7 +38,7 @@ export function ArtifactViewer({ type, onClose, baseUrl }: ArtifactViewerProps) 
             }
         };
         fetchData();
-    }, [type]);
+    }, [type, baseUrl, apiKey]);
 
     return (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-background/80 backdrop-blur-sm animate-in fade-in duration-200">

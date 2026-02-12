@@ -6,20 +6,20 @@ into a cohesive security layer for production deployments.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import os
 import time
 from typing import Callable, Optional
-from functools import wraps
 
 from fastapi import FastAPI, Request, Response, HTTPException, Depends
 from fastapi.security import APIKeyHeader
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
-from .auth import get_auth, APIKeyAuth
-from .rate_limiter import get_rate_limiter, RateLimiter
-from .audit import get_audit_log, AuditAction
+from .auth import get_auth
+from .rate_limiter import get_rate_limiter
+from .audit import get_audit_log
 
 
 # =============================================================================
@@ -46,10 +46,19 @@ PUBLIC_PATHS = {
 
 # Scope requirements per route prefix
 ROUTE_SCOPES = {
+    "/api/artifacts/build": "admin",
+    "/api/cache/clear": "admin",
+    "/api/cache/rebuild": "admin",
+    "/rag/audit": "admin",
     "/query": "read",
     "/documents": "write",
     "/config": "admin",
     "/evaluation": "read",
+    "/providers": "read",
+    "/monitoring": "read",
+    "/api/traces": "read",
+    "/api/artifacts": "read",
+    "/api/cache": "read",
     "/admin": "admin",
     "/api/keys": "admin",
 }
@@ -87,6 +96,16 @@ def is_exposed_mode() -> bool:
     return os.environ.get("AUTORAG_EXPOSE", "false").lower() in ("true", "1", "yes")
 
 
+def _resolve_required_scope(path: str, method: str) -> str | None:
+    """Resolve required scope based on request path and method."""
+    if path.startswith("/documents"):
+        return "read" if method.upper() in {"GET", "HEAD", "OPTIONS"} else "write"
+    for prefix, scope in ROUTE_SCOPES.items():
+        if path.startswith(prefix):
+            return scope
+    return None
+
+
 # =============================================================================
 # Authentication Dependency
 # =============================================================================
@@ -113,6 +132,15 @@ async def verify_api_key(
     # Skip auth for public paths
     if path in PUBLIC_PATHS:
         return None
+
+    if is_exposed_mode() and not auth.require_auth():
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Refusing unauthenticated access while AUTORAG_EXPOSE=true. "
+                "Enable AUTORAG_AUTH_ENABLED and configure AUTORAG_API_KEYS."
+            ),
+        )
     
     # If auth is not enabled, allow
     if not auth.require_auth():
@@ -139,18 +167,7 @@ async def verify_api_key(
             headers={"WWW-Authenticate": "ApiKey"},
         )
     
-    # Determine required scope based on route/method
-    required_scope = None
-    if path.startswith("/documents"):
-        if request.method.upper() in {"GET", "HEAD", "OPTIONS"}:
-            required_scope = "read"
-        else:
-            required_scope = "write"
-    else:
-        for prefix, scope in ROUTE_SCOPES.items():
-            if path.startswith(prefix):
-                required_scope = scope
-                break
+    required_scope = _resolve_required_scope(path, request.method)
     
     if not auth.verify(api_key, required_scope=required_scope):
         audit_log = get_audit_log()
@@ -253,7 +270,7 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
 # =============================================================================
 
 class TimeoutMiddleware(BaseHTTPMiddleware):
-    """Middleware that adds timeout information to request state."""
+    """Middleware that enforces route-level timeouts."""
     
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         path = request.url.path
@@ -269,7 +286,13 @@ class TimeoutMiddleware(BaseHTTPMiddleware):
         request.state.timeout = timeout
         request.state.start_time = time.time()
         
-        response = await call_next(request)
+        try:
+            response = await asyncio.wait_for(call_next(request), timeout=timeout)
+        except asyncio.TimeoutError:
+            return Response(
+                content=f"Request timed out after {timeout} seconds.",
+                status_code=504,
+            )
         
         # Add timing header
         elapsed = time.time() - request.state.start_time
