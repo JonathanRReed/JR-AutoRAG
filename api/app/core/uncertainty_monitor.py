@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Iterable
 
 UNCERTAINTY_PATTERNS: tuple[str, ...] = (
     r"\b(maybe|perhaps|possibly|might|could be|I think|I believe)\b",

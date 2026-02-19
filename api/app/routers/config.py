@@ -145,11 +145,11 @@ def get_active_preset(container: ServiceContainer = Depends(get_container)):
     """Determine which preset the current config most closely matches."""
     cfg = container.config_store.read()
     current = cfg.retrieval
-    
+
     # Find best matching preset by comparing key parameters
     best_match = "balanced"
     best_score = 0
-    
+
     for name, preset in RETRIEVAL_PRESETS.items():
         score = 0
         # Compare key parameters
@@ -167,11 +167,11 @@ def get_active_preset(container: ServiceContainer = Depends(get_container)):
             score += 1
         if current.enforce_evidence_contract == preset.enforce_evidence_contract:
             score += 1
-        
+
         if score > best_score:
             best_score = score
             best_match = name
-    
+
     return {
         "level": best_match,
         "features": {

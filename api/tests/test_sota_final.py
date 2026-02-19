@@ -1,9 +1,9 @@
 """Tests for final SOTA enhancements."""
 
-import pytest
+from app.core.budget_planner import BudgetClass, BudgetPlanner
 from app.core.conflict_detector import ConflictDetector
-from app.core.budget_planner import BudgetPlanner, BudgetClass
 from app.core.gatherer import EvidenceChunk
+
 
 class TestConflictDetector:
     def test_no_conflicts(self):
@@ -14,7 +14,7 @@ class TestConflictDetector:
         ]
         result = detector.detect(chunks)
         assert not result.has_conflicts
-    
+
     def test_detects_negation_conflict(self):
         detector = ConflictDetector()
         chunks = [
@@ -33,13 +33,13 @@ class TestBudgetPlanner:
         assert plan.max_iterations <= 2
         assert not plan.use_colbert
         assert not plan.use_graph
-    
+
     def test_premium_budget(self):
         planner = BudgetPlanner()
         plan = planner.plan(BudgetClass.PREMIUM)
         assert plan.max_iterations > 1
         assert plan.use_raptor
-    
+
     def test_complexity_scaling(self):
         planner = BudgetPlanner()
         simple = planner.plan(BudgetClass.STANDARD, query_complexity=0.2)

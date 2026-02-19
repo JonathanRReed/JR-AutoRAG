@@ -12,12 +12,11 @@ Designed for internal company hosting with file-based persistence.
 from __future__ import annotations
 
 import json
-import os
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass
 from datetime import datetime
+from enum import Enum
 from pathlib import Path
 from typing import Any
-from enum import Enum
 
 
 class AuditAction(str, Enum):
@@ -43,7 +42,7 @@ class AuditEntry:
     ip_address: str | None = None
     success: bool = True
     duration_ms: float | None = None
-    
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "timestamp": self.timestamp.isoformat(),
@@ -54,9 +53,9 @@ class AuditEntry:
             "success": self.success,
             "duration_ms": self.duration_ms,
         }
-    
+
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "AuditEntry":
+    def from_dict(cls, data: dict[str, Any]) -> AuditEntry:
         return cls(
             timestamp=datetime.fromisoformat(data["timestamp"]),
             action=AuditAction(data["action"]),
@@ -70,13 +69,13 @@ class AuditEntry:
 
 class AuditLog:
     """Persistent audit logging for enterprise compliance.
-    
+
     Features:
     - File-based persistence (JSONL format)
     - Automatic log rotation by date
     - Query filtering by time, action, user
     - Export capabilities
-    
+
     Usage:
         audit = AuditLog()
         audit.log(AuditEntry(
@@ -86,56 +85,56 @@ class AuditLog:
             user_id="user123",
         ))
     """
-    
+
     DEFAULT_LOG_DIR = "data/audit"
     MAX_ENTRIES_IN_MEMORY = 1000
-    
+
     def __init__(self, log_dir: str | Path | None = None) -> None:
         """Initialize audit log.
-        
+
         Args:
             log_dir: Directory for log files. Defaults to data/audit.
         """
         self._log_dir = Path(log_dir or self.DEFAULT_LOG_DIR)
         self._log_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # In-memory buffer for recent entries
         self._buffer: list[AuditEntry] = []
         self._current_date: str | None = None
         self._current_file: Path | None = None
-    
+
     def _get_log_file(self, date: datetime | None = None) -> Path:
         """Get log file path for a given date."""
         if date is None:
             date = datetime.utcnow()
         date_str = date.strftime("%Y-%m-%d")
         return self._log_dir / f"audit_{date_str}.jsonl"
-    
+
     def _ensure_file_for_today(self) -> None:
         """Ensure we have the correct file handle for today."""
         today = datetime.utcnow().strftime("%Y-%m-%d")
         if self._current_date != today:
             self._current_date = today
             self._current_file = self._get_log_file()
-    
+
     def log(self, entry: AuditEntry) -> None:
         """Record an audit entry.
-        
+
         Writes to disk immediately for durability.
         """
         self._ensure_file_for_today()
-        
+
         # Write to file
         with open(self._current_file, "a") as f:
             f.write(json.dumps(entry.to_dict()) + "\n")
-        
+
         # Add to buffer
         self._buffer.append(entry)
-        
+
         # Trim buffer if too large
         if len(self._buffer) > self.MAX_ENTRIES_IN_MEMORY:
             self._buffer = self._buffer[-self.MAX_ENTRIES_IN_MEMORY:]
-    
+
     def log_query(
         self,
         query: str,
@@ -158,7 +157,7 @@ class AuditLog:
             success=success,
             duration_ms=duration_ms,
         ))
-    
+
     def log_ingest(
         self,
         document_id: str,
@@ -181,7 +180,7 @@ class AuditLog:
             ip_address=ip_address,
             success=success,
         ))
-    
+
     def log_delete(
         self,
         document_id: str,
@@ -198,7 +197,7 @@ class AuditLog:
             ip_address=ip_address,
             success=success,
         ))
-    
+
     def log_auth(
         self,
         success: bool,
@@ -216,7 +215,7 @@ class AuditLog:
             ip_address=ip_address,
             success=success,
         ))
-    
+
     def query(
         self,
         since: datetime | None = None,
@@ -226,14 +225,14 @@ class AuditLog:
         limit: int = 100,
     ) -> list[AuditEntry]:
         """Query audit log entries.
-        
+
         Args:
             since: Start time filter
             until: End time filter
             action: Filter by action type
             user_id: Filter by user
             limit: Maximum entries to return
-        
+
         Returns:
             List of matching entries (newest first)
         """
@@ -244,12 +243,12 @@ class AuditLog:
                 entries.append(entry)
                 if len(entries) >= limit:
                     return entries
-        
+
         # If need more, read from files
         if len(entries) < limit:
             # Get list of log files
             log_files = sorted(self._log_dir.glob("audit_*.jsonl"), reverse=True)
-            
+
             for log_file in log_files:
                 # Check if file date is in range
                 file_date_str = log_file.stem.replace("audit_", "")
@@ -261,18 +260,17 @@ class AuditLog:
                         continue
                 except ValueError:
                     continue
-                
+
                 # Read file entries
                 file_entries = self._read_log_file(log_file)
                 for entry in reversed(file_entries):
-                    if entry not in self._buffer:  # Avoid duplicates
-                        if self._matches_filter(entry, since, until, action, user_id):
-                            entries.append(entry)
-                            if len(entries) >= limit:
-                                return entries
-        
+                    if entry not in self._buffer and self._matches_filter(entry, since, until, action, user_id):  # Avoid duplicates
+                        entries.append(entry)
+                        if len(entries) >= limit:
+                            return entries
+
         return entries
-    
+
     def _matches_filter(
         self,
         entry: AuditEntry,
@@ -288,10 +286,8 @@ class AuditLog:
             return False
         if action and entry.action != action:
             return False
-        if user_id and entry.user_id != user_id:
-            return False
-        return True
-    
+        return not (user_id and entry.user_id != user_id)
+
     def _read_log_file(self, path: Path) -> list[AuditEntry]:
         """Read entries from a log file."""
         entries = []
@@ -308,7 +304,7 @@ class AuditLog:
         except FileNotFoundError:
             pass
         return entries
-    
+
     def export(
         self,
         since: datetime | None = None,
@@ -316,17 +312,17 @@ class AuditLog:
         format: str = "json",
     ) -> str:
         """Export audit log entries.
-        
+
         Args:
             since: Start time
             until: End time
             format: "json" or "csv"
-        
+
         Returns:
             Formatted string of entries
         """
         entries = self.query(since=since, until=until, limit=10000)
-        
+
         if format == "json":
             return json.dumps([e.to_dict() for e in entries], indent=2)
         elif format == "csv":
@@ -341,19 +337,19 @@ class AuditLog:
             return "\n".join(lines)
         else:
             raise ValueError(f"Unknown format: {format}")
-    
+
     def get_stats(
         self,
         since: datetime | None = None,
     ) -> dict[str, Any]:
         """Get audit log statistics."""
         entries = self.query(since=since, limit=10000)
-        
+
         by_action: dict[str, int] = {}
         by_user: dict[str, int] = {}
         success_count = 0
         failure_count = 0
-        
+
         for entry in entries:
             by_action[entry.action.value] = by_action.get(entry.action.value, 0) + 1
             if entry.user_id:
@@ -362,7 +358,7 @@ class AuditLog:
                 success_count += 1
             else:
                 failure_count += 1
-        
+
         return {
             "total_entries": len(entries),
             "by_action": by_action,

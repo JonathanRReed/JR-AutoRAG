@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from .binary_quantization import (
     BQ_VERSION,
@@ -423,7 +424,7 @@ class BQHybridRetrievalEngine(HybridRetrievalEngine):
             reranked_scores = self._rerank_binary(query, results)
             timings.t_rerank_ms = (time.perf_counter() - rerank_start) * 1000
             results = [r for r, _ in sorted(
-                zip(results, [reranked_scores.get(r.chunk_id, r.score) for r in results]),
+                zip(results, [reranked_scores.get(r.chunk_id, r.score) for r in results], strict=False),
                 key=lambda item: item[1],
                 reverse=True,
             )][:top_k]
@@ -481,7 +482,7 @@ class BQHybridRetrievalEngine(HybridRetrievalEngine):
     def _rerank_binary(self, query: str, results: list[MilvusSearchResult]) -> dict[str, float]:
         pairs = [(query, r.text) for r in results]
         scores = self._reranker.predict(pairs)
-        return {result.chunk_id: float(score) for result, score in zip(results, scores)}
+        return {result.chunk_id: float(score) for result, score in zip(results, scores, strict=False)}
 
     def _build_binary_results(
         self,

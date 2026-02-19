@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .providers import LLMProvider
 
+import contextlib
+
 from ..schemas.config import AppConfig
 
 
@@ -76,23 +78,23 @@ def compute_marginal_gain(
     new_chunks: list[dict],
 ) -> float:
     """Compute marginal evidence gain from new retrieval iteration.
-    
+
     Returns a score 0-1 indicating how much unique information the new
     chunks add. Used for stop criteria in iterative retrieval.
-    
+
     Args:
         existing_chunks: Previously retrieved chunks (each with 'text' and 'score')
         new_chunks: Newly retrieved chunks from this iteration
-    
+
     Returns:
         Marginal gain score (0 = all redundant, 1 = all new)
     """
     if not new_chunks:
         return 0.0
-    
+
     if not existing_chunks:
         return 1.0
-    
+
     # Get existing text content for deduplication
     existing_texts = set()
     for chunk in existing_chunks:
@@ -100,43 +102,43 @@ def compute_marginal_gain(
         # Use content hash for comparison (first 100 chars + length)
         key = f"{text[:100]}_{len(text)}"
         existing_texts.add(key)
-    
+
     # Count unique new chunks
     unique_count = 0
     score_improvement = 0.0
-    
+
     for chunk in new_chunks:
         text = chunk.get("text", chunk.get("chunk_text", "")).lower()
         key = f"{text[:100]}_{len(text)}"
-        
+
         if key not in existing_texts:
             unique_count += 1
             # Weight by score
             score_improvement += chunk.get("score", 0.5)
-    
+
     if unique_count == 0:
         return 0.0
-    
+
     # Combine uniqueness ratio with score-weighted value
     uniqueness = unique_count / len(new_chunks)
     avg_new_score = score_improvement / unique_count
-    
+
     # Weighted combination: 70% uniqueness, 30% score
     return 0.7 * uniqueness + 0.3 * avg_new_score
 
 
 class SmartPlanner:
     """LLM-enhanced planner with query decomposition and routing.
-    
+
     When an LLM provider is available, uses it to:
     1. Classify the query type
     2. Decompose complex queries into sub-queries
     3. Expand queries with related terms
     4. Select optimal retrieval parameters
-    
+
     Falls back to heuristic-based planning when no LLM is available.
     """
-    
+
     # Heuristic patterns for query classification
     COMPARATIVE_PATTERNS = [
         r'\bvs\.?\b', r'\bversus\b', r'\bcompare\b', r'\bdifference\b',
@@ -167,7 +169,7 @@ class SmartPlanner:
         r'\btell me (about|everything)\b', r'\bexplore\b', r'\bresearch\b',
         r'\ball\b.*\b(information|details)\b', r'\bcomprehensive\b'
     ]
-    
+
     # Routing strategies per query type
     ROUTING_STRATEGIES: dict[str, dict] = {
         QueryType.FACTUAL: {
@@ -250,59 +252,59 @@ class SmartPlanner:
             "description": "Quick follow-up retrieval",
         },
     }
-    
-    def __init__(self, config: AppConfig, provider: "LLMProvider | None" = None) -> None:
+
+    def __init__(self, config: AppConfig, provider: LLMProvider | None = None) -> None:
         self._config = config
         self._provider = provider
         self._last_planner_mode = "heuristic"
-    
+
     def rebuild(self, config: AppConfig) -> None:
         self._config = config
-    
-    def set_provider(self, provider: "LLMProvider | None") -> None:
+
+    def set_provider(self, provider: LLMProvider | None) -> None:
         """Set or update the LLM provider for smart planning."""
         self._provider = provider
-    
+
     def _classify_query_heuristic(self, query: str) -> QueryType:
         """Classify query using pattern matching."""
         query_lower = query.lower()
-        
+
         # Check new specialized types first
         for pattern in self.LOCATOR_PATTERNS:
             if re.search(pattern, query_lower):
                 return QueryType.LOCATOR
-        
+
         for pattern in self.MULTI_HOP_PATTERNS:
             if re.search(pattern, query_lower):
                 return QueryType.MULTI_HOP
-        
+
         for pattern in self.EXPLORATORY_PATTERNS:
             if re.search(pattern, query_lower):
                 return QueryType.EXPLORATORY
-        
+
         # Existing patterns
         for pattern in self.COMPARATIVE_PATTERNS:
             if re.search(pattern, query_lower):
                 return QueryType.COMPARATIVE
-        
+
         for pattern in self.PROCEDURAL_PATTERNS:
             if re.search(pattern, query_lower):
                 return QueryType.PROCEDURAL
-        
+
         for pattern in self.SUMMARY_PATTERNS:
             if re.search(pattern, query_lower):
                 return QueryType.SUMMARY
-        
+
         for pattern in self.ANALYTICAL_PATTERNS:
             if re.search(pattern, query_lower):
                 return QueryType.ANALYTICAL
-        
+
         return QueryType.FACTUAL
-    
+
     def _decompose_query_heuristic(self, query: str, query_type: QueryType) -> list[str]:
         """Decompose query into sub-queries using heuristics."""
         sub_queries = [query]  # Always include original
-        
+
         if query_type == QueryType.COMPARATIVE:
             # Try to extract items being compared
             parts = re.split(r'\bvs\.?\b|\bversus\b|\bor\b', query, flags=re.IGNORECASE)
@@ -311,17 +313,17 @@ class SmartPlanner:
                     part = part.strip()
                     if part and len(part) > 5:
                         sub_queries.append(f"What is {part}?")
-        
+
         elif query_type == QueryType.ANALYTICAL:
             # Add related factual query
             sub_queries.append(query.replace("why", "what").replace("Why", "What"))
-        
+
         elif query_type == QueryType.PROCEDURAL:
             # Add overview query
             sub_queries.append(query.replace("how to", "what is").replace("How to", "What is"))
-        
+
         return sub_queries[:3]  # Limit to 3 sub-queries
-    
+
     def _expand_query_heuristic(self, query: str) -> list[str]:
         """Extract key terms for query expansion."""
         # Remove common words and extract likely important terms
@@ -333,23 +335,23 @@ class SmartPlanner:
             'and', 'or', 'but', 'if', 'then', 'so', 'because',
             'to', 'of', 'in', 'on', 'at', 'by', 'for', 'with', 'about'
         }
-        
+
         words = re.findall(r'\b[a-zA-Z]{3,}\b', query.lower())
         key_terms = [w for w in words if w not in stop_words]
-        
+
         return key_terms[:5]  # Return top 5 key terms
-    
+
     def _estimate_complexity(self, query: str, query_type: QueryType) -> float:
         """Estimate query complexity (0-1)."""
         score = 0.0
-        
+
         # Length factor
         word_count = len(query.split())
         if word_count > 20:
             score += 0.3
         elif word_count > 10:
             score += 0.15
-        
+
         # Query type factor
         type_complexity = {
             QueryType.FACTUAL: 0.0,
@@ -360,15 +362,15 @@ class SmartPlanner:
             QueryType.COMPARATIVE: 0.5,
         }
         score += type_complexity.get(query_type, 0.2)
-        
+
         # Special indicators
         if '?' in query and query.count('?') > 1:
             score += 0.2  # Multiple questions
         if re.search(r'\b(all|every|each)\b', query.lower()):
             score += 0.1  # Comprehensive request
-        
+
         return min(1.0, score)
-    
+
     def _compute_dynamic_k(
         self,
         base_k: int,
@@ -376,13 +378,13 @@ class SmartPlanner:
         query_type: QueryType,
     ) -> int:
         """Compute dynamic k based on corpus size and query type.
-        
+
         Scales k up for larger corpora to maintain recall,
         scales down for small corpora to avoid noise.
         """
         if corpus_size == 0:
             return base_k
-        
+
         # Scaling factors based on corpus size
         # Small corpus (<100): use base or less
         # Medium corpus (100-1000): use base
@@ -399,17 +401,17 @@ class SmartPlanner:
             scale = 1.4
         else:
             scale = 1.6
-        
+
         # Exploratory/Summary queries scale more aggressively
         if query_type in (QueryType.EXPLORATORY, QueryType.SUMMARY):
             scale *= 1.2
-        
+
         # Factual queries should stay tight
         if query_type == QueryType.FACTUAL:
             scale *= 0.8
-        
+
         return max(3, min(50, int(base_k * scale)))
-    
+
     def _get_retrieval_params(
         self,
         query_type: QueryType,
@@ -417,32 +419,32 @@ class SmartPlanner:
         corpus_size: int = 0,
     ) -> dict:
         """Get retrieval parameters based on query analysis and corpus size.
-        
+
         Uses ROUTING_STRATEGIES for base parameters, then adjusts for
         complexity and corpus size.
         """
         defaults = self._config.retrieval
-        
+
         # Get strategy for this query type (or fall back to FACTUAL)
         strategy = self.ROUTING_STRATEGIES.get(
             query_type,
             self.ROUTING_STRATEGIES[QueryType.FACTUAL]
         )
-        
+
         # Base parameters from strategy
         base_dense_k = strategy.get("dense_k", defaults.dense_k)
         base_sparse_k = strategy.get("sparse_k", defaults.sparse_k)
         base_rerank_pool = strategy.get("rerank_pool", defaults.rerank_pool)
-        
+
         # Apply dynamic k based on corpus size
         dense_k = self._compute_dynamic_k(base_dense_k, corpus_size, query_type)
         sparse_k = self._compute_dynamic_k(base_sparse_k, corpus_size, query_type)
         rerank_pool = self._compute_dynamic_k(base_rerank_pool, corpus_size, query_type)
-        
+
         # Compression setting
         compression_map = {"tight": True, "moderate": True, "light": True, "none": False}
         compression = compression_map.get(strategy.get("compression", "moderate"), defaults.compression)
-        
+
         # Build params dict including strategy extras
         params = {
             'dense_k': dense_k,
@@ -460,19 +462,19 @@ class SmartPlanner:
             'recency_weight': defaults.recency_weight,
             'recency_half_life_days': defaults.recency_half_life_days,
         }
-        
+
         # Adjust for high complexity
         if complexity > 0.7:
             params['dense_k'] = min(40, int(params['dense_k'] * 1.3))
             params['rerank_pool'] = min(50, int(params['rerank_pool'] * 1.3))
-        
+
         return params
-    
+
     async def analyze_query_llm(self, query: str) -> QueryAnalysis | None:
         """Use LLM to analyze the query (async)."""
         if not self._provider:
             return None
-        
+
         prompt = f"""Analyze this query and respond in the exact format below.
 
 Guidelines:
@@ -533,24 +535,22 @@ Be concise, deterministic, and follow the format exactly.""",
         except Exception as e:
             print(f"LLM query analysis failed: {e}")
             return None
-    
+
     def _parse_llm_analysis(self, response: str, original_query: str) -> QueryAnalysis:
         """Parse LLM response into QueryAnalysis."""
         lines = response.strip().split('\n')
-        
+
         query_type = QueryType.FACTUAL
         sub_queries = [original_query]
         expanded_terms = []
         complexity = 0.5
-        
+
         for line in lines:
             line = line.strip()
             if line.startswith('TYPE:'):
                 type_str = line.split(':', 1)[1].strip().lower()
-                try:
+                with contextlib.suppress(ValueError):
                     query_type = QueryType(type_str)
-                except ValueError:
-                    pass
             elif line.startswith('SUB_QUERIES:'):
                 queries_str = line.split(':', 1)[1].strip()
                 if queries_str.lower() != 'none':
@@ -563,14 +563,14 @@ Be concise, deterministic, and follow the format exactly.""",
             elif line.startswith('COMPLEXITY:'):
                 comp_str = line.split(':', 1)[1].strip().lower()
                 complexity = {'low': 0.3, 'medium': 0.5, 'high': 0.8}.get(comp_str, 0.5)
-        
+
         return QueryAnalysis(
             query_type=query_type,
             sub_queries=sub_queries,
             expanded_terms=expanded_terms,
             complexity_score=complexity,
         )
-    
+
     def analyze_query(self, query: str) -> QueryAnalysis:
         """Analyze query using heuristics (sync fallback)."""
         self._last_planner_mode = "heuristic"
@@ -578,33 +578,33 @@ Be concise, deterministic, and follow the format exactly.""",
         sub_queries = self._decompose_query_heuristic(query, query_type)
         expanded_terms = self._expand_query_heuristic(query)
         complexity = self._estimate_complexity(query, query_type)
-        
+
         return QueryAnalysis(
             query_type=query_type,
             sub_queries=sub_queries,
             expanded_terms=expanded_terms,
             complexity_score=complexity,
         )
-    
+
     def plan(self, query: str) -> RetrievalPlan:
         """Create a retrieval plan for the given query (sync)."""
         analysis = self.analyze_query(query)
         return self._build_plan(query, analysis)
-    
+
     async def plan_async(self, query: str) -> RetrievalPlan:
         """Create a retrieval plan using LLM if available (async)."""
         # Try LLM analysis first
         analysis = await self.analyze_query_llm(query)
         if not analysis:
             analysis = self.analyze_query(query)
-        
+
         return self._build_plan(query, analysis)
-    
+
     def _build_plan(self, query: str, analysis: QueryAnalysis) -> RetrievalPlan:
         """Build retrieval plan from analysis."""
         defaults = self._config.retrieval
         params = self._get_retrieval_params(analysis.query_type, analysis.complexity_score)
-        
+
         steps = []
         for i, sub_query in enumerate(analysis.sub_queries):
             step = PlanStep(
@@ -616,11 +616,11 @@ Be concise, deterministic, and follow the format exactly.""",
                 priority=len(analysis.sub_queries) - i,  # First query highest priority
             )
             steps.append(step)
-        
+
         # Determine iterative settings
         iterative = params.get('iterative', False)
         max_iterations = params.get('max_hops', 1) if iterative else 1
-        
+
         return RetrievalPlan(
             steps=steps,
             target_tokens=defaults.target_tokens,
@@ -640,7 +640,7 @@ Planner = SmartPlanner
 
 __all__ = [
     "QueryType",
-    "PlanStep", 
+    "PlanStep",
     "RetrievalPlan",
     "QueryAnalysis",
     "SmartPlanner",

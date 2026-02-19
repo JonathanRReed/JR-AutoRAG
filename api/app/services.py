@@ -28,7 +28,7 @@ from .core import (
 from .schemas.config import AppConfig
 
 
-def _build_retrieval_config(cfg: "AppConfig") -> HybridConfig:
+def _build_retrieval_config(cfg: AppConfig) -> HybridConfig:
     return HybridConfig(
         embedding_model=cfg.retrieval.embedding_model,
         reranker_model=cfg.retrieval.reranker_model,
@@ -121,9 +121,9 @@ class ServiceContainer:
 
     def _sanitize_config(
         self,
-        cfg: "AppConfig",
-        existing: "AppConfig" | None = None,
-    ) -> "AppConfig":
+        cfg: AppConfig,
+        existing: AppConfig | None = None,
+    ) -> AppConfig:
         from .core.providers import _infer_secret_key_name
         from .core.secrets_vault import get_secrets_vault
 
@@ -173,12 +173,12 @@ class ServiceContainer:
             update={"provider": sanitized_provider, "provider_profiles": sanitized_profiles}
         )
 
-    def prepare_config_for_storage(self, cfg: "AppConfig") -> "AppConfig":
+    def prepare_config_for_storage(self, cfg: AppConfig) -> AppConfig:
         """Store any secrets in vault and redact them from config."""
         current = self.config_store.read()
         return self._sanitize_config(cfg, existing=current)
 
-    def _build_bq_config(self, cfg: "AppConfig") -> tuple[BQRetrievalConfig, bool]:
+    def _build_bq_config(self, cfg: AppConfig) -> tuple[BQRetrievalConfig, bool]:
         """Build BQ retrieval configuration from app config."""
         # Get embedding dimension from model info
         from .core.hybrid_retrieval import EmbeddingModelPreset

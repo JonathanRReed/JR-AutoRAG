@@ -13,17 +13,16 @@ requiring minimum quality scores before considering a build "green".
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
-from typing import Any, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .golden_eval import (
-    GoldenSetStore,
-    GoldenTestCase,
-    GoldenSetEvaluator,
     EvalRunResult,
     EvalRunStore,
+    GoldenSetEvaluator,
+    GoldenSetStore,
+    GoldenTestCase,
 )
 
 if TYPE_CHECKING:
@@ -37,7 +36,7 @@ if TYPE_CHECKING:
 @dataclass
 class EvalThresholds:
     """Quality thresholds for evaluation gates.
-    
+
     All values are 0.0-1.0 (percentages) except latency which is in ms.
     Default values are conservative production-ready thresholds.
     """
@@ -46,20 +45,20 @@ class EvalThresholds:
     recall_at_k_min: float = 0.70
     mrr_min: float = 0.60
     ndcg_min: float = 0.65
-    
+
     # Answer quality
     faithfulness_min: float = 0.90
     completeness_min: float = 0.70
     abstention_accuracy_min: float = 0.95
     coherence_min: float = 0.80
-    
+
     # Citation quality
     citation_precision_min: float = 0.90
-    
+
     # Performance
     p95_latency_max_ms: float = 6000
     p99_latency_max_ms: float = 10000
-    
+
     def to_dict(self) -> dict[str, float]:
         return {
             "citation_coverage_min": self.citation_coverage_min,
@@ -74,13 +73,13 @@ class EvalThresholds:
             "p95_latency_max_ms": self.p95_latency_max_ms,
             "p99_latency_max_ms": self.p99_latency_max_ms,
         }
-    
+
     @classmethod
-    def from_dict(cls, data: dict[str, float]) -> "EvalThresholds":
+    def from_dict(cls, data: dict[str, float]) -> EvalThresholds:
         return cls(**{k: v for k, v in data.items() if hasattr(cls, k)})
-    
+
     @classmethod
-    def strict(cls) -> "EvalThresholds":
+    def strict(cls) -> EvalThresholds:
         """Get strict thresholds for high-stakes applications."""
         return cls(
             citation_coverage_min=0.95,
@@ -95,9 +94,9 @@ class EvalThresholds:
             p95_latency_max_ms=4000,
             p99_latency_max_ms=8000,
         )
-    
+
     @classmethod
-    def lenient(cls) -> "EvalThresholds":
+    def lenient(cls) -> EvalThresholds:
         """Get lenient thresholds for early development."""
         return cls(
             citation_coverage_min=0.50,
@@ -126,7 +125,7 @@ class GateCheck:
     threshold: float
     passed: bool
     margin: float  # How much above/below threshold (positive = above)
-    
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
@@ -144,14 +143,14 @@ class EvalGateResult:
     run_id: str
     timestamp: str
     golden_set_name: str
-    
+
     all_passed: bool
     gate_checks: list[GateCheck]
     failed_gates: list[str]
-    
+
     eval_result: EvalRunResult
     thresholds: EvalThresholds
-    
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "run_id": self.run_id,
@@ -167,7 +166,7 @@ class EvalGateResult:
                 "duration_ms": self.eval_result.duration_ms,
             },
         }
-    
+
     def summary(self) -> str:
         """Generate human-readable summary."""
         if self.all_passed:
@@ -178,7 +177,7 @@ class EvalGateResult:
 
 class EvalGateFailure(Exception):
     """Exception raised when evaluation gates fail."""
-    
+
     def __init__(self, result: EvalGateResult) -> None:
         self.result = result
         super().__init__(f"Evaluation gates failed: {', '.join(result.failed_gates)}")
@@ -190,11 +189,11 @@ class EvalGateFailure(Exception):
 
 class GatedEvaluator:
     """Evaluator that enforces quality thresholds as gates.
-    
+
     Use this for CI/CD pipelines to fail builds that don't meet
     quality standards.
     """
-    
+
     def __init__(
         self,
         thresholds: EvalThresholds | None = None,
@@ -206,38 +205,38 @@ class GatedEvaluator:
             golden_store=golden_store,
             run_store=run_store,
         )
-    
+
     async def evaluate_with_gates(
         self,
-        orchestrator: "Orchestrator",
+        orchestrator: Orchestrator,
         golden_set: str,
         thresholds: EvalThresholds | None = None,
         on_progress: callable | None = None,
     ) -> EvalGateResult:
         """Run evaluation and check against thresholds.
-        
+
         Args:
             orchestrator: Orchestrator instance for running queries
             golden_set: Name of the golden set to evaluate
             thresholds: Optional override for thresholds
             on_progress: Optional progress callback
-            
+
         Returns:
             EvalGateResult with pass/fail status for each gate
         """
         thresholds = thresholds or self.thresholds
-        
+
         # Run the evaluation
         eval_result = await self._inner.run_batch(
             orchestrator=orchestrator,
             set_name=golden_set,
             on_progress=on_progress,
         )
-        
+
         # Check gates
         gate_checks = self._check_gates(eval_result, thresholds)
         failed_gates = [g.name for g in gate_checks if not g.passed]
-        
+
         return EvalGateResult(
             run_id=eval_result.run_id,
             timestamp=datetime.utcnow().isoformat(),
@@ -248,7 +247,7 @@ class GatedEvaluator:
             eval_result=eval_result,
             thresholds=thresholds,
         )
-    
+
     def _check_gates(
         self,
         result: EvalRunResult,
@@ -256,7 +255,7 @@ class GatedEvaluator:
     ) -> list[GateCheck]:
         """Check all gates against thresholds."""
         checks = []
-        
+
         # Retrieval gates (higher is better)
         checks.append(self._check_min(
             "citation_coverage",
@@ -278,7 +277,7 @@ class GatedEvaluator:
             result.retrieval_metrics.ndcg,
             thresholds.ndcg_min,
         ))
-        
+
         # Answer gates (higher is better)
         checks.append(self._check_min(
             "faithfulness",
@@ -295,7 +294,7 @@ class GatedEvaluator:
             result.answer_metrics.coherence,
             thresholds.coherence_min,
         ))
-        
+
         # Latency gates (lower is better)
         p95_latency = self._compute_p95_latency(result)
         checks.append(self._check_max(
@@ -303,9 +302,9 @@ class GatedEvaluator:
             p95_latency,
             thresholds.p95_latency_max_ms,
         ))
-        
+
         return checks
-    
+
     def _check_min(
         self,
         name: str,
@@ -322,7 +321,7 @@ class GatedEvaluator:
             passed=passed,
             margin=margin,
         )
-    
+
     def _check_max(
         self,
         name: str,
@@ -339,19 +338,19 @@ class GatedEvaluator:
             passed=passed,
             margin=margin,
         )
-    
+
     def _compute_p95_latency(self, result: EvalRunResult) -> float:
         """Compute p95 latency from individual results."""
         if not result.individual_results:
             return 0.0
-        
+
         latencies = sorted(r.duration_ms for r in result.individual_results)
         p95_index = int(len(latencies) * 0.95)
         return latencies[min(p95_index, len(latencies) - 1)]
-    
+
     def assert_gates_pass(self, result: EvalGateResult) -> None:
         """Raise EvalGateFailure if any gates failed.
-        
+
         Use this in CI to fail the build.
         """
         if not result.all_passed:
@@ -422,19 +421,19 @@ BUILTIN_DATASETS = {
 
 def install_builtin_datasets(store: GoldenSetStore | None = None) -> int:
     """Install built-in benchmark datasets.
-    
+
     Returns number of datasets installed.
     """
     if store is None:
         store = GoldenSetStore()
-    
+
     installed = 0
     for name, cases in BUILTIN_DATASETS.items():
         existing = store.get_set(name)
         if not existing:
             store.create_set(name, cases)
             installed += 1
-    
+
     return installed
 
 
@@ -448,11 +447,11 @@ def run_eval_gates_cli(
     thresholds_file: str | None = None,
 ) -> int:
     """CLI entrypoint for running evaluation gates.
-    
+
     Returns exit code: 0 for pass, 1 for fail.
     """
     import asyncio
-    
+
     # Load thresholds
     if thresholds_file:
         with open(thresholds_file) as f:
@@ -461,18 +460,18 @@ def run_eval_gates_cli(
         thresholds = EvalThresholds.strict()
     else:
         thresholds = EvalThresholds()
-    
+
     print(f"Running evaluation gates on '{golden_set}'...")
     print(f"Using {'strict' if strict else 'default'} thresholds")
-    
+
     # Initialize evaluator
     evaluator = GatedEvaluator(thresholds=thresholds)
-    
+
     # We need an orchestrator - this would be injected in real usage
     # For CLI, we'd use the service container
     from ..services import get_container
     container = get_container()
-    
+
     # Run evaluation
     async def run():
         return await evaluator.evaluate_with_gates(
@@ -480,22 +479,22 @@ def run_eval_gates_cli(
             golden_set=golden_set,
             on_progress=lambda i, n, q: print(f"  [{i}/{n}] {q[:50]}..."),
         )
-    
+
     result = asyncio.run(run())
-    
+
     # Report results
     print("\n" + "=" * 60)
     print(result.summary())
     print("=" * 60)
-    
+
     for check in result.gate_checks:
         status = "✅" if check.passed else "❌"
         print(f"  {status} {check.name}: {check.actual:.3f} (threshold: {check.threshold:.3f})")
-    
+
     if not result.all_passed:
         print(f"\n❌ Build FAILED - {len(result.failed_gates)} gate(s) did not pass")
         return 1
-    
+
     print("\n✅ Build PASSED - all gates met")
     return 0
 

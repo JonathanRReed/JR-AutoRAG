@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+MAX_QUESTION_LENGTH = 10000
 
 
 class QueryRequest(BaseModel):
-    question: str
+    question: str = Field(..., max_length=MAX_QUESTION_LENGTH, description="The question to answer")
     document_ids: list[str] | None = None
     history: list[dict[str, str]] | None = None
 

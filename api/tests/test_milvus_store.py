@@ -8,18 +8,18 @@ Tests cover:
 - Mock-based search tests (without actual Milvus connection)
 """
 
+
 import pytest
-from unittest.mock import MagicMock, patch
 
 from app.core.binary_quantization import BQConfig
 from app.core.binary_vector_store import (
-    MilvusConfig,
+    IndexStats,
     MilvusChunk,
+    MilvusConfig,
     MilvusSearchResult,
     MilvusVectorStore,
-    IndexStats,
-    is_milvus_available,
     get_milvus_store,
+    is_milvus_available,
 )
 
 
@@ -103,10 +103,10 @@ class TestMilvusSearchResult:
             id=2, doc_id="d2", chunk_id="c2", source="", text="", metadata={},
             distance=100.0,
         )
-        
+
         # Distance 0 -> score 1.0
         assert result1.score == 1.0
-        
+
         # Distance 100 -> score ~0.0099
         assert result2.score < result1.score
         assert result2.score == pytest.approx(1.0 / 101.0)
@@ -151,26 +151,26 @@ class TestMilvusVectorStore:
     def test_validate_query_compatibility_valid(self):
         store = MilvusVectorStore(embedding_dim=768)
         store._embedding_version = "v1"
-        
+
         assert store.validate_query_compatibility(768, "v1") is True
 
     def test_validate_query_compatibility_dim_mismatch(self):
         store = MilvusVectorStore(embedding_dim=768)
-        
+
         with pytest.raises(ValueError, match="dimension"):
             store.validate_query_compatibility(384)
 
     def test_validate_query_compatibility_version_mismatch(self):
         store = MilvusVectorStore(embedding_dim=768)
         store._embedding_version = "v1"
-        
+
         with pytest.raises(ValueError, match="version"):
             store.validate_query_compatibility(768, "v2")
 
     def test_get_stats_no_collection(self):
         store = MilvusVectorStore(embedding_dim=768)
         stats = store.get_stats()
-        
+
         assert stats.count == 0
         assert stats.index_type == "BIN_FLAT"
         assert stats.metric == "HAMMING"
@@ -192,12 +192,12 @@ class TestIsMilvusAvailable:
 
 class TestBinaryVectorStoreSearch:
     """Integration tests for the pure Python binary vector store."""
-    
+
     def test_insert_and_search(self):
         store = MilvusVectorStore(embedding_dim=8)
         store.connect()
         store.create_collection()
-        
+
         # Insert chunks with embeddings
         chunks = [
             MilvusChunk(
@@ -222,26 +222,26 @@ class TestBinaryVectorStoreSearch:
                 embedding=[1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0],
             ),
         ]
-        
+
         ids = store.insert(chunks)
         assert len(ids) == 3
         store.build_index()
-        
+
         # Search with query similar to first chunk
         query = [1.0, 1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0]
         results = store.search(query, top_k=2)
-        
+
         assert len(results) == 2
         # First result should be exact match (distance 0)
         assert results[0].chunk_id == "doc1-0"
         assert results[0].distance == 0.0
         assert results[0].score == 1.0
-    
+
     def test_search_with_filter(self):
         store = MilvusVectorStore(embedding_dim=8)
         store.connect()
         store.create_collection()
-        
+
         chunks = [
             MilvusChunk(
                 doc_id="doc1",
@@ -258,43 +258,43 @@ class TestBinaryVectorStoreSearch:
                 embedding=[1.0] * 8,
             ),
         ]
-        
+
         store.insert(chunks)
         store.build_index()
-        
+
         # Search with filter
         results = store.search([1.0] * 8, top_k=5, filter_expr='doc_id == "doc2"')
-        
+
         assert len(results) == 1
         assert results[0].doc_id == "doc2"
-    
+
     def test_delete_by_doc_id(self):
         store = MilvusVectorStore(embedding_dim=8)
         store.connect()
         store.create_collection()
-        
+
         chunks = [
             MilvusChunk(doc_id="doc1", chunk_id="c1", source="", text="", embedding=[1.0] * 8),
             MilvusChunk(doc_id="doc1", chunk_id="c2", source="", text="", embedding=[1.0] * 8),
             MilvusChunk(doc_id="doc2", chunk_id="c3", source="", text="", embedding=[1.0] * 8),
         ]
-        
+
         store.insert(chunks)
         assert store.count() == 3
-        
+
         deleted = store.delete_by_doc_id("doc1")
         assert deleted == 2
         assert store.count() == 1
-    
+
     def test_clear(self):
         store = MilvusVectorStore(embedding_dim=8)
         store.connect()
         store.create_collection()
-        
+
         store.insert([
             MilvusChunk(doc_id="d1", chunk_id="c1", source="", text="", embedding=[1.0] * 8)
         ])
         assert store.count() == 1
-        
+
         store.clear()
         assert store.count() == 0

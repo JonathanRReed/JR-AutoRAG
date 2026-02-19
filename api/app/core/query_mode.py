@@ -17,11 +17,11 @@ from typing import Any
 
 class QueryMode(str, Enum):
     """Query answering mode."""
-    
+
     GROUNDED = "grounded"
-    """Answer only from corpus documents. If no evidence found, 
+    """Answer only from corpus documents. If no evidence found,
     return a structured 'no evidence' response instead of hallucinating."""
-    
+
     OPEN_DOMAIN = "open_domain"
     """Allow LLM to use general knowledge when corpus is insufficient.
     Still prioritizes corpus evidence but can supplement with world knowledge."""
@@ -30,11 +30,11 @@ class QueryMode(str, Enum):
 @dataclass
 class SuggestedAction:
     """A suggested action when no evidence is found."""
-    
+
     label: str
     description: str
     action_type: str  # "search_modification", "corpus_action", "mode_switch"
-    
+
     def to_dict(self) -> dict[str, str]:
         return {
             "label": self.label,
@@ -43,23 +43,23 @@ class SuggestedAction:
         }
 
 
-@dataclass 
+@dataclass
 class NoEvidenceResponse:
     """Structured response when grounded mode finds no supporting evidence.
-    
+
     Provides clear communication that no corpus evidence was found,
     along with actionable suggestions for the user.
     """
-    
+
     query: str
     message: str = "No supporting documents found for your query."
     suggested_actions: list[SuggestedAction] = field(default_factory=list)
     corpus_stats: dict[str, Any] = field(default_factory=dict)
-    
+
     def __post_init__(self) -> None:
         if not self.suggested_actions:
             self.suggested_actions = self._default_suggestions()
-    
+
     def _default_suggestions(self) -> list[SuggestedAction]:
         """Generate default suggestions based on query."""
         return [
@@ -84,7 +84,7 @@ class NoEvidenceResponse:
                 action_type="mode_switch",
             ),
         ]
-    
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "found_evidence": False,
@@ -102,16 +102,16 @@ def build_no_evidence_answer(
     search_terms_tried: list[str] | None = None,
 ) -> dict[str, Any]:
     """Build a complete answer response for no-evidence scenarios.
-    
+
     This is used by the orchestrator when grounded mode finds no
     supporting documents.
-    
+
     Args:
         query: Original user query
         corpus_doc_count: Number of documents in corpus
         corpus_chunk_count: Number of chunks in corpus
         search_terms_tried: List of search variations attempted
-        
+
     Returns:
         Complete response dict compatible with QueryResponse schema
     """
@@ -121,12 +121,12 @@ def build_no_evidence_answer(
     }
     if search_terms_tried:
         corpus_stats["search_terms_tried"] = search_terms_tried
-    
+
     no_evidence = NoEvidenceResponse(
         query=query,
         corpus_stats=corpus_stats,
     )
-    
+
     # Customize message based on corpus state
     if corpus_doc_count == 0:
         no_evidence.message = "Your corpus is empty. Please upload documents before querying."
@@ -147,7 +147,7 @@ def build_no_evidence_answer(
             f"Limited corpus ({corpus_doc_count} docs, {corpus_chunk_count} chunks). "
             "Consider adding more documents for better coverage."
         )
-    
+
     return {
         "answer": no_evidence.message,
         "chunks": [],

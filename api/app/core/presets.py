@@ -14,7 +14,7 @@ and target latency expectations.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
@@ -31,12 +31,12 @@ class PresetLevel(str, Enum):
 @dataclass
 class RetrievalPreset:
     """Complete preset configuration for the RAG pipeline.
-    
+
     Attributes:
         name: Human-readable preset name
         level: Preset level enum
         description: Short description of the preset
-        
+
         # Retrieval parameters
         top_k: Number of chunks to retrieve (final)
         dense_k: Dense retrieval candidates
@@ -44,7 +44,7 @@ class RetrievalPreset:
         rerank_pool: Number of candidates to rerank
         target_tokens: Target context tokens
         coverage: Target coverage ratio (0-1)
-        
+
         # SOTA feature toggles
         rerank: Enable cross-encoder reranking
         raptor: Enable RAPTOR hierarchical retrieval
@@ -55,14 +55,14 @@ class RetrievalPreset:
         hallucination_check: Enable hallucination firewall
         evidence_contract: Enable evidence contract verification
         citation_verify: Enable citation verification
-        
+
         # Performance targets
         target_latency_ms: Expected latency in milliseconds
     """
     name: str
     level: PresetLevel
     description: str
-    
+
     # Retrieval parameters
     top_k: int = 5
     dense_k: int = 10
@@ -70,7 +70,7 @@ class RetrievalPreset:
     rerank_pool: int = 20
     target_tokens: int = 1600
     coverage: float = 0.7
-    
+
     # SOTA feature toggles
     rerank: bool = True
     raptor: bool = False
@@ -81,14 +81,14 @@ class RetrievalPreset:
     hallucination_check: bool = False
     evidence_contract: bool = False
     citation_verify: bool = False
-    
+
     # Routing parameters
     diversity: float = 0.0
     sparse_weight: float = 0.4
-    
+
     # Performance targets
     target_latency_ms: int = 5000
-    
+
     def to_dict(self) -> dict[str, Any]:
         """Convert preset to dictionary for API responses."""
         return {
@@ -261,23 +261,23 @@ PRESET_ORDER = [
 
 def get_preset(level: str | PresetLevel) -> RetrievalPreset:
     """Get a preset by level name.
-    
+
     Args:
         level: Preset level name or enum
-        
+
     Returns:
         RetrievalPreset configuration
-        
+
     Raises:
         ValueError: If preset level is unknown
     """
     if isinstance(level, PresetLevel):
         level = level.value
-    
+
     level = level.lower()
     if level not in PRESETS:
         raise ValueError(f"Unknown preset level: {level}. Available: {list(PRESETS.keys())}")
-    
+
     return PRESETS[level]
 
 
@@ -292,36 +292,36 @@ def suggest_preset_for_query(
     complexity: float | None = None,
 ) -> PresetLevel:
     """Suggest a preset based on query characteristics.
-    
+
     Args:
         query: The user query
         query_type: Optional query type from SmartPlanner
         complexity: Optional complexity score (0-1)
-        
+
     Returns:
         Suggested preset level
     """
     # Simple heuristic-based suggestion
     word_count = len(query.split())
-    
+
     # Very short queries -> Fast
     if word_count <= 5:
         return PresetLevel.FAST
-    
+
     # Complex query types -> Thorough or Ultra
     if query_type in ("multi_hop", "analytical", "comparative"):
         if complexity and complexity > 0.7:
             return PresetLevel.ULTRA_ACCURATE
         return PresetLevel.THOROUGH
-    
+
     # Summary/exploratory -> Thorough
     if query_type in ("summary", "exploratory"):
         return PresetLevel.THOROUGH
-    
+
     # Long queries might need more context
     if word_count > 20:
         return PresetLevel.THOROUGH
-    
+
     # Default to Balanced
     return PresetLevel.BALANCED
 

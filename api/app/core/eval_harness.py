@@ -11,11 +11,10 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable
-
 
 logger = logging.getLogger("autorag.eval_harness")
 
@@ -23,7 +22,7 @@ logger = logging.getLogger("autorag.eval_harness")
 @dataclass
 class EvalCase:
     """A single evaluation case."""
-    
+
     id: str
     query: str
     expected_answer: str | None = None
@@ -35,27 +34,27 @@ class EvalCase:
 @dataclass
 class EvalResult:
     """Result of evaluating a single case."""
-    
+
     case_id: str
     query: str
     actual_answer: str
-    
+
     # Quality metrics
     accuracy_score: float = 0.0
     citation_validity: float = 0.0
     answer_relevance: float = 0.0
-    
+
     # Performance
     latency_ms: float = 0.0
     tokens_used: int = 0
-    
+
     # Cost (if applicable)
     estimated_cost_usd: float = 0.0
-    
+
     # Grounding
     grounded: bool = False
     sources_used: list[str] = field(default_factory=list)
-    
+
     def to_dict(self) -> dict:
         return {
             "case_id": self.case_id,
@@ -79,34 +78,34 @@ class EvalResult:
 @dataclass
 class EvalRun:
     """A complete evaluation run."""
-    
+
     run_id: str
     timestamp: str
     results: list[EvalResult] = field(default_factory=list)
     config_snapshot: dict = field(default_factory=dict)
-    
+
     @property
     def avg_accuracy(self) -> float:
         if not self.results:
             return 0.0
         return sum(r.accuracy_score for r in self.results) / len(self.results)
-    
+
     @property
     def avg_latency_ms(self) -> float:
         if not self.results:
             return 0.0
         return sum(r.latency_ms for r in self.results) / len(self.results)
-    
+
     @property
     def total_cost_usd(self) -> float:
         return sum(r.estimated_cost_usd for r in self.results)
-    
+
     @property
     def grounding_rate(self) -> float:
         if not self.results:
             return 0.0
         return sum(1 for r in self.results if r.grounded) / len(self.results)
-    
+
     def to_dict(self) -> dict:
         return {
             "run_id": self.run_id,
@@ -126,22 +125,22 @@ class EvalRun:
 @dataclass
 class RegressionComparison:
     """Comparison between two eval runs."""
-    
+
     baseline_run_id: str
     current_run_id: str
-    
+
     accuracy_delta: float = 0.0
     latency_delta_ms: float = 0.0
     cost_delta_usd: float = 0.0
     grounding_delta: float = 0.0
-    
+
     regressions: list[str] = field(default_factory=list)
     improvements: list[str] = field(default_factory=list)
-    
+
     @property
     def has_regression(self) -> bool:
         return len(self.regressions) > 0
-    
+
     def to_dict(self) -> dict:
         return {
             "baseline": self.baseline_run_id,
@@ -160,14 +159,14 @@ class RegressionComparison:
 
 class EvalHarness:
     """Run evaluations and track regression."""
-    
+
     def __init__(
         self,
         data_path: Path | None = None,
         query_fn: Callable | None = None,
     ) -> None:
         """Initialize harness.
-        
+
         Args:
             data_path: Path to store eval results
             query_fn: Async function to run queries
@@ -175,12 +174,12 @@ class EvalHarness:
         self._data_path = data_path or Path("data/evaluations")
         self._query_fn = query_fn
         self._runs: dict[str, EvalRun] = {}
-    
+
     def load_cases(self, path: Path) -> list[EvalCase]:
         """Load eval cases from JSON file."""
         with open(path) as f:
             data = json.load(f)
-        
+
         cases = []
         for item in data:
             cases.append(EvalCase(
@@ -192,7 +191,7 @@ class EvalHarness:
                 metadata=item.get("metadata", {}),
             ))
         return cases
-    
+
     async def run(
         self,
         cases: list[EvalCase],
@@ -200,43 +199,43 @@ class EvalHarness:
         run_id: str | None = None,
     ) -> EvalRun:
         """Run evaluation on cases.
-        
+
         Args:
             cases: List of eval cases
             config: Optional config snapshot
             run_id: Optional run ID
-            
+
         Returns:
             EvalRun with results
         """
         import uuid
-        
+
         run_id = run_id or str(uuid.uuid4())[:8]
         run = EvalRun(
             run_id=run_id,
             timestamp=datetime.utcnow().isoformat(),
             config_snapshot=config or {},
         )
-        
+
         for case in cases:
             result = await self._evaluate_case(case)
             run.results.append(result)
-        
+
         self._runs[run_id] = run
         self._save_run(run)
-        
+
         return run
-    
+
     async def _evaluate_case(self, case: EvalCase) -> EvalResult:
         """Evaluate a single case."""
         start = time.perf_counter()
-        
+
         # Run query
         answer = ""
         sources = []
         tokens = 0
         grounded = False
-        
+
         if self._query_fn:
             try:
                 result = await self._query_fn(case.query)
@@ -247,14 +246,14 @@ class EvalHarness:
             except Exception as e:
                 logger.error(f"Query failed for case {case.id}: {e}")
                 answer = f"[ERROR: {e}]"
-        
+
         latency = (time.perf_counter() - start) * 1000
-        
+
         # Compute scores
         accuracy = self._compute_accuracy(answer, case.expected_answer)
         citation_validity = self._compute_citation_validity(answer, sources)
         relevance = self._compute_relevance(answer, case.query)
-        
+
         return EvalResult(
             case_id=case.id,
             query=case.query,
@@ -267,43 +266,43 @@ class EvalHarness:
             grounded=grounded,
             sources_used=sources,
         )
-    
+
     def _compute_accuracy(self, actual: str, expected: str | None) -> float:
         """Compute accuracy score."""
         if not expected:
             return 0.5  # No ground truth
-        
+
         # Simple term overlap
         actual_terms = set(actual.lower().split())
         expected_terms = set(expected.lower().split())
-        
+
         if not expected_terms:
             return 0.5
-        
+
         overlap = len(actual_terms & expected_terms)
         return min(1.0, overlap / len(expected_terms))
-    
+
     def _compute_citation_validity(self, answer: str, sources: list[str]) -> float:
         """Check if citations reference valid sources."""
         import re
         citations = re.findall(r'\[(\d+)\]', answer)
         if not citations:
             return 1.0 if not sources else 0.5
-        
+
         valid = sum(1 for c in citations if int(c) <= len(sources))
         return valid / len(citations) if citations else 1.0
-    
+
     def _compute_relevance(self, answer: str, query: str) -> float:
         """Compute answer relevance to query."""
         query_terms = set(query.lower().split())
         answer_terms = set(answer.lower().split())
-        
+
         if not query_terms:
             return 0.5
-        
+
         overlap = len(query_terms & answer_terms)
         return min(1.0, overlap / len(query_terms))
-    
+
     def compare(
         self,
         baseline_run_id: str,
@@ -312,13 +311,13 @@ class EvalHarness:
         """Compare two runs for regression."""
         baseline = self._runs.get(baseline_run_id)
         current = self._runs.get(current_run_id)
-        
+
         if not baseline or not current:
             return RegressionComparison(
                 baseline_run_id=baseline_run_id,
                 current_run_id=current_run_id,
             )
-        
+
         comparison = RegressionComparison(
             baseline_run_id=baseline_run_id,
             current_run_id=current_run_id,
@@ -327,25 +326,25 @@ class EvalHarness:
             cost_delta_usd=current.total_cost_usd - baseline.total_cost_usd,
             grounding_delta=current.grounding_rate - baseline.grounding_rate,
         )
-        
+
         # Identify regressions (worse) and improvements (better)
         if comparison.accuracy_delta < -0.05:
             comparison.regressions.append(f"Accuracy dropped {-comparison.accuracy_delta:.1%}")
         elif comparison.accuracy_delta > 0.05:
             comparison.improvements.append(f"Accuracy improved {comparison.accuracy_delta:.1%}")
-        
+
         if comparison.latency_delta_ms > 100:
             comparison.regressions.append(f"Latency increased {comparison.latency_delta_ms:.0f}ms")
         elif comparison.latency_delta_ms < -100:
             comparison.improvements.append(f"Latency decreased {-comparison.latency_delta_ms:.0f}ms")
-        
+
         if comparison.grounding_delta < -0.1:
             comparison.regressions.append(f"Grounding rate dropped {-comparison.grounding_delta:.1%}")
         elif comparison.grounding_delta > 0.1:
             comparison.improvements.append(f"Grounding rate improved {comparison.grounding_delta:.1%}")
-        
+
         return comparison
-    
+
     def _save_run(self, run: EvalRun) -> None:
         """Save run to disk."""
         self._data_path.mkdir(parents=True, exist_ok=True)

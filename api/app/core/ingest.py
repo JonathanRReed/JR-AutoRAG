@@ -19,7 +19,7 @@ import zipfile
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
 
@@ -136,7 +136,7 @@ class IngestPipeline:
                         if hasattr(self._retrieval, "increment_corpus_version"):
                             self._retrieval.increment_corpus_version()
                 doc.metadata["processing_status"] = "ready"
-                doc.metadata["processed_at"] = datetime.now(timezone.utc).isoformat()
+                doc.metadata["processed_at"] = datetime.now(UTC).isoformat()
                 self._store.upsert(doc)
             except Exception as exc:
                 doc.metadata["processing_status"] = "error"
@@ -318,7 +318,7 @@ class IngestPipeline:
         payload = {
             "document_id": doc_id,
             "title": title,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
             "status": status,
             "profile": result.get("profile"),
             "model_source": result.get("model_source"),
@@ -401,7 +401,7 @@ class IngestPipeline:
 
     def _prepare_metadata(self, metadata: dict[str, str] | None) -> dict[str, str]:
         meta = {**(metadata or {})}
-        meta.setdefault("uploaded_at", datetime.now(timezone.utc).isoformat())
+        meta.setdefault("uploaded_at", datetime.now(UTC).isoformat())
         return meta
 
     def _infer_extension(self, metadata: dict[str, str] | None) -> str:
@@ -500,8 +500,7 @@ class IngestPipeline:
                 result = subprocess.run(
                     [pdftotext_bin, "-enc", "UTF-8", str(pdf_path), str(txt_path)],
                     check=False,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
+                    capture_output=True,
                     text=True,
                 )
                 if result.returncode != 0:
@@ -539,10 +538,9 @@ class IngestPipeline:
             for elem in root.iter():
                 if elem.tag == f"{namespace}t" and elem.text:
                     buffer.append(elem.text)
-                elif elem.tag == f"{namespace}p":
-                    if buffer:
-                        lines.append("".join(buffer).strip())
-                        buffer = []
+                elif elem.tag == f"{namespace}p" and buffer:
+                    lines.append("".join(buffer).strip())
+                    buffer = []
             if buffer:
                 lines.append("".join(buffer).strip())
             return "\n".join([line for line in lines if line])

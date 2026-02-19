@@ -15,7 +15,7 @@ This data can be used to fine-tune:
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -89,34 +89,34 @@ class HardNegativeExample:
 
 class RAGDecisionLogger:
     """Logger for RAG pipeline decisions for training data collection.
-    
+
     Collects:
     - Gate decisions for teaching when to retrieve
-    - Route decisions for teaching how to retrieve  
+    - Route decisions for teaching how to retrieve
     - Retrieval verdicts for teaching quality assessment
     - Answer quality for reward signals
     - Hard negatives for reranker training
     """
-    
+
     def __init__(self, log_dir: str | Path = "data/rag_training_logs"):
         """Initialize logger with output directory.
-        
+
         Args:
             log_dir: Directory to store log files
         """
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # In-memory buffers
         self._gate_logs: list[GateDecisionLog] = []
         self._route_logs: list[RouteDecisionLog] = []
         self._verdict_logs: list[RetrievalVerdictLog] = []
         self._quality_logs: list[AnswerQualityLog] = []
         self._hard_negatives: list[HardNegativeExample] = []
-        
+
         # Auto-flush threshold
         self._flush_threshold = 100
-    
+
     def log_gate_decision(
         self,
         query: str,
@@ -133,7 +133,7 @@ class RAGDecisionLogger:
         )
         self._gate_logs.append(log)
         self._maybe_flush()
-    
+
     def log_route_decision(
         self,
         query: str,
@@ -154,7 +154,7 @@ class RAGDecisionLogger:
         )
         self._route_logs.append(log)
         self._maybe_flush()
-    
+
     def log_retrieval_verdict(
         self,
         query: str,
@@ -179,7 +179,7 @@ class RAGDecisionLogger:
         )
         self._verdict_logs.append(log)
         self._maybe_flush()
-    
+
     def log_answer_quality(
         self,
         query: str,
@@ -208,7 +208,7 @@ class RAGDecisionLogger:
         )
         self._quality_logs.append(log)
         self._maybe_flush()
-    
+
     def log_hard_negative(
         self,
         query: str,
@@ -227,14 +227,14 @@ class RAGDecisionLogger:
         )
         self._hard_negatives.append(example)
         self._maybe_flush()
-    
+
     def update_outcome(
         self,
         query: str,
         outcome_quality: float,
     ) -> None:
         """Update logs with final outcome quality.
-        
+
         Links quality back to decisions for reward signals.
         """
         # Update gate logs
@@ -242,13 +242,13 @@ class RAGDecisionLogger:
             if log.query == query and log.outcome_quality is None:
                 log.outcome_quality = outcome_quality
                 break
-        
+
         # Update route logs
         for log in self._route_logs[-10:]:
             if log.query == query and log.outcome_quality is None:
                 log.outcome_quality = outcome_quality
                 break
-    
+
     def _maybe_flush(self) -> None:
         """Flush to disk if threshold reached."""
         total = (
@@ -260,38 +260,38 @@ class RAGDecisionLogger:
         )
         if total >= self._flush_threshold:
             self.flush()
-    
+
     def flush(self) -> None:
         """Flush all logs to disk."""
         timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        
+
         if self._gate_logs:
             self._write_logs(f"gate_decisions_{timestamp}.jsonl", self._gate_logs)
             self._gate_logs = []
-        
+
         if self._route_logs:
             self._write_logs(f"route_decisions_{timestamp}.jsonl", self._route_logs)
             self._route_logs = []
-        
+
         if self._verdict_logs:
             self._write_logs(f"retrieval_verdicts_{timestamp}.jsonl", self._verdict_logs)
             self._verdict_logs = []
-        
+
         if self._quality_logs:
             self._write_logs(f"answer_quality_{timestamp}.jsonl", self._quality_logs)
             self._quality_logs = []
-        
+
         if self._hard_negatives:
             self._write_logs(f"hard_negatives_{timestamp}.jsonl", self._hard_negatives)
             self._hard_negatives = []
-    
+
     def _write_logs(self, filename: str, logs: list) -> None:
         """Write logs to JSONL file."""
         filepath = self.log_dir / filename
         with open(filepath, "a") as f:
             for log in logs:
                 f.write(json.dumps(asdict(log)) + "\n")
-    
+
     def get_stats(self) -> dict[str, int]:
         """Get logging statistics."""
         return {

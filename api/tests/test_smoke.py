@@ -2,11 +2,11 @@
 These tests ensure that the most critical 3.0 upgrade modules are functional.
 """
 
-import pytest
 from app.core.context_metrics import ContextMetrics, GroundingInfo
 from app.core.corpus_health import CorpusHealthChecker
-from app.core.retrieval_quality import RetrievalQualityGates
 from app.core.onboarding import create_onboarding_flow
+from app.core.retrieval_quality import RetrievalQualityGates
+
 
 def test_context_metrics_logic():
     """Verify P0.5: Context overflow logic works."""
@@ -39,7 +39,7 @@ def test_onboarding_flow_creation():
     flow = create_onboarding_flow()
     assert len(flow.steps) > 0
     assert flow.progress_percent == 0.0
-    
+
     # Complete a step
     flow.complete_step(flow.steps[0].id)
     assert flow.progress_percent > 0.0

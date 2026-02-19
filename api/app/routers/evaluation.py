@@ -4,26 +4,26 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from ..core.golden_eval import (
+    EvalRunStore,
+    GoldenSetEvaluator,
+    GoldenSetStore,
+    GoldenTestCase,
+)
 from ..schemas.evaluation import (
+    AnswerMetricsSchema,
+    EvalRunResultSchema,
+    EvalRunSummary,
     EvaluationRequest,
     EvaluationRun,
     GoldenSetCreateRequest,
     GoldenSetInfo,
     GoldenTestCaseSchema,
-    EvalRunResultSchema,
-    EvalRunSummary,
-    RunComparisonResult,
     RetrievalMetricsSchema,
-    AnswerMetricsSchema,
+    RunComparisonResult,
     TestCaseResultSchema,
 )
 from ..services import ServiceContainer, get_container
-from ..core.golden_eval import (
-    GoldenSetStore,
-    EvalRunStore,
-    GoldenSetEvaluator,
-    GoldenTestCase,
-)
 
 router = APIRouter(prefix="/evaluation", tags=["evaluation"])
 
@@ -71,7 +71,7 @@ async def run_evaluation(payload: EvaluationRequest, container: ServiceContainer
 
     if not container.document_store.list():
         responses = []
-        for question in payload.questions:
+        for _question in payload.questions:
             responses.append({
                 "answer": "Demo mode: No documents ingested yet. Upload files to enable retrieval.",
                 "chunks": [],
@@ -92,14 +92,14 @@ async def run_evaluation(payload: EvaluationRequest, container: ServiceContainer
             average_coverage=0.0,
             average_tokens=0.0,
         )
-    
+
     # Run all queries in parallel
     tasks = [container.orchestrator.answer(q) for q in payload.questions]
     responses = await asyncio.gather(*tasks)
-    
+
     avg_coverage = sum(r["metrics"].get("coverage", 0.0) for r in responses) / len(responses)
     avg_tokens = sum(r["metrics"].get("tokens", 0.0) for r in responses) / len(responses)
-    
+
     return EvaluationRun(
         name=payload.name,
         responses=responses,
@@ -116,7 +116,7 @@ async def run_evaluation(payload: EvaluationRequest, container: ServiceContainer
 async def create_golden_set(payload: GoldenSetCreateRequest):
     """Create or replace a golden test set."""
     store = get_golden_store()
-    
+
     cases = [
         GoldenTestCase(
             question=c.question,
@@ -127,9 +127,9 @@ async def create_golden_set(payload: GoldenSetCreateRequest):
         )
         for c in payload.cases
     ]
-    
+
     store.create_set(payload.name, cases)
-    
+
     return GoldenSetInfo(name=payload.name, count=len(cases))
 
 
@@ -147,7 +147,7 @@ async def get_golden_set(set_name: str):
     cases = store.get_set(set_name)
     if not cases:
         raise HTTPException(status_code=404, detail=f"Golden set '{set_name}' not found")
-    
+
     return [
         GoldenTestCaseSchema(
             id=c.id,
@@ -180,7 +180,7 @@ async def run_batch_evaluation(
 ):
     """Run batch evaluation on a golden set."""
     evaluator = get_evaluator()
-    
+
     try:
         result = await evaluator.run_batch(
             orchestrator=container.orchestrator,
@@ -188,7 +188,7 @@ async def run_batch_evaluation(
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    
+
     # Convert to schema
     return EvalRunResultSchema(
         run_id=result.run_id,
@@ -225,10 +225,10 @@ async def list_eval_runs(limit: int = 50):
 async def compare_eval_runs(run_id: str, other_run_id: str):
     """Compare two evaluation runs to detect regressions."""
     evaluator = get_evaluator()
-    
+
     try:
         comparison = evaluator.compare_runs(run_id, other_run_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    
+
     return RunComparisonResult(**comparison)

@@ -2,7 +2,7 @@
 
 These endpoints provide hooks for RAGFuzz (or similar fuzzing tools) to:
 1. Inject poisoned documents for testing retrieval robustness
-2. Trace pipeline execution for grey-box analysis  
+2. Trace pipeline execution for grey-box analysis
 3. Run canary leak detection tests
 4. Query for vulnerable document patterns
 
@@ -20,12 +20,11 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Header, Depends
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from ..core.audit import get_audit_log, AuditAction, AuditEntry
+from ..core.audit import AuditAction, AuditEntry, get_audit_log
 from ..services import ServiceContainer, get_container
-
 
 router = APIRouter(prefix="/rag/audit", tags=["ragfuzz"])
 
@@ -144,7 +143,7 @@ async def ragfuzz_health(
     _check_ragfuzz_enabled()
     default_enabled = not _is_production_env()
     enabled = _flag_enabled(os.environ.get("AUTORAG_RAGFUZZ_ENABLED"), default_enabled)
-    
+
     corpus_size = 0
     try:
         if container.orchestrator and hasattr(container.orchestrator, "doc_store"):
@@ -152,7 +151,7 @@ async def ragfuzz_health(
             corpus_size = len(docs)
     except Exception:
         pass
-    
+
     providers = []
     try:
         from ..core.providers import discover_local_providers
@@ -160,7 +159,7 @@ async def ragfuzz_health(
         providers = [p.name for p in local if p.status == "ok"]
     except Exception:
         pass
-    
+
     return HealthResponse(
         status="ok",
         ragfuzz_enabled=enabled,
@@ -177,18 +176,18 @@ async def inject_poison_document(
     _: None = Depends(_verify_ragfuzz_secret),
 ) -> PoisonDocumentResponse:
     """Inject a poisoned document for testing retrieval robustness.
-    
+
     This endpoint allows security testing tools to inject adversarial
     content and verify the RAG pipeline handles it correctly.
     """
     _check_ragfuzz_enabled()
-    
+
     canary = request.canary_token or f"CANARY_{uuid.uuid4().hex[:12].upper()}"
     content_with_canary = f"{request.content}\n\n<!-- canary:{canary} -->"
-    
+
     content_hash = hashlib.sha256(content_with_canary.encode()).hexdigest()[:16]
     doc_id = f"poison_{content_hash}"
-    
+
     metadata = {
         **request.metadata,
         "_ragfuzz_poison": True,
@@ -196,7 +195,7 @@ async def inject_poison_document(
         "_canary_token": canary,
         "_injected_at": datetime.utcnow().isoformat(),
     }
-    
+
     try:
         if container.orchestrator and hasattr(container.orchestrator, "ingest"):
             await container.orchestrator.ingest(
@@ -206,7 +205,7 @@ async def inject_poison_document(
             )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to inject document: {exc}") from exc
-    
+
     audit_log = get_audit_log()
     audit_log.log(AuditEntry(
         timestamp=datetime.utcnow(),
@@ -218,7 +217,7 @@ async def inject_poison_document(
             "canary_token": canary,
         },
     ))
-    
+
     return PoisonDocumentResponse(
         document_id=doc_id,
         canary_token=canary,
@@ -234,12 +233,12 @@ async def check_canary_leak(
     _: None = Depends(_verify_ragfuzz_secret),
 ) -> CanaryCheckResponse:
     """Check if a canary token was leaked in an answer.
-    
+
     Runs a query and checks if the canary token appears in the response,
     indicating potential data leakage or prompt injection vulnerability.
     """
     _check_ragfuzz_enabled()
-    
+
     try:
         result = await container.orchestrator.answer(
             request.query,
@@ -248,25 +247,25 @@ async def check_canary_leak(
         answer = result.get("answer", "")
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Query failed: {exc}") from exc
-    
+
     canary_lower = request.canary_token.lower()
     answer_lower = answer.lower()
-    
+
     leaked = canary_lower in answer_lower
-    
+
     matched_fragments = []
     if leaked:
         idx = answer_lower.find(canary_lower)
         start = max(0, idx - 50)
         end = min(len(answer), idx + len(request.canary_token) + 50)
         matched_fragments.append(answer[start:end])
-    
+
     leak_score = 1.0 if leaked else 0.0
     if not leaked:
         canary_parts = request.canary_token.split("_")
         partial_matches = sum(1 for part in canary_parts if part.lower() in answer_lower)
         leak_score = partial_matches / max(len(canary_parts), 1) * 0.5
-    
+
     audit_log = get_audit_log()
     audit_log.log(AuditEntry(
         timestamp=datetime.utcnow(),
@@ -278,7 +277,7 @@ async def check_canary_leak(
             "leak_score": leak_score,
         },
     ))
-    
+
     return CanaryCheckResponse(
         leaked=leaked,
         canary_token=request.canary_token,
@@ -295,17 +294,17 @@ async def trace_pipeline(
     _: None = Depends(_verify_ragfuzz_secret),
 ) -> TraceResponse:
     """Run a query with full grey-box tracing.
-    
+
     Returns detailed information about each pipeline stage for
     security analysis and fuzzing feedback.
     """
     _check_ragfuzz_enabled()
-    
+
     trace_id = f"trace_{uuid.uuid4().hex[:12]}"
     stages: list[dict[str, Any]] = []
     timing_ms: dict[str, float] = {}
     token_counts: dict[str, int] = {}
-    
+
     def on_step(step: Any) -> None:
         stages.append({
             "name": step.name,
@@ -314,7 +313,7 @@ async def trace_pipeline(
             "details": step.details,
         })
         timing_ms[step.name] = step.duration_ms
-    
+
     try:
         result = await container.orchestrator.answer(
             request.query,
@@ -324,20 +323,20 @@ async def trace_pipeline(
         answer = result.get("answer", "")
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Trace failed: {exc}") from exc
-    
+
     retrieval_details: dict[str, Any] = {}
     if "documents" in result:
         retrieval_details["document_count"] = len(result["documents"])
         retrieval_details["document_ids"] = [d.get("id", "") for d in result.get("documents", [])]
     if "sources" in result:
         retrieval_details["sources"] = result["sources"]
-    
+
     token_counts["answer"] = len(answer.split())
     token_counts["context"] = sum(
         len(str(d.get("content", "")).split())
         for d in result.get("documents", [])
     )
-    
+
     return TraceResponse(
         trace_id=trace_id,
         query=request.query,
@@ -357,13 +356,13 @@ async def remove_poison_document(
 ) -> dict[str, str]:
     """Remove a previously injected poison document."""
     _check_ragfuzz_enabled()
-    
+
     try:
         if container.orchestrator and hasattr(container.orchestrator, "delete_document"):
             await container.orchestrator.delete_document(document_id)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to remove document: {exc}") from exc
-    
+
     audit_log = get_audit_log()
     audit_log.log(AuditEntry(
         timestamp=datetime.utcnow(),
@@ -373,7 +372,7 @@ async def remove_poison_document(
             "document_id": document_id,
         },
     ))
-    
+
     return {"status": "deleted", "document_id": document_id}
 
 
@@ -384,7 +383,7 @@ async def list_poison_documents(
 ) -> list[dict[str, Any]]:
     """List all injected poison documents."""
     _check_ragfuzz_enabled()
-    
+
     poison_docs = []
     try:
         if container.orchestrator and hasattr(container.orchestrator, "doc_store"):
@@ -400,5 +399,5 @@ async def list_poison_documents(
                     })
     except Exception:
         pass
-    
+
     return poison_docs

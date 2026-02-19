@@ -10,17 +10,16 @@ import asyncio
 import hashlib
 import os
 import time
-from typing import Callable, Optional
+from collections.abc import Callable
 
-from fastapi import FastAPI, Request, Response, HTTPException, Depends
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.security import APIKeyHeader
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
+from .audit import get_audit_log
 from .auth import get_auth
 from .rate_limiter import get_rate_limiter
-from .audit import get_audit_log
-
 
 # =============================================================================
 # Configuration
@@ -112,19 +111,19 @@ def _resolve_required_scope(path: str, method: str) -> str | None:
 
 async def verify_api_key(
     request: Request,
-    api_key: Optional[str] = Depends(api_key_header),
-) -> Optional[str]:
+    api_key: str | None = Depends(api_key_header),
+) -> str | None:
     """FastAPI dependency for API key verification.
-    
+
     Returns:
         User identifier if authenticated, None if auth not required
-        
+
     Raises:
         HTTPException: If auth required but key invalid
     """
     auth = get_auth()
     path = request.url.path
-    
+
     # Default user context to None for downstream consumers
     request.state.user_id = None
     request.state.scopes = []
@@ -141,7 +140,7 @@ async def verify_api_key(
                 "Enable AUTORAG_AUTH_ENABLED and configure AUTORAG_API_KEYS."
             ),
         )
-    
+
     # If auth is not enabled, allow
     if not auth.require_auth():
         return None
@@ -152,7 +151,7 @@ async def verify_api_key(
             status_code=500,
             detail="Authentication is enabled but no API keys are configured. Set AUTORAG_API_KEYS.",
         )
-    
+
     # Auth is required - verify key
     if not api_key:
         audit_log = get_audit_log()
@@ -166,9 +165,9 @@ async def verify_api_key(
             detail="API key required. Provide X-API-Key header.",
             headers={"WWW-Authenticate": "ApiKey"},
         )
-    
+
     required_scope = _resolve_required_scope(path, request.method)
-    
+
     if not auth.verify(api_key, required_scope=required_scope):
         audit_log = get_audit_log()
         audit_log.log_auth(
@@ -180,7 +179,7 @@ async def verify_api_key(
             status_code=403,
             detail="Invalid API key or insufficient permissions.",
         )
-    
+
     scopes = auth.get_scopes(api_key)
     # Log successful auth
     audit_log = get_audit_log()
@@ -190,7 +189,7 @@ async def verify_api_key(
         user_id=user_id + "...",  # Log short hash for identification
         ip_address=request.client.host if request.client else None,
     )
-    
+
     request.state.user_id = user_id
     request.state.scopes = scopes
     return user_id  # Return short hash as user identifier
@@ -202,24 +201,25 @@ async def verify_api_key(
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """Middleware that enforces rate limiting per client."""
-    
+
     def __init__(self, app: ASGIApp) -> None:
         super().__init__(app)
         self.limiter = get_rate_limiter()
-    
+
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         # Skip rate limiting for health checks
         if request.url.path in {"/healthz", "/readyz"}:
             return await call_next(request)
-        
+
         # Determine rate limit key (API key > IP)
         api_key = request.headers.get("X-API-Key", "")
         if api_key:
-            rate_key = f"key:{api_key[:16]}"
+            # Use hash of API key instead of plaintext prefix for rate limiting
+            rate_key = f"key:{hashlib.sha256(api_key.encode()).hexdigest()[:16]}"
         else:
             client_ip = request.client.host if request.client else "unknown"
             rate_key = f"ip:{client_ip}"
-        
+
         # Check rate limit
         if not self.limiter.allow(rate_key):
             wait_time = self.limiter.get_wait_time(rate_key)
@@ -231,13 +231,13 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                     "X-RateLimit-Remaining": "0",
                 },
             )
-        
+
         # Add rate limit headers to response
         response = await call_next(request)
         remaining = self.limiter.get_remaining(rate_key)
         response.headers["X-RateLimit-Remaining"] = str(remaining)
         response.headers["X-RateLimit-Limit"] = str(self.limiter._requests_per_minute)
-        
+
         return response
 
 
@@ -247,10 +247,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
 class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
     """Middleware that enforces request body size limits."""
-    
+
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         content_length = request.headers.get("content-length")
-        
+
         if content_length:
             try:
                 size = int(content_length)
@@ -261,7 +261,7 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
                     )
             except ValueError:
                 pass
-        
+
         return await call_next(request)
 
 
@@ -271,33 +271,33 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
 
 class TimeoutMiddleware(BaseHTTPMiddleware):
     """Middleware that enforces route-level timeouts."""
-    
+
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         path = request.url.path
-        
+
         # Determine timeout for this route
         timeout = ROUTE_TIMEOUTS.get("default", 60)
         for prefix, route_timeout in ROUTE_TIMEOUTS.items():
             if prefix != "default" and path.startswith(prefix):
                 timeout = route_timeout
                 break
-        
+
         # Store timeout in request state for handlers to use
         request.state.timeout = timeout
         request.state.start_time = time.time()
-        
+
         try:
             response = await asyncio.wait_for(call_next(request), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return Response(
                 content=f"Request timed out after {timeout} seconds.",
                 status_code=504,
             )
-        
+
         # Add timing header
         elapsed = time.time() - request.state.start_time
         response.headers["X-Response-Time"] = f"{elapsed:.3f}s"
-        
+
         return response
 
 
@@ -307,20 +307,20 @@ class TimeoutMiddleware(BaseHTTPMiddleware):
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Middleware that adds security headers to responses."""
-    
+
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         response = await call_next(request)
-        
+
         # Add security headers
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        
+
         # CSP for API responses
         if not request.url.path.startswith("/docs"):
             response.headers["Content-Security-Policy"] = "default-src 'none'"
-        
+
         return response
 
 
@@ -330,7 +330,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 def configure_security(app: FastAPI, *, strict: bool = False) -> None:
     """Configure all security middleware for the application.
-    
+
     Args:
         app: FastAPI application instance
         strict: If True, enable stricter security (for production)
@@ -340,12 +340,12 @@ def configure_security(app: FastAPI, *, strict: bool = False) -> None:
     app.add_middleware(TimeoutMiddleware)
     app.add_middleware(RequestSizeLimitMiddleware)
     app.add_middleware(RateLimitMiddleware)
-    
+
     # Log configuration
     auth = get_auth()
     rate_limiter = get_rate_limiter()
-    
-    print(f"Security configured:")
+
+    print("Security configured:")
     print(f"  - Authentication: {'enabled' if auth.require_auth() else 'disabled'}")
     print(f"  - Rate limiting: {'enabled' if rate_limiter.enabled else 'disabled'}")
     print(f"  - Max request size: {MAX_REQUEST_SIZE // (1024*1024)}MB")

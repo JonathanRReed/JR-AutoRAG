@@ -11,10 +11,12 @@ Feature flags can be set via environment variables, config files, or API.
 
 from __future__ import annotations
 
+import contextlib
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable
+from typing import Any
 
 
 class FeatureState(str, Enum):
@@ -62,7 +64,7 @@ V2_FEATURE_FLAGS: dict[str, FeatureFlag] = {
         risk_level=RiskLevel.LOW,
         env_var="FF_TRUST_SCORE",
     ),
-    
+
     # Phase 2 - Agentic Loops
     "FF_SELF_RAG": FeatureFlag(
         name="FF_SELF_RAG",
@@ -86,7 +88,7 @@ V2_FEATURE_FLAGS: dict[str, FeatureFlag] = {
         risk_level=RiskLevel.MEDIUM,
         env_var="FF_AUTO_WEIGHTS",
     ),
-    
+
     # Phase 3 - Ingestion
     "FF_CONTEXTUAL_ENRICHMENT": FeatureFlag(
         name="FF_CONTEXTUAL_ENRICHMENT",
@@ -116,7 +118,7 @@ V2_FEATURE_FLAGS: dict[str, FeatureFlag] = {
         risk_level=RiskLevel.HIGH,
         env_var="FF_VISION_INDEX",
     ),
-    
+
     # Phase 4 - Observability & Security
     "FF_CIRCUIT_BREAKERS": FeatureFlag(
         name="FF_CIRCUIT_BREAKERS",
@@ -132,7 +134,7 @@ V2_FEATURE_FLAGS: dict[str, FeatureFlag] = {
         risk_level=RiskLevel.LOW,
         env_var="FF_COST_TRACKING",
     ),
-    
+
     # High Risk - Requires explicit enablement
     "FF_TOOL_USE": FeatureFlag(
         name="FF_TOOL_USE",
@@ -141,7 +143,7 @@ V2_FEATURE_FLAGS: dict[str, FeatureFlag] = {
         risk_level=RiskLevel.CRITICAL,
         env_var="FF_TOOL_USE",
     ),
-    
+
     # v3.0 Feature Flags
     "FF_GROUNDED_MODE": FeatureFlag(
         name="FF_GROUNDED_MODE",
@@ -183,14 +185,14 @@ V2_FEATURE_FLAGS: dict[str, FeatureFlag] = {
 
 class FeatureFlagRegistry:
     """Central registry for managing feature flags.
-    
+
     Checks flags in order of priority:
     1. Runtime overrides (set via API)
     2. Environment variables
     3. Config file settings
     4. Default values
     """
-    
+
     def __init__(self, flags: dict[str, FeatureFlag] | None = None) -> None:
         """Initialize registry with feature definitions."""
         self._flags = flags or V2_FEATURE_FLAGS.copy()
@@ -199,22 +201,22 @@ class FeatureFlagRegistry:
 
     def is_enabled(self, flag_name: str, context: dict[str, Any] | None = None) -> bool:
         """Check if a feature flag is enabled.
-        
+
         Args:
             flag_name: Name of the feature flag
             context: Optional context for percentage-based flags
-            
+
         Returns:
             True if enabled, False otherwise
         """
         flag = self._flags.get(flag_name)
         if not flag:
             return False
-        
+
         # Check runtime override first
         if flag_name in self._overrides:
             return self._overrides[flag_name]
-        
+
         # Check environment variable
         if flag.env_var:
             env_value = os.getenv(flag.env_var, "").lower()
@@ -222,12 +224,12 @@ class FeatureFlagRegistry:
                 return True
             if env_value in ("false", "0", "no", "off"):
                 return False
-        
+
         # Check dependencies
         for dep in flag.dependencies:
             if not self.is_enabled(dep, context):
                 return False
-        
+
         # Return default
         return flag.default
 
@@ -259,10 +261,8 @@ class FeatureFlagRegistry:
     def _notify_listeners(self, flag_name: str, value: bool) -> None:
         """Notify listeners of flag change."""
         for listener in self._listeners:
-            try:
+            with contextlib.suppress(Exception):
                 listener(flag_name, value)
-            except Exception:
-                pass
 
     def get_flag(self, flag_name: str) -> FeatureFlag | None:
         """Get flag definition."""

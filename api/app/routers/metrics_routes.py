@@ -1,11 +1,11 @@
 """Metrics API routes for 3.0 features."""
 
-from typing import Optional
+
 from fastapi import APIRouter
 
-from ..core.preset_metrics import get_preset_metrics_tracker
-from ..core.model_roles import RECOMMENDED_MODELS, Role
 from ..core.corpus_health import get_corpus_health_checker
+from ..core.model_roles import RECOMMENDED_MODELS, Role
+from ..core.preset_metrics import get_preset_metrics_tracker
 from ..core.retrieval_quality import get_retrieval_quality_gates
 
 router = APIRouter(prefix="/api/metrics", tags=["metrics"])
@@ -14,12 +14,12 @@ router = APIRouter(prefix="/api/metrics", tags=["metrics"])
 @router.get("/presets/estimates")
 def get_preset_estimates():
     """Get latency/token estimates for all presets.
-    
+
     Returns estimates based on last 20 runs per preset.
     """
     tracker = get_preset_metrics_tracker()
     estimates = tracker.get_all_estimates()
-    
+
     return {
         "estimates": {
             preset: est.to_dict() for preset, est in estimates.items()
@@ -28,12 +28,12 @@ def get_preset_estimates():
     }
 
 
-@router.get("/presets/estimates/{preset}")  
+@router.get("/presets/estimates/{preset}")
 def get_preset_estimate(preset: str):
     """Get latency/token estimate for a specific preset."""
     tracker = get_preset_metrics_tracker()
     estimate = tracker.get_estimate(preset)
-    
+
     if estimate:
         return estimate.to_dict()
     return {"error": f"No data for preset '{preset}'", "sample_count": 0}
@@ -42,7 +42,7 @@ def get_preset_estimate(preset: str):
 @router.get("/models/recommendations")
 def get_model_recommendations():
     """Get recommended models per role and provider.
-    
+
     Returns the RECOMMENDED_MODELS configuration.
     """
     return {
@@ -55,11 +55,11 @@ def get_model_recommendations():
 
 
 @router.delete("/presets/clear")
-def clear_preset_metrics(preset: Optional[str] = None):
+def clear_preset_metrics(preset: str | None = None):
     """Clear metrics data for a preset or all presets."""
     tracker = get_preset_metrics_tracker()
     tracker.clear(preset)
-    
+
     return {
         "cleared": preset or "all",
         "message": f"Cleared metrics for {preset or 'all presets'}",
@@ -69,7 +69,7 @@ def clear_preset_metrics(preset: Optional[str] = None):
 @router.get("/corpus/health")
 def get_corpus_health():
     """Get corpus health report with stats and checks.
-    
+
     Returns overall health status, stats, and recommendations.
     """
     checker = get_corpus_health_checker()

@@ -72,12 +72,12 @@ class SelfRAGConfig:
     min_support_for_accept: SupportScore = SupportScore.PARTIALLY_SUPPORTED
     min_utility_for_accept: UtilityScore = UtilityScore.ADEQUATE
     max_regeneration_attempts: int = 2
-    
+
     # Enable/disable specific checks
     check_relevance: bool = True
     check_support: bool = True
     check_utility: bool = True
-    
+
     # LLM settings
     use_llm_critic: bool = True
     fallback_to_heuristic: bool = True
@@ -85,15 +85,15 @@ class SelfRAGConfig:
 
 class SelfRAGCritic:
     """Self-RAG style critic for evaluating and improving responses.
-    
+
     Implements reflection tokens from the Self-RAG paper:
     1. ISREL: Is the retrieved content relevant to the query?
     2. ISSUP: Is the generated response supported by the evidence?
     3. ISUSE: Is the response useful/high quality?
-    
+
     When quality is insufficient, triggers regeneration with critique.
     """
-    
+
     CRITIQUE_PROMPT = """You are a Self-RAG critic evaluating an AI response for quality and grounding.
 
 ## QUERY
@@ -142,12 +142,12 @@ SUGGESTIONS: [comma-separated improvements]"""
 
     def __init__(self, config: SelfRAGConfig | None = None) -> None:
         """Initialize Self-RAG critic.
-        
+
         Args:
             config: Optional configuration, uses defaults otherwise
         """
         self.config = config or SelfRAGConfig()
-        
+
         # Heuristic patterns for fallback
         self._unsupported_patterns = [
             re.compile(r'\b(I think|I believe|probably|might be)\b', re.I),
@@ -163,17 +163,17 @@ SUGGESTIONS: [comma-separated improvements]"""
         self,
         query: str,
         response: str,
-        chunks: list["EvidenceChunk"],
-        provider: "LLMProvider | None" = None,
+        chunks: list[EvidenceChunk],
+        provider: LLMProvider | None = None,
     ) -> CriticResult:
         """Evaluate a generated response using Self-RAG critic.
-        
+
         Args:
             query: Original user query
-            response: Generated response text  
+            response: Generated response text
             chunks: Evidence chunks used for generation
             provider: Optional LLM provider for LLM-based critique
-            
+
         Returns:
             CriticResult with evaluation scores and regeneration decision
         """
@@ -186,15 +186,15 @@ SUGGESTIONS: [comma-separated improvements]"""
                     result.details["llm_error"] = str(e)
                     return result
                 raise
-        
+
         return self._critique_heuristic(query, response, chunks)
 
     async def _critique_llm(
         self,
         query: str,
         response: str,
-        chunks: list["EvidenceChunk"],
-        provider: "LLMProvider",
+        chunks: list[EvidenceChunk],
+        provider: LLMProvider,
     ) -> CriticResult:
         """Use LLM for Self-RAG critique."""
         # Format evidence
@@ -202,18 +202,18 @@ SUGGESTIONS: [comma-separated improvements]"""
             f"[{i+1}] {c.title}: {c.snippet[:500]}"
             for i, c in enumerate(chunks[:8])
         )
-        
+
         prompt = self.CRITIQUE_PROMPT.format(
             query=query,
             evidence=evidence_text or "(No evidence provided)",
             response=response[:2000],  # Truncate long responses
         )
-        
+
         llm_response = await provider.chat([
             {"role": "system", "content": "You are a precise quality evaluator for RAG systems."},
             {"role": "user", "content": prompt},
         ])
-        
+
         return self._parse_critique_response(llm_response, query, response, chunks)
 
     def _parse_critique_response(
@@ -221,7 +221,7 @@ SUGGESTIONS: [comma-separated improvements]"""
         llm_response: str,
         query: str,
         response: str,
-        chunks: list["EvidenceChunk"],
+        chunks: list[EvidenceChunk],
     ) -> CriticResult:
         """Parse LLM critique response into CriticResult."""
         # Extract relevance
@@ -230,45 +230,45 @@ SUGGESTIONS: [comma-separated improvements]"""
         if rel_match:
             rel_str = rel_match.group(1).upper()
             relevance = RelevanceScore(rel_str.lower())
-        
+
         # Extract support
         sup_match = re.search(r'SUPPORT:\s*(FULLY_SUPPORTED|PARTIALLY_SUPPORTED|NO_SUPPORT|CONTRADICTS)', llm_response, re.I)
         support = SupportScore.PARTIALLY_SUPPORTED
         if sup_match:
             sup_str = sup_match.group(1).upper()
             support = SupportScore(sup_str.lower())
-        
+
         # Extract utility
         util_match = re.search(r'UTILITY:\s*(\d)', llm_response)
         utility = UtilityScore.ADEQUATE
         if util_match:
             util_val = int(util_match.group(1))
             utility = UtilityScore(max(1, min(5, util_val)))
-        
+
         # Extract regeneration decision
         regen_match = re.search(r'SHOULD_REGENERATE:\s*(yes|no)', llm_response, re.I)
         should_regenerate = False
         if regen_match:
             should_regenerate = regen_match.group(1).lower() == "yes"
-        
+
         # Extract critique
         crit_match = re.search(r'CRITIQUE:\s*(.+?)(?=SUGGESTIONS:|$)', llm_response, re.I | re.S)
         critique = crit_match.group(1).strip() if crit_match else ""
-        
+
         # Extract suggestions
         sugg_match = re.search(r'SUGGESTIONS:\s*(.+?)(?=$)', llm_response, re.I | re.S)
         suggestions = []
         if sugg_match:
             sugg_text = sugg_match.group(1).strip()
             suggestions = [s.strip() for s in sugg_text.split(",") if s.strip()]
-        
+
         # Override regeneration decision based on thresholds
         if not should_regenerate:
             if support.value > self.config.min_support_for_accept.value:
                 should_regenerate = True
             if utility.value < self.config.min_utility_for_accept.value:
                 should_regenerate = True
-        
+
         return CriticResult(
             relevance=relevance,
             support=support,
@@ -287,19 +287,19 @@ SUGGESTIONS: [comma-separated improvements]"""
         self,
         query: str,
         response: str,
-        chunks: list["EvidenceChunk"],
+        chunks: list[EvidenceChunk],
     ) -> CriticResult:
         """Fallback heuristic-based critique."""
         issues = []
         suggestions = []
-        
+
         # Check relevance by term overlap
-        query_terms = set(w.lower() for w in re.findall(r'\b\w{4,}\b', query))
-        response_terms = set(w.lower() for w in re.findall(r'\b\w{4,}\b', response))
+        query_terms = {w.lower() for w in re.findall(r'\b\w{4,}\b', query)}
+        response_terms = {w.lower() for w in re.findall(r'\b\w{4,}\b', response)}
         chunk_terms = set()
         for c in chunks:
             chunk_terms.update(w.lower() for w in re.findall(r'\b\w{4,}\b', c.snippet))
-        
+
         query_chunk_overlap = len(query_terms & chunk_terms) / max(len(query_terms), 1)
         if query_chunk_overlap >= 0.6:
             relevance = RelevanceScore.RELEVANT
@@ -308,11 +308,11 @@ SUGGESTIONS: [comma-separated improvements]"""
         else:
             relevance = RelevanceScore.IRRELEVANT
             issues.append("Retrieved evidence has low overlap with query")
-        
+
         # Check support by citation presence and hedging
         citation_count = len(re.findall(r'\[\d+\]', response))
         unsupported_count = sum(1 for p in self._unsupported_patterns if p.search(response))
-        
+
         if citation_count >= 3 and unsupported_count == 0:
             support = SupportScore.FULLY_SUPPORTED
         elif citation_count >= 1 and unsupported_count <= 1:
@@ -321,11 +321,11 @@ SUGGESTIONS: [comma-separated improvements]"""
             support = SupportScore.NO_SUPPORT
             issues.append("Response lacks citations or contains unsupported claims")
             suggestions.append("Add more citations to claims")
-        
+
         # Estimate utility
         response_len = len(response)
         query_response_overlap = len(query_terms & response_terms) / max(len(query_terms), 1)
-        
+
         if response_len > 200 and query_response_overlap >= 0.5 and citation_count >= 2:
             utility = UtilityScore.GOOD
         elif response_len > 100 and query_response_overlap >= 0.3:
@@ -335,16 +335,16 @@ SUGGESTIONS: [comma-separated improvements]"""
             issues.append("Response is too short or doesn't address the query")
         else:
             utility = UtilityScore.ADEQUATE
-        
+
         # Determine regeneration
         should_regenerate = (
             support == SupportScore.NO_SUPPORT
             or support == SupportScore.CONTRADICTS
             or utility.value < self.config.min_utility_for_accept.value
         )
-        
+
         critique = "; ".join(issues) if issues else "Response appears adequate"
-        
+
         return CriticResult(
             relevance=relevance,
             support=support,
@@ -370,11 +370,11 @@ SUGGESTIONS: [comma-separated improvements]"""
         original_query: str,
         original_response: str,
         critic_result: CriticResult,
-        chunks: list["EvidenceChunk"],
+        chunks: list[EvidenceChunk],
     ) -> str:
         """Format a prompt for regeneration based on critic feedback."""
         suggestions_text = "\n".join(f"- {s}" for s in critic_result.suggestions)
-        
+
         return f"""Your previous response was evaluated and needs improvement.
 
 ## ORIGINAL QUESTION
@@ -382,7 +382,7 @@ SUGGESTIONS: [comma-separated improvements]"""
 
 ## CRITIC FEEDBACK
 - Relevance: {critic_result.relevance.value}
-- Support: {critic_result.support.value}  
+- Support: {critic_result.support.value}
 - Utility: {critic_result.utility.value}/5
 - Issues: {critic_result.critique}
 
@@ -390,7 +390,7 @@ SUGGESTIONS: [comma-separated improvements]"""
 {suggestions_text or "- Ensure all claims are supported by evidence with citations"}
 
 ## INSTRUCTIONS
-Generate an improved response that addresses the feedback. 
+Generate an improved response that addresses the feedback.
 Ensure every claim has a citation [1], [2], etc.
 Only use information from the provided evidence."""
 

@@ -12,15 +12,15 @@ import numpy as np
 import pytest
 
 from app.core.binary_quantization import (
-    BQConfig,
     BQ_VERSION,
-    validate_dimension,
-    float32_to_binary,
-    binary_to_bits,
-    hamming_distance,
+    BQConfig,
     batch_float32_to_binary,
-    get_binary_dimension,
+    binary_to_bits,
     estimate_storage_savings,
+    float32_to_binary,
+    get_binary_dimension,
+    hamming_distance,
+    validate_dimension,
 )
 
 
@@ -63,7 +63,7 @@ class TestFloat32ToBinary:
         # Simple case: 8 values, half positive, half negative
         vector = [1.0, -1.0, 0.5, -0.5, 0.0, -0.1, 0.1, -0.01]
         result = float32_to_binary(vector)
-        
+
         # Expected: [1, 0, 1, 0, 1, 0, 1, 0] -> 0b10101010 = 170
         assert len(result) == 1
         assert result[0] == 170
@@ -91,7 +91,7 @@ class TestFloat32ToBinary:
         np.random.seed(42)
         vector = np.random.randn(768).tolist()
         result = float32_to_binary(vector)
-        
+
         assert len(result) == 768 // 8
         assert len(result) == 96
 
@@ -109,7 +109,7 @@ class TestFloat32ToBinary:
         config = BQConfig(normalize=True)
         vector = [10.0, -10.0, 5.0, -5.0, 0.0, -1.0, 1.0, -0.5]
         result = float32_to_binary(vector, config)
-        
+
         # After normalization, signs should be preserved
         assert len(result) == 1
 
@@ -119,7 +119,7 @@ class TestBinaryToBits:
         original = [1.0, -1.0, 0.5, -0.5, 0.0, -0.1, 0.1, -0.01]
         binary = float32_to_binary(original)
         bits = binary_to_bits(binary, 8)
-        
+
         expected = [1, 0, 1, 0, 1, 0, 1, 0]
         assert list(bits) == expected
 
@@ -128,7 +128,7 @@ class TestBinaryToBits:
         original = np.random.randn(768)
         binary = float32_to_binary(original)
         bits = binary_to_bits(binary, 768)
-        
+
         # Verify bits match sign of original
         expected_bits = (original >= 0).astype(np.uint8)
         np.testing.assert_array_equal(bits, expected_bits)
@@ -170,7 +170,7 @@ class TestBatchFloat32ToBinary:
             [1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0],
         ]
         results = batch_float32_to_binary(vectors)
-        
+
         assert len(results) == 3
         assert results[0][0] == 255  # All positive
         assert results[1][0] == 0    # All negative
@@ -180,7 +180,7 @@ class TestBatchFloat32ToBinary:
         np.random.seed(42)
         vectors = np.random.randn(100, 768)
         results = batch_float32_to_binary(vectors)
-        
+
         assert len(results) == 100
         assert all(len(r) == 96 for r in results)
 
@@ -200,27 +200,27 @@ class TestGetBinaryDimension:
 class TestEstimateStorageSavings:
     def test_storage_estimate(self):
         result = estimate_storage_savings(1000, 768)
-        
+
         # Float32: 1000 * 768 * 4 = 3,072,000 bytes
         assert result["float32_bytes"] == 3_072_000
-        
+
         # Binary: 1000 * 96 = 96,000 bytes
         assert result["binary_bytes"] == 96_000
-        
+
         # Savings ratio: 32x
         assert result["savings_ratio"] == 32.0
-        
+
         # Savings percent: ~96.875%
         assert result["savings_percent"] == pytest.approx(96.875)
 
     def test_large_scale(self):
         # PubMed-scale: ~36M items
         result = estimate_storage_savings(36_000_000, 768)
-        
+
         # Float32: ~110 GB
         assert result["float32_bytes"] == 36_000_000 * 768 * 4
-        
+
         # Binary: ~3.4 GB
         assert result["binary_bytes"] == 36_000_000 * 96
-        
+
         assert result["savings_ratio"] == 32.0

@@ -56,7 +56,7 @@ def cache_clear():
 @router.get("/metrics")
 def get_metrics(container: ServiceContainer = Depends(get_container)):
     """Get comprehensive metrics for dashboard display.
-    
+
     Returns aggregated metrics including:
     - Query counts and latencies (avg, p50, p95)
     - Cache hit rates
@@ -71,7 +71,7 @@ def get_metrics(container: ServiceContainer = Depends(get_container)):
 @router.get("/metrics/stages")
 def get_stage_metrics(container: ServiceContainer = Depends(get_container)):
     """Get per-stage latency breakdown.
-    
+
     Useful for identifying bottlenecks in the RAG pipeline.
     Returns average duration (ms) per stage.
     """
@@ -84,7 +84,7 @@ def get_stage_metrics(container: ServiceContainer = Depends(get_container)):
 @router.get("/metrics/retrieval")
 def get_retrieval_metrics(container: ServiceContainer = Depends(get_container)):
     """Get retrieval-specific metrics.
-    
+
     Includes mode distribution (standard, RAPTOR, GraphRAG),
     rerank usage rate, and FLARE trigger rate.
     """
@@ -98,7 +98,7 @@ def get_retrieval_metrics(container: ServiceContainer = Depends(get_container)):
 @router.get("/metrics/quality")
 def get_quality_metrics(container: ServiceContainer = Depends(get_container)):
     """Get answer quality metrics.
-    
+
     Includes quality distribution and hallucination firewall pass rate.
     """
     return {
@@ -110,12 +110,12 @@ def get_quality_metrics(container: ServiceContainer = Depends(get_container)):
 @router.get("/health/detailed")
 def detailed_health(container: ServiceContainer = Depends(get_container)):
     """Get detailed system health status.
-    
+
     Checks all components and returns their status.
     """
     cache = get_cache_manager()
     cache_stats = cache.stats()
-    
+
     return {
         "status": "healthy",
         "components": {

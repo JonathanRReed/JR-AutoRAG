@@ -28,17 +28,17 @@ class FirewallResult:
 
 class HallucinationFirewall:
     """Post-generation verifier that flags unsupported claims.
-    
+
     Acts as a safety layer between generation and response,
     catching potential hallucinations before they reach the user.
-    
+
     Key features:
     - Cross-checks claims against source citations
     - Flags sentences with low evidence overlap
     - In strict mode, removes/marks unsupported claims
     - Provides pass rate metrics for monitoring
     """
-    
+
     # Stopwords always excluded from overlap calculation
     STOPWORDS = {
         'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
@@ -50,15 +50,15 @@ class HallucinationFirewall:
         'now', 'here', 'there', 'this', 'that', 'these', 'those', 'for', 'to',
         'of', 'in', 'on', 'at', 'by', 'with', 'from', 'as', 'into', 'through',
     }
-    
+
     def __init__(
-        self, 
+        self,
         strict_mode: bool = False,
         min_overlap: float = 0.35,
         min_pass_rate: float = 0.5,
     ):
         """Initialize hallucination firewall.
-        
+
         Args:
             strict_mode: If True, remove/mark unsupported claims
             min_overlap: Minimum term overlap to consider supported
@@ -67,16 +67,16 @@ class HallucinationFirewall:
         self.strict_mode = strict_mode
         self.min_overlap = min_overlap
         self.min_pass_rate = min_pass_rate
-    
+
     def _tokenize(self, text: str) -> set[str]:
         """Tokenize and filter stopwords."""
         words = re.findall(r'\b[a-z]+\b', text.lower())
         return {w for w in words if w not in self.STOPWORDS and len(w) > 2}
-    
+
     def _has_citation(self, sentence: str) -> bool:
         """Check if sentence has citation markers."""
         return bool(re.search(r'\[\d+\]|\(Doc:|\(Source:|ChunkID:', sentence))
-    
+
     def _is_meta_sentence(self, sentence: str) -> bool:
         """Check if sentence is metadata/header, not a claim."""
         lower = sentence.lower().strip()
@@ -85,20 +85,20 @@ class HallucinationFirewall:
             or lower in ('', 'n/a', 'unknown')
             or len(sentence.split()) < 4
         )
-    
+
     def verify(
         self,
         answer: str,
-        chunks: list["EvidenceChunk"],
+        chunks: list[EvidenceChunk],
         query: str,
     ) -> FirewallResult:
         """Verify answer against source chunks.
-        
+
         Args:
             answer: Generated answer to verify
             chunks: Source evidence chunks
             query: Original user query
-            
+
         Returns:
             FirewallResult with verification details
         """
@@ -107,37 +107,34 @@ class HallucinationFirewall:
         all_source_terms = set()
         for text in chunk_texts:
             all_source_terms.update(self._tokenize(text))
-        
+
         # Split answer into sentences
         sentences = re.split(r'(?<=[.!?])\s+', answer)
-        
+
         flagged: list[str] = []
         verified_count = 0
         claim_count = 0
         per_sentence_details: list[dict] = []
-        
+
         for sentence in sentences:
             sentence = sentence.strip()
-            
+
             # Skip meta sentences
             if self._is_meta_sentence(sentence):
                 continue
-            
+
             claim_count += 1
-            
+
             # Check if sentence has explicit citation
             has_citation = self._has_citation(sentence)
-            
+
             # Calculate term overlap with sources
             sentence_terms = self._tokenize(sentence)
-            if sentence_terms:
-                overlap = len(sentence_terms & all_source_terms) / len(sentence_terms)
-            else:
-                overlap = 0.0
-            
+            overlap = len(sentence_terms & all_source_terms) / len(sentence_terms) if sentence_terms else 0.0
+
             # Determine if supported
             is_supported = has_citation or overlap >= self.min_overlap
-            
+
             detail = {
                 "sentence": sentence[:100] + "..." if len(sentence) > 100 else sentence,
                 "has_citation": has_citation,
@@ -145,24 +142,24 @@ class HallucinationFirewall:
                 "supported": is_supported,
             }
             per_sentence_details.append(detail)
-            
+
             if is_supported:
                 verified_count += 1
             else:
                 flagged.append(sentence)
-        
+
         # In strict mode, clean the answer
         cleaned = answer
         if self.strict_mode and flagged:
             for claim in flagged:
                 # Add warning markers
                 cleaned = cleaned.replace(
-                    claim, 
+                    claim,
                     f"[⚠️ UNVERIFIED] {claim}"
                 )
-        
+
         pass_rate = verified_count / max(claim_count, 1)
-        
+
         return FirewallResult(
             original_answer=answer,
             cleaned_answer=cleaned,

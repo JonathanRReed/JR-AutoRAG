@@ -104,6 +104,7 @@ const MessageContent = ({ content, onCitationClick }: { content: string; onCitat
                                 onClick={() => onCitationClick?.(id)}
                                 className="inline-flex items-center justify-center -translate-y-0.5 mx-0.5 h-4 min-w-[1rem] rounded-full bg-primary/20 px-1 text-[9px] font-bold text-primary hover:bg-primary hover:text-primary-foreground transition-all duration-200 shadow-sm border border-primary/10"
                                 title={`Jump to source ${id}`}
+                                aria-label={`Citation ${id} - jump to source`}
                             >
                                 {id}
                             </button>
@@ -221,6 +222,7 @@ const HistoryItem = ({
                                     className="h-6 w-6 text-muted-foreground hover:text-primary hover:bg-primary/10"
                                     onClick={handleCopy}
                                     title="Copy to clipboard"
+                                    aria-label="Copy message to clipboard"
                                 >
                                     <Copy className="h-3 w-3" />
                                 </Button>
@@ -231,6 +233,7 @@ const HistoryItem = ({
                                         className="h-6 w-6 text-muted-foreground hover:text-primary hover:bg-primary/10"
                                         onClick={onRegenerate}
                                         title="Regenerate response"
+                                        aria-label="Regenerate response"
                                     >
                                         <RefreshCw className="h-3 w-3" />
                                     </Button>

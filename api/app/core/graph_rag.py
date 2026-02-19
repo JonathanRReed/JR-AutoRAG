@@ -20,8 +20,8 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .providers import LLMProvider
     from .gatherer import EvidenceChunk
+    from .providers import LLMProvider
 
 
 class EntityType(str, Enum):
@@ -44,10 +44,10 @@ class Entity:
     description: str = ""
     mentions: list[str] = field(default_factory=list)  # chunk_ids where mentioned
     embedding: list[float] | None = None
-    
+
     def __hash__(self) -> int:
         return hash(self.name.lower())
-    
+
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Entity):
             return False
@@ -76,7 +76,7 @@ class Community:
 
 class GraphRAG:
     """Knowledge graph construction and graph-guided retrieval.
-    
+
     Implements the GraphRAG approach:
     1. Extract entities and relationships from chunks
     2. Build a knowledge graph
@@ -84,7 +84,7 @@ class GraphRAG:
     4. Generate community summaries
     5. Use graph structure for multi-hop reasoning
     """
-    
+
     KNOWLEDGE_EXTRACTION_PROMPT = """Extract a knowledge graph from the following text.
 Identify all high-value entities and the relationships between them.
 
@@ -115,30 +115,29 @@ STRICT FORMATTING RULES:
         self.relationships: list[Relationship] = []
         self.communities: list[Community] = []
         self._graph: Any = None  # NetworkX graph
-    
+
     @property
     def graph(self) -> Any:
         """Public accessor for the NetworkX graph."""
         return self._graph
-    
+
     def _normalize_name(self, name: str) -> str:
         """Normalize entity name for consistent matching."""
         return name.strip().lower()
-    
+
     async def extract_knowledge_from_chunk(
         self,
         chunk_text: str,
         chunk_id: str,
-        provider: "LLMProvider",
+        provider: LLMProvider,
     ) -> tuple[list[Entity], list[Relationship]]:
         """Extract both entities and relationships in a single pass with retries."""
+        import asyncio
         import json
         import re
-        import asyncio
-        
+
         prompt = self.KNOWLEDGE_EXTRACTION_PROMPT.format(text=chunk_text[:2500])
-        last_error = None
-        
+
         # Retry loop for reliability with local models
         for attempt in range(3):
             try:
@@ -146,9 +145,9 @@ STRICT FORMATTING RULES:
                     {"role": "system", "content": "You are a precise knowledge graph extractor. Always respond in valid JSON. No Markdown."},
                     {"role": "user", "content": prompt},
                 ])
-                
+
                 clean_response = response.strip()
-                
+
                 # Robust JSON extraction: Handle markdown code blocks common in local models
                 # Try to find content inside ```json ... ``` or just { ... }
                 json_block_match = re.search(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```', clean_response, re.IGNORECASE)
@@ -159,10 +158,10 @@ STRICT FORMATTING RULES:
                     json_match = re.search(r'(\{[\s\S]*\})', clean_response)
                     if json_match:
                         clean_response = json_match.group(1)
-                
+
                 # Simple repair: remove trailing commas before closing braces/brackets
                 clean_response = re.sub(r',\s*([}\]])', r'\1', clean_response)
-                
+
                 try:
                     data = json.loads(clean_response)
                 except json.JSONDecodeError:
@@ -174,32 +173,34 @@ STRICT FORMATTING RULES:
                         if attempt < 2:
                             continue  # Retry on parse error
                         raise ValueError(f"Failed to parse JSON: {clean_response[:100]}...")
-                
+
                 entities = []
                 for e_data in data.get("entities", []):
                     name = e_data.get("name", "").strip()
-                    if not name: continue
-                    
+                    if not name:
+                        continue
+
                     type_str = e_data.get("type", "OTHER").upper()
                     try:
                         entity_type = EntityType(type_str.lower())
                     except ValueError:
                         entity_type = EntityType.OTHER
-                    
+
                     entities.append(Entity(
                         name=name,
                         type=entity_type,
                         description=e_data.get("description", ""),
                         mentions=[chunk_id],
                     ))
-                
+
                 relationships = []
                 for r_data in data.get("relationships", []):
                     source = r_data.get("source", "").strip()
                     target = r_data.get("target", "").strip()
                     relation = r_data.get("relation", "").strip()
-                    if not (source and target and relation): continue
-                    
+                    if not (source and target and relation):
+                        continue
+
                     relationships.append(Relationship(
                         source=source,
                         target=target,
@@ -207,11 +208,10 @@ STRICT FORMATTING RULES:
                         chunk_ids=[chunk_id],
                         description=r_data.get("description", ""),
                     ))
-                    
+
                 return entities, relationships
 
             except Exception as e:
-                last_error = e
                 # Backoff slightly on failure
                 await asyncio.sleep(0.5 * (attempt + 1))
                 if attempt == 2:
@@ -221,70 +221,70 @@ STRICT FORMATTING RULES:
                         print(f"❌ GraphRAG Error: LLM Provider failed to process chunk {chunk_id} after 3 retries. Error: {error_msg}")
                     else:
                         print(f"⚠️ GraphRAG Warning: Failed to parse extraction JSON for chunk {chunk_id}: {error_msg}")
-        
+
         return [], []
 
     async def extract_entities_from_chunk(
         self,
         chunk_text: str,
         chunk_id: str,
-        provider: "LLMProvider",
+        provider: LLMProvider,
     ) -> list[Entity]:
         """Deprecated: Use extract_knowledge_from_chunk for better performance."""
         entities, _ = await self.extract_knowledge_from_chunk(chunk_text, chunk_id, provider)
         return entities
-    
+
     async def extract_relationships_from_chunk(
         self,
         chunk_text: str,
         chunk_id: str,
         entities: list[Entity],
-        provider: "LLMProvider",
+        provider: LLMProvider,
     ) -> list[Relationship]:
         """Deprecated: Use extract_knowledge_from_chunk for better performance."""
-        # This is now effectively a no-op if called after extraction, 
+        # This is now effectively a no-op if called after extraction,
         # but kept for interface compatibility.
         return []
-    
+
     async def build_from_chunks(
         self,
-        chunks: list["EvidenceChunk"],
-        provider: "LLMProvider",
+        chunks: list[EvidenceChunk],
+        provider: LLMProvider,
         on_progress: Callable[[str, int, int, str | None], None] | None = None,
     ) -> None:
         """Build knowledge graph from document chunks.
-        
+
         This is the main entry point for graph construction.
         Extracts entities and relationships from all chunks.
         """
         import asyncio
-        
+
         all_entities: list[Entity] = []
         all_relationships: list[Relationship] = []
-        
+
         # Limit concurrent LLM calls to prevent local provider overload (e.g. Ollama queue full)
         semaphore = asyncio.Semaphore(3)
         total_chunks = len(chunks)
         processed_chunks = 0
-        
-        async def process_chunk(chunk: "EvidenceChunk") -> None:
+
+        async def process_chunk(chunk: EvidenceChunk) -> None:
             nonlocal processed_chunks
             chunk_id = getattr(chunk, 'id', str(id(chunk)))
             chunk_text = getattr(chunk, 'snippet', '') or getattr(chunk, 'text', '')
-            
+
             if not chunk_text:
                 processed_chunks += 1
                 return
-            
+
             async with semaphore:
                 # Optimized: Extract both in one call
                 chunk_entities, chunk_relationships = await self.extract_knowledge_from_chunk(
                     chunk_text, chunk_id, provider
                 )
-            
+
             all_entities.extend(chunk_entities)
             all_relationships.extend(chunk_relationships)
-            
+
             processed_chunks += 1
             if on_progress:
                 detail = f"Found {len(chunk_entities)} entities, {len(chunk_relationships)} relations"
@@ -292,9 +292,9 @@ STRICT FORMATTING RULES:
 
         if on_progress:
             on_progress("extracting_graph", 0, total_chunks)
-            
+
         await asyncio.gather(*(process_chunk(c) for c in chunks))
-        
+
         # Merge entities with same name
         for entity in all_entities:
             norm_name = self._normalize_name(entity.name)
@@ -303,20 +303,20 @@ STRICT FORMATTING RULES:
                 self.entities[norm_name].mentions.extend(entity.mentions)
             else:
                 self.entities[norm_name] = entity
-        
+
         # Add relationships
         self.relationships.extend(all_relationships)
-        
+
         # Build NetworkX graph
         self._build_networkx_graph()
-    
+
     def _build_networkx_graph(self) -> None:
         """Construct NetworkX graph from entities and relationships."""
         try:
             import networkx as nx
-            
+
             self._graph = nx.Graph()
-            
+
             # Add entity nodes
             for name, entity in self.entities.items():
                 self._graph.add_node(
@@ -325,12 +325,12 @@ STRICT FORMATTING RULES:
                     description=entity.description,
                     mentions=len(entity.mentions),
                 )
-            
+
             # Add relationship edges
             for rel in self.relationships:
                 source_norm = self._normalize_name(rel.source)
                 target_norm = self._normalize_name(rel.target)
-                
+
                 if source_norm in self.entities and target_norm in self.entities:
                     if self._graph.has_edge(source_norm, target_norm):
                         # Increase weight for existing edge
@@ -345,19 +345,19 @@ STRICT FORMATTING RULES:
                         )
         except ImportError:
             self._graph = None
-    
+
     def detect_communities(self) -> list[Community]:
         """Detect communities in the knowledge graph.
-        
+
         Uses Louvain algorithm for community detection.
         Falls back to connected components if not available.
         """
         if self._graph is None:
             return []
-        
+
         try:
             import networkx as nx
-            
+
             # Try Louvain algorithm first
             try:
                 from networkx.algorithms.community import louvain_communities
@@ -365,7 +365,7 @@ STRICT FORMATTING RULES:
             except (ImportError, AttributeError):
                 # Fall back to connected components
                 communities_set = list(nx.connected_components(self._graph))
-            
+
             self.communities = []
             for i, members in enumerate(communities_set):
                 community = Community(
@@ -373,27 +373,27 @@ STRICT FORMATTING RULES:
                     entities=list(members),
                 )
                 self.communities.append(community)
-            
+
             return self.communities
         except Exception:
             return []
-    
+
     async def summarize_communities(
         self,
-        provider: "LLMProvider",
+        provider: LLMProvider,
         on_progress: Callable[[str, int, int, str | None], None] | None = None,
     ) -> dict[int, str]:
         """Generate summaries for each community."""
         import asyncio
         summaries = {}
-        
+
         total_communities = len(self.communities)
         processed_communities = 0
         semaphore = asyncio.Semaphore(5)  # Limit concurrent summaries
-        
+
         async def summarize_community(community: Community) -> None:
             nonlocal processed_communities
-            
+
             if not community.entities:
                 summary = "Empty community"
                 community.summary = summary
@@ -410,14 +410,14 @@ STRICT FORMATTING RULES:
                 if on_progress:
                     on_progress("summarizing_communities", processed_communities, total_communities)
                 return
-            
+
             # Build entity descriptions
             entity_info = []
             for name in community.entities[:10]:  # Limit to 10 entities
                 if name in self.entities:
                     entity = self.entities[name]
                     entity_info.append(f"- {entity.name} ({entity.type.value}): {entity.description}")
-            
+
             # Get relationships within community
             community_rels = []
             community_set = set(community.entities)
@@ -426,7 +426,7 @@ STRICT FORMATTING RULES:
                 tgt_norm = self._normalize_name(rel.target)
                 if src_norm in community_set and tgt_norm in community_set:
                     community_rels.append(f"- {rel.source} {rel.relation} {rel.target}")
-            
+
             prompt = f"""Summarize this thematic cluster of entities and their relationships.
 
 Entities:
@@ -448,35 +448,35 @@ Write a 1-2 sentence summary describing the main theme or topic of this cluster.
             except Exception:
                 community.summary = f"Cluster of {len(community.entities)} related entities"
                 summaries[community.id] = community.summary
-            
+
             processed_communities += 1
             if on_progress:
                 on_progress("summarizing_communities", processed_communities, total_communities)
 
         if on_progress:
             on_progress("summarizing_communities", 0, total_communities)
-            
+
         await asyncio.gather(*(summarize_community(c) for c in self.communities))
         return summaries
-    
+
     def query_entities(self, query: str, top_k: int = 5) -> list[Entity]:
         """Find entities relevant to a query via simple matching."""
         query_terms = set(re.findall(r'\b[a-z]{3,}\b', query.lower()))
-        
+
         scored_entities = []
         for name, entity in self.entities.items():
             # Score by term overlap with name and description
             entity_terms = set(re.findall(r'\b[a-z]{3,}\b', name.lower()))
             entity_terms.update(re.findall(r'\b[a-z]{3,}\b', entity.description.lower()))
-            
+
             overlap = len(query_terms & entity_terms)
             if overlap > 0:
                 scored_entities.append((entity, overlap))
-        
+
         # Sort by score and return top_k
         scored_entities.sort(key=lambda x: x[1], reverse=True)
         return [e for e, _ in scored_entities[:top_k]]
-    
+
     def multi_hop_query(
         self,
         query: str,
@@ -484,57 +484,56 @@ Write a 1-2 sentence summary describing the main theme or topic of this cluster.
         top_k: int = 5,
     ) -> list[str]:
         """Follow relationships for multi-hop reasoning.
-        
+
         Returns chunk_ids that may contain relevant information
         based on graph traversal.
         """
         if self._graph is None:
             return []
-        
+
         try:
-            import networkx as nx
-            
+
             # Find starting entities
             start_entities = self.query_entities(query, top_k=3)
             if not start_entities:
                 return []
-            
+
             # BFS traversal up to N hops
             visited_chunks: set[str] = set()
             visited_entities: set[str] = set()
-            
+
             queue = [(self._normalize_name(e.name), 0) for e in start_entities]
-            
+
             while queue:
                 entity_name, depth = queue.pop(0)
-                
+
                 if entity_name in visited_entities:
                     continue
                 visited_entities.add(entity_name)
-                
+
                 # Add chunks where this entity is mentioned
                 if entity_name in self.entities:
                     visited_chunks.update(self.entities[entity_name].mentions)
-                
+
                 # Add neighbors if within hop limit
                 if depth < hops and entity_name in self._graph:
                     for neighbor in self._graph.neighbors(entity_name):
                         if neighbor not in visited_entities:
                             queue.append((neighbor, depth + 1))
-            
+
             return list(visited_chunks)[:top_k * hops]
         except Exception:
             return []
-    
+
     def get_entity_context(self, entity_name: str) -> dict[str, Any]:
         """Get full context for an entity including neighbors and relationships."""
         norm_name = self._normalize_name(entity_name)
-        
+
         if norm_name not in self.entities:
             return {}
-        
+
         entity = self.entities[norm_name]
-        
+
         context = {
             "entity": {
                 "name": entity.name,
@@ -545,12 +544,12 @@ Write a 1-2 sentence summary describing the main theme or topic of this cluster.
             "relationships": [],
             "neighbors": [],
         }
-        
+
         # Get relationships involving this entity
         for rel in self.relationships:
             src_norm = self._normalize_name(rel.source)
             tgt_norm = self._normalize_name(rel.target)
-            
+
             if src_norm == norm_name or tgt_norm == norm_name:
                 context["relationships"].append({
                     "source": rel.source,
@@ -558,7 +557,7 @@ Write a 1-2 sentence summary describing the main theme or topic of this cluster.
                     "target": rel.target,
                     "description": rel.description,
                 })
-        
+
         # Get neighbor entities from graph
         if self._graph and norm_name in self._graph:
             for neighbor in self._graph.neighbors(norm_name):
@@ -567,9 +566,9 @@ Write a 1-2 sentence summary describing the main theme or topic of this cluster.
                         "name": self.entities[neighbor].name,
                         "type": self.entities[neighbor].type.value,
                     })
-        
+
         return context
-    
+
     def to_dict(self) -> dict[str, Any]:
         """Serialize graph to dictionary."""
         return {
@@ -601,12 +600,12 @@ Write a 1-2 sentence summary describing the main theme or topic of this cluster.
                 for c in self.communities
             ],
         }
-    
+
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "GraphRAG":
+    def from_dict(cls, data: dict[str, Any]) -> GraphRAG:
         """Deserialize graph from dictionary."""
         graph = cls()
-        
+
         for name, e_data in data.get("entities", {}).items():
             entity = Entity(
                 name=e_data["name"],
@@ -615,7 +614,7 @@ Write a 1-2 sentence summary describing the main theme or topic of this cluster.
                 mentions=e_data.get("mentions", []),
             )
             graph.entities[name] = entity
-        
+
         for r_data in data.get("relationships", []):
             relationship = Relationship(
                 source=r_data["source"],
@@ -625,7 +624,7 @@ Write a 1-2 sentence summary describing the main theme or topic of this cluster.
                 chunk_ids=r_data.get("chunk_ids", []),
             )
             graph.relationships.append(relationship)
-        
+
         for c_data in data.get("communities", []):
             community = Community(
                 id=c_data["id"],
@@ -633,7 +632,7 @@ Write a 1-2 sentence summary describing the main theme or topic of this cluster.
                 summary=c_data.get("summary", ""),
             )
             graph.communities.append(community)
-        
+
         graph._build_networkx_graph()
         return graph
 
