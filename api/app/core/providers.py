@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Iterable
+from collections.abc import AsyncIterator, Iterable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any, AsyncIterator
+from typing import Any
 
 import httpx
 
@@ -16,6 +17,56 @@ from .secrets_vault import get_secrets_vault
 DEFAULT_PROVIDER_TIMEOUT = 300.0
 DEFAULT_STREAM_TIMEOUT = 300.0
 DEFAULT_CLOUD_TIMEOUT = 120.0
+
+_shared_async_client: httpx.AsyncClient | None = None
+
+
+def get_shared_client() -> httpx.AsyncClient:
+    """Get or create a shared httpx AsyncClient with connection pooling."""
+    global _shared_async_client
+    if _shared_async_client is None or _shared_async_client.is_closed:
+        _shared_async_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(
+                connect=30.0,
+                read=DEFAULT_PROVIDER_TIMEOUT,
+                write=60.0,
+                pool=5.0,
+            ),
+            limits=httpx.Limits(
+                max_connections=100,
+                max_keepalive_connections=20,
+                keepalive_expiry=30.0,
+            ),
+        )
+    return _shared_async_client
+
+
+async def close_shared_client() -> None:
+    """Close the shared httpx client (call on app shutdown)."""
+    global _shared_async_client
+    if _shared_async_client is not None:
+        await _shared_async_client.aclose()
+        _shared_async_client = None
+
+
+@asynccontextmanager
+async def get_client(timeout: float | httpx.Timeout | None = None, headers: dict[str, str] | None = None):
+    """Get a client for making requests.
+
+    Uses the shared client with connection pooling for better performance.
+    For custom timeout/headers, creates a temporary client.
+    """
+    if timeout is None and headers is None:
+        yield get_shared_client()
+    else:
+        effective_timeout = timeout if isinstance(timeout, httpx.Timeout) else httpx.Timeout(
+            connect=30.0,
+            read=timeout or DEFAULT_PROVIDER_TIMEOUT,
+            write=60.0,
+            pool=5.0,
+        )
+        async with httpx.AsyncClient(timeout=effective_timeout, headers=headers) as client:
+            yield client
 
 
 def _get_timeout(env_key: str, default: float) -> float:
@@ -101,7 +152,7 @@ class _HTTPProvider(LLMProvider):
         url = f"{self.base_url}{path}"
         try:
             timeout = _get_timeout("JR_PROVIDER_TIMEOUT", DEFAULT_PROVIDER_TIMEOUT)
-            async with httpx.AsyncClient(timeout=timeout) as client:
+            async with get_client(timeout) as client:
                 response = await client.post(url, json=payload)
             response.raise_for_status()
             return response.json()
@@ -113,11 +164,11 @@ class _HTTPProvider(LLMProvider):
 
 class OllamaProvider(_HTTPProvider):
     """Provider for local Ollama instances."""
-    
+
     def __init__(self, base_url: str, default_model: str | None = None, api_key: str | None = None) -> None:
         super().__init__(base_url, default_model)
         self.api_key = api_key
-    
+
     def _get_headers(self) -> dict[str, str] | None:
         if self.api_key:
             return {
@@ -126,13 +177,13 @@ class OllamaProvider(_HTTPProvider):
                 "X-Ollama-Key": self.api_key,
             }
         return None
-    
+
     async def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         url = f"{self.base_url}{path}"
         headers = self._get_headers()
         try:
             timeout = _get_timeout("JR_PROVIDER_TIMEOUT", DEFAULT_PROVIDER_TIMEOUT)
-            async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
+            async with get_client(timeout, headers) as client:
                 response = await client.post(url, json=payload)
             response.raise_for_status()
             return response.json()
@@ -162,22 +213,23 @@ class OllamaProvider(_HTTPProvider):
         headers = self._get_headers()
         try:
             timeout = _get_timeout("JR_PROVIDER_STREAM_TIMEOUT", DEFAULT_STREAM_TIMEOUT)
-            async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
-                async with client.stream("POST", url, json=payload) as response:
-                    response.raise_for_status()
-                    async for line in response.aiter_lines():
-                        if not line:
-                            continue
-                        try:
-                            data = json.loads(line)
-                        except json.JSONDecodeError:
-                            continue
-                        message = data.get("message", {})
-                        content = message.get("content", "")
-                        if content:
-                            yield content
-                        if data.get("done") is True:
-                            break
+            async with httpx.AsyncClient(timeout=timeout, headers=headers) as client, client.stream(
+                "POST", url, json=payload
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    message = data.get("message", {})
+                    content = message.get("content", "")
+                    if content:
+                        yield content
+                    if data.get("done") is True:
+                        break
         except httpx.HTTPStatusError as exc:
             raise ProviderError(f"Provider error {exc.response.status_code}: {exc}") from exc
         except httpx.HTTPError as exc:
@@ -192,21 +244,21 @@ class OllamaProvider(_HTTPProvider):
 
 class OllamaCloudProvider(OllamaProvider):
     """Provider for Ollama Cloud service (https://ollama.com).
-    
+
     Ollama Cloud provides access to models without requiring local GPU.
     Uses the same API as local Ollama but requires authentication.
-    
+
     Environment variables:
     - OLLAMA_API_KEY: API key from https://ollama.com/settings/keys
-    
+
     Features:
     - Free tier available with hourly/weekly limits
     - No data retention
     - Access to large models that may not fit on local GPUs
     """
-    
+
     OLLAMA_CLOUD_URL = "https://ollama.com"
-    
+
     def __init__(
         self,
         api_key: str | None = None,
@@ -216,7 +268,7 @@ class OllamaCloudProvider(OllamaProvider):
         super().__init__(self.OLLAMA_CLOUD_URL, default_model or "llama3", resolved_key)
         if not self.api_key:
             raise ProviderError("Ollama Cloud requires an API key. Set OLLAMA_API_KEY or provide api_key parameter.")
-    
+
     async def list_models(self) -> list[str]:
         """Fetch available cloud models from Ollama."""
         headers = self._get_headers()
@@ -282,16 +334,16 @@ class CloudProvider(_HTTPProvider):
 
 class OpenRouterProvider(_HTTPProvider):
     """Provider for OpenRouter - unified API for 300+ cloud models.
-    
+
     OpenRouter provides access to models from OpenAI, Anthropic, Google, Meta,
     Mistral, and many others through a single API endpoint.
-    
+
     Environment variables:
     - OPENROUTER_API_KEY: API key for authentication
     """
-    
+
     OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-    
+
     def __init__(
         self,
         api_key: str | None = None,
@@ -299,13 +351,13 @@ class OpenRouterProvider(_HTTPProvider):
     ) -> None:
         super().__init__(self.OPENROUTER_BASE_URL, default_model or "openai/gpt-4o-mini")
         self.api_key = resolve_provider_api_key("openrouter", self.OPENROUTER_BASE_URL, api_key)
-    
+
     def _get_headers(self) -> dict[str, str]:
         headers = {}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         return headers
-    
+
     async def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         url = f"{self.base_url}{path}"
         headers = self._get_headers()
@@ -319,7 +371,7 @@ class OpenRouterProvider(_HTTPProvider):
             raise ProviderError(f"OpenRouter error {exc.response.status_code}: {exc}") from exc
         except httpx.HTTPError as exc:
             raise ProviderError(f"OpenRouter request failed ({type(exc).__name__}): {exc}") from exc
-    
+
     async def chat(self, messages: Iterable[dict[str, Any]], **kwargs: Any) -> str:
         model = kwargs.get("model") or self.default_model
         payload = {
@@ -330,11 +382,11 @@ class OpenRouterProvider(_HTTPProvider):
             payload["temperature"] = kwargs["temperature"]
         if kwargs.get("max_tokens") is not None:
             payload["max_tokens"] = kwargs["max_tokens"]
-        
+
         data = await self._post("/chat/completions", payload)
         choices = data.get("choices") or []
         return choices[0]["message"]["content"] if choices else ""
-    
+
     async def chat_stream(self, messages: Iterable[dict[str, Any]], **kwargs: Any) -> AsyncIterator[str]:
         model = kwargs.get("model") or self.default_model
         payload = {
@@ -346,34 +398,35 @@ class OpenRouterProvider(_HTTPProvider):
         headers = self._get_headers()
         try:
             timeout = _get_timeout("JR_PROVIDER_STREAM_TIMEOUT", DEFAULT_STREAM_TIMEOUT)
-            async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
-                async with client.stream("POST", url, json=payload) as response:
-                    response.raise_for_status()
-                    async for line in response.aiter_lines():
-                        if not line or not line.startswith("data: "):
-                            continue
-                        data_str = line[6:]  # Remove "data: " prefix
-                        if data_str == "[DONE]":
-                            break
-                        try:
-                            data = json.loads(data_str)
-                        except json.JSONDecodeError:
-                            continue
-                        choices = data.get("choices", [])
-                        if choices:
-                            delta = choices[0].get("delta", {})
-                            content = delta.get("content", "")
-                            if content:
-                                yield content
+            async with httpx.AsyncClient(timeout=timeout, headers=headers) as client, client.stream(
+                "POST", url, json=payload
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line or not line.startswith("data: "):
+                        continue
+                    data_str = line[6:]  # Remove "data: " prefix
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        data = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
+                    choices = data.get("choices", [])
+                    if choices:
+                        delta = choices[0].get("delta", {})
+                        content = delta.get("content", "")
+                        if content:
+                            yield content
         except httpx.HTTPStatusError as exc:
             raise ProviderError(f"OpenRouter error {exc.response.status_code}: {exc}") from exc
         except httpx.HTTPError as exc:
             raise ProviderError(f"OpenRouter request failed ({type(exc).__name__}): {exc}") from exc
-    
+
     async def complete(self, prompt: str, **kwargs: Any) -> str:
         messages = [{"role": "user", "content": prompt}]
         return await self.chat(messages, **kwargs)
-    
+
     async def list_models(self) -> list[dict[str, Any]]:
         """Fetch available models from OpenRouter."""
         headers = self._get_headers()
@@ -397,7 +450,7 @@ class ProviderFactory:
         name = (cfg.name or "").lower()
         base_url = str(cfg.base_url).lower()
         resolved_key = resolve_provider_api_key(cfg.name, str(cfg.base_url), cfg.api_key, self.api_key)
-        
+
         # Check for Ollama Cloud (ollama.com URL or explicit "ollama cloud" name)
         if "ollama.com" in base_url or "ollama_cloud" in name or "ollama cloud" in name:
             return OllamaCloudProvider(
@@ -418,12 +471,12 @@ class ProviderFactory:
 
     def get_default_provider(self) -> LLMProvider | None:
         """Get a default local provider for background tasks like GraphRAG.
-        
+
         Probes Ollama and LM Studio endpoints synchronously.
         Returns None if no local provider is available.
         """
         import httpx
-        
+
         # Try Ollama first
         ollama_url = os.environ.get("JR_OLLAMA_URL", "http://localhost:11434")
         try:
@@ -436,7 +489,7 @@ class ProviderFactory:
                     return OllamaProvider(ollama_url, models[0])
         except (httpx.HTTPError, httpx.RequestError):
             pass
-        
+
         # Try LM Studio
         lmstudio_url = os.environ.get("JR_LMSTUDIO_URL", "http://localhost:1234")
         try:
@@ -449,7 +502,7 @@ class ProviderFactory:
                     return LMStudioProvider(lmstudio_url, models[0])
         except (httpx.HTTPError, httpx.RequestError):
             pass
-        
+
         return None
 
 

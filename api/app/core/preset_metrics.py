@@ -22,14 +22,14 @@ logger = logging.getLogger("autorag.preset_metrics")
 @dataclass
 class RunMetrics:
     """Metrics for a single query run."""
-    
+
     preset: str
     total_duration_ms: float
     tokens_used: int
     chunks_retrieved: int
     cache_hit: bool
     timestamp: float = field(default_factory=time.time)
-    
+
     def to_dict(self) -> dict:
         return {
             "preset": self.preset,
@@ -39,9 +39,9 @@ class RunMetrics:
             "cache_hit": self.cache_hit,
             "timestamp": self.timestamp,
         }
-    
+
     @classmethod
-    def from_dict(cls, data: dict) -> "RunMetrics":
+    def from_dict(cls, data: dict) -> RunMetrics:
         return cls(
             preset=data["preset"],
             total_duration_ms=data["total_duration_ms"],
@@ -55,7 +55,7 @@ class RunMetrics:
 @dataclass
 class PresetEstimate:
     """Estimated latency and token ranges for a preset."""
-    
+
     preset: str
     latency_p50_ms: float
     latency_p90_ms: float
@@ -65,7 +65,7 @@ class PresetEstimate:
     tokens_min: int
     tokens_max: int
     sample_count: int
-    
+
     def to_dict(self) -> dict:
         return {
             "preset": self.preset,
@@ -86,18 +86,18 @@ class PresetEstimate:
 
 class PresetMetricsTracker:
     """Track per-preset metrics for latency estimation.
-    
+
     Maintains a sliding window of the last N runs per preset,
     and computes latency/token estimates on demand.
     """
-    
+
     def __init__(
         self,
         max_runs_per_preset: int = 20,
         data_path: Path | None = None,
     ) -> None:
         """Initialize the tracker.
-        
+
         Args:
             max_runs_per_preset: Max runs to keep per preset
             data_path: Optional path for persisting metrics
@@ -106,23 +106,23 @@ class PresetMetricsTracker:
         self._data_path = data_path
         self._runs: dict[str, deque[RunMetrics]] = {}
         self._lock = Lock()
-        
+
         # Load persisted data if available
         if self._data_path and self._data_path.exists():
             self._load()
-    
+
     def record(self, metrics: RunMetrics) -> None:
         """Record a run's metrics."""
         with self._lock:
             if metrics.preset not in self._runs:
                 self._runs[metrics.preset] = deque(maxlen=self._max_runs)
-            
+
             self._runs[metrics.preset].append(metrics)
-            
+
             # Persist if path configured
             if self._data_path:
                 self._save()
-    
+
     def record_from_result(
         self,
         preset: str,
@@ -130,13 +130,13 @@ class PresetMetricsTracker:
     ) -> None:
         """Record metrics from a query result dict."""
         metrics_data = result.get("metrics", {})
-        
+
         # Extract relevant metrics
         duration = metrics_data.get("duration_ms") or metrics_data.get("total_duration_ms", 0)
         tokens = metrics_data.get("tokens", 0)
         chunks = len(result.get("chunks", []))
         cache_hit = result.get("from_cache", False) or metrics_data.get("cache_hit", False)
-        
+
         self.record(RunMetrics(
             preset=preset,
             total_duration_ms=float(duration),
@@ -144,27 +144,27 @@ class PresetMetricsTracker:
             chunks_retrieved=chunks,
             cache_hit=cache_hit,
         ))
-    
+
     def get_estimate(self, preset: str) -> PresetEstimate | None:
         """Get latency/token estimates for a preset."""
         with self._lock:
             runs = self._runs.get(preset)
             if not runs or len(runs) < 3:
                 return None
-            
+
             # Filter out cache hits for latency estimation
             non_cached = [r for r in runs if not r.cache_hit]
             if len(non_cached) < 2:
                 non_cached = list(runs)  # Fall back to all runs
-            
+
             latencies = sorted(r.total_duration_ms for r in non_cached)
             tokens = [r.tokens_used for r in runs]
-            
+
             # Calculate percentiles
             n = len(latencies)
             p50_idx = n // 2
             p90_idx = int(n * 0.9)
-            
+
             return PresetEstimate(
                 preset=preset,
                 latency_p50_ms=latencies[p50_idx],
@@ -176,7 +176,7 @@ class PresetMetricsTracker:
                 tokens_max=max(tokens),
                 sample_count=len(runs),
             )
-    
+
     def get_all_estimates(self) -> dict[str, PresetEstimate]:
         """Get estimates for all tracked presets."""
         results = {}
@@ -186,12 +186,12 @@ class PresetMetricsTracker:
                 if est:
                     results[preset] = est
         return results
-    
+
     def _save(self) -> None:
         """Persist metrics to disk."""
         if not self._data_path:
             return
-        
+
         try:
             data = {
                 preset: [m.to_dict() for m in runs]
@@ -202,16 +202,16 @@ class PresetMetricsTracker:
                 json.dump(data, f)
         except Exception as e:
             logger.warning(f"Failed to save preset metrics: {e}")
-    
+
     def _load(self) -> None:
         """Load metrics from disk."""
         if not self._data_path or not self._data_path.exists():
             return
-        
+
         try:
-            with open(self._data_path, "r") as f:
+            with open(self._data_path) as f:
                 data = json.load(f)
-            
+
             for preset, runs_data in data.items():
                 self._runs[preset] = deque(
                     (RunMetrics.from_dict(r) for r in runs_data),
@@ -219,7 +219,7 @@ class PresetMetricsTracker:
                 )
         except Exception as e:
             logger.warning(f"Failed to load preset metrics: {e}")
-    
+
     def clear(self, preset: str | None = None) -> None:
         """Clear metrics for a preset or all presets."""
         with self._lock:
@@ -227,7 +227,7 @@ class PresetMetricsTracker:
                 self._runs.pop(preset, None)
             else:
                 self._runs.clear()
-            
+
             if self._data_path:
                 self._save()
 

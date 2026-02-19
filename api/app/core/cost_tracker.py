@@ -11,7 +11,6 @@ Enables cost-aware routing and budget management.
 
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
@@ -23,8 +22,8 @@ class TokenUsage:
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
-    
-    def __add__(self, other: "TokenUsage") -> "TokenUsage":
+
+    def __add__(self, other: TokenUsage) -> TokenUsage:
         return TokenUsage(
             input_tokens=self.input_tokens + other.input_tokens,
             output_tokens=self.output_tokens + other.output_tokens,
@@ -50,7 +49,7 @@ class LatencyBreakdown:
     reranking_ms: float = 0.0
     embedding_ms: float = 0.0
     other_ms: float = 0.0
-    
+
     def to_dict(self) -> dict[str, float]:
         return {
             "total": self.total_ms,
@@ -119,14 +118,14 @@ DEFAULT_PRICING = {
 
 class CostLatencyTracker:
     """Track costs and latency for RAG pipeline.
-    
+
     Features:
     - Per-request token and cost tracking
     - Latency breakdowns by stage
     - Budget alerts and enforcement
     - Aggregated reporting over time windows
     """
-    
+
     def __init__(
         self,
         pricing: dict[str, dict[str, dict[str, float]]] | None = None,
@@ -135,7 +134,7 @@ class CostLatencyTracker:
         max_history_size: int = 10000,
     ) -> None:
         """Initialize tracker.
-        
+
         Args:
             pricing: Custom pricing table
             budget_limit: Optional spending limit for the window
@@ -146,7 +145,7 @@ class CostLatencyTracker:
         self.budget_limit = budget_limit
         self.budget_window = timedelta(hours=budget_window_hours)
         self.max_history_size = max_history_size
-        
+
         self._history: list[RequestMetrics] = []
         self._current_window_cost = 0.0
         self._window_start = datetime.utcnow()
@@ -159,20 +158,20 @@ class CostLatencyTracker:
     ) -> CostEstimate:
         """Estimate cost for token usage."""
         provider_pricing = self.pricing.get(provider.lower(), {})
-        
+
         # Find model pricing (partial match)
         model_pricing = None
         for model_key, pricing in provider_pricing.items():
             if model_key in model.lower() or model.lower() in model_key:
                 model_pricing = pricing
                 break
-        
+
         if not model_pricing:
             model_pricing = provider_pricing.get("default", {"input": 0.0, "output": 0.0})
-        
+
         input_cost = (tokens.input_tokens / 1000) * model_pricing.get("input", 0.0)
         output_cost = (tokens.output_tokens / 1000) * model_pricing.get("output", 0.0)
-        
+
         return CostEstimate(
             input_cost=round(input_cost, 6),
             output_cost=round(output_cost, 6),
@@ -191,12 +190,12 @@ class CostLatencyTracker:
         metadata: dict[str, Any] | None = None,
     ) -> RequestMetrics:
         """Record metrics for a completed request.
-        
+
         Returns:
             RequestMetrics with cost estimate
         """
         cost = self.estimate_cost(tokens, provider, model)
-        
+
         metrics = RequestMetrics(
             request_id=request_id,
             timestamp=datetime.utcnow(),
@@ -209,27 +208,27 @@ class CostLatencyTracker:
             success=success,
             metadata=metadata or {},
         )
-        
+
         self._history.append(metrics)
-        
+
         # Trim history if needed
         if len(self._history) > self.max_history_size:
             self._history = self._history[-self.max_history_size:]
-        
+
         # Update budget tracking
         self._update_budget_window(cost.total_cost)
-        
+
         return metrics
 
     def _update_budget_window(self, cost: float) -> None:
         """Update budget window tracking."""
         now = datetime.utcnow()
-        
+
         # Check if we need to reset window
         if now - self._window_start > self.budget_window:
             self._window_start = now
             self._current_window_cost = 0.0
-        
+
         self._current_window_cost += cost
 
     def is_budget_exceeded(self) -> bool:
@@ -250,41 +249,41 @@ class CostLatencyTracker:
         end: datetime | None = None,
     ) -> AggregatedMetrics:
         """Aggregate metrics over a time period.
-        
+
         Args:
             start: Start of period (default: 24 hours ago)
             end: End of period (default: now)
-            
+
         Returns:
             AggregatedMetrics with summaries
         """
         end = end or datetime.utcnow()
         start = start or (end - timedelta(hours=24))
-        
+
         # Filter to time window
         filtered = [
             m for m in self._history
             if start <= m.timestamp <= end
         ]
-        
+
         if not filtered:
             return AggregatedMetrics(
                 period_start=start,
                 period_end=end,
             )
-        
+
         # Calculate aggregates
         total_tokens = TokenUsage()
         total_cost = 0.0
         latencies = []
         by_provider: dict[str, dict[str, Any]] = {}
         by_preset: dict[str, dict[str, Any]] = {}
-        
+
         for m in filtered:
             total_tokens = total_tokens + m.tokens
             total_cost += m.cost.total_cost
             latencies.append(m.latency.total_ms)
-            
+
             # By provider
             if m.provider:
                 if m.provider not in by_provider:
@@ -292,7 +291,7 @@ class CostLatencyTracker:
                 by_provider[m.provider]["requests"] += 1
                 by_provider[m.provider]["cost"] += m.cost.total_cost
                 by_provider[m.provider]["tokens"] += m.tokens.total_tokens
-            
+
             # By preset
             if m.preset:
                 if m.preset not in by_preset:
@@ -302,7 +301,7 @@ class CostLatencyTracker:
         # Sort latencies for percentiles
         latencies.sort()
         n = len(latencies)
-        
+
         return AggregatedMetrics(
             period_start=start,
             period_end=end,

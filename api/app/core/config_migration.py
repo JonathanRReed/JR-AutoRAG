@@ -216,10 +216,7 @@ class ConfigMigrator:
 
         # Get retrieval section
         retrieval = new_config.get("retrieval", {})
-        if isinstance(retrieval, dict):
-            retrieval = retrieval.copy()
-        else:
-            retrieval = {}
+        retrieval = retrieval.copy() if isinstance(retrieval, dict) else {}
 
         # Add new v2.0 fields
         for field_name, field_info in V2_NEW_FIELDS.items():

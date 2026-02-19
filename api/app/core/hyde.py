@@ -20,19 +20,19 @@ if TYPE_CHECKING:
 @dataclass
 class HyDEConfig:
     """Configuration for HyDE generation."""
-    
+
     # Number of hypothetical documents to generate
     num_hypotheticals: int = 1
-    
+
     # Maximum tokens for each hypothetical document
     max_tokens: int = 150
-    
+
     # Temperature for generation (lower = more focused)
     temperature: float = 0.7
-    
+
     # Whether to combine query with hypothetical for final embedding
     combine_with_query: bool = True
-    
+
     # Document types for different query categories
     document_templates: dict[str, str] = field(default_factory=lambda: {
         "factual": "Write a short technical document excerpt that definitively answers this question: {query}",
@@ -47,45 +47,45 @@ class HyDEConfig:
 @dataclass
 class HyDEResult:
     """Result of HyDE generation."""
-    
+
     # The query that was processed
     original_query: str
-    
+
     # Generated hypothetical documents
     hypotheticals: list[str]
-    
+
     # Final embedding text (may combine query + hypotheticals)
     embedding_text: str
-    
+
     # Query type detected
     query_type: str | None = None
 
 
 class HyDEGenerator:
     """Generates hypothetical documents for HyDE retrieval.
-    
+
     Usage:
         hyde = HyDEGenerator()
         result = await hyde.generate(query, provider)
         # Use result.embedding_text for embedding
     """
-    
+
     def __init__(self, config: HyDEConfig | None = None) -> None:
         self.config = config or HyDEConfig()
-    
+
     async def generate(
         self,
         query: str,
-        provider: "LLMProvider",
+        provider: LLMProvider,
         query_type: str | None = None,
     ) -> HyDEResult:
         """Generate hypothetical document(s) for the query.
-        
+
         Args:
             query: The user's question
             provider: LLM provider for generation
             query_type: Optional query type for template selection
-            
+
         Returns:
             HyDEResult with hypothetical documents and embedding text
         """
@@ -93,12 +93,12 @@ class HyDEGenerator:
         template_key = query_type or "default"
         if template_key not in self.config.document_templates:
             template_key = "default"
-        
+
         template = self.config.document_templates[template_key]
         prompt = template.format(query=query)
-        
+
         hypotheticals = []
-        
+
         for _ in range(self.config.num_hypotheticals):
             try:
                 messages = [
@@ -115,22 +115,22 @@ class HyDEGenerator:
                     },
                     {"role": "user", "content": prompt},
                 ]
-                
+
                 hypothetical = await provider.chat(
                     messages,
                     max_tokens=self.config.max_tokens,
                     temperature=self.config.temperature,
                 )
-                
+
                 # Clean up the response
                 hypothetical = hypothetical.strip()
                 if hypothetical:
                     hypotheticals.append(hypothetical)
-                    
+
             except Exception:
                 # If generation fails, continue with what we have
                 continue
-        
+
         # Build final embedding text
         if self.config.combine_with_query and hypotheticals:
             # Combine query with hypothetical for better matching
@@ -140,23 +140,23 @@ class HyDEGenerator:
         else:
             # Fallback to original query if no hypotheticals generated
             embedding_text = query
-        
+
         return HyDEResult(
             original_query=query,
             hypotheticals=hypotheticals,
             embedding_text=embedding_text,
             query_type=query_type,
         )
-    
+
     def generate_sync(
         self,
         query: str,
-        provider: "LLMProvider",
+        provider: LLMProvider,
         query_type: str | None = None,
     ) -> HyDEResult:
         """Synchronous wrapper for generate."""
         import asyncio
-        
+
         try:
             loop = asyncio.get_event_loop()
             if loop.is_running():

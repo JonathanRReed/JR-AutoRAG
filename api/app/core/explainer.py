@@ -13,9 +13,8 @@ and understandable to end users.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
 from enum import Enum
-
+from typing import Any
 
 # =============================================================================
 # Explanation Types
@@ -42,7 +41,7 @@ class DecisionPoint:
     output_summary: str
     confidence: float = 0.0
     alternatives: list[str] = field(default_factory=list)
-    
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "type": self.decision_type.value,
@@ -53,7 +52,7 @@ class DecisionPoint:
             "confidence": round(self.confidence, 3),
             "alternatives": self.alternatives,
         }
-    
+
     def to_plain_english(self) -> str:
         """Convert decision to plain English explanation."""
         return self.description
@@ -67,7 +66,7 @@ class SourceAttribution:
     contribution: str  # What this source contributed
     relevance_score: float
     excerpt: str
-    
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "source_id": self.source_id,
@@ -87,7 +86,7 @@ class ConfidenceBreakdown:
     citation_validity: float
     answer_coherence: float
     factors: list[tuple[str, float]] = field(default_factory=list)
-    
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "overall": round(self.overall, 3),
@@ -97,7 +96,7 @@ class ConfidenceBreakdown:
             "answer_coherence": round(self.answer_coherence, 3),
             "factors": [(f, round(s, 3)) for f, s in self.factors],
         }
-    
+
     def top_concerns(self) -> list[str]:
         """Get top concerns (low-scoring factors)."""
         concerns = []
@@ -121,7 +120,7 @@ class Explanation:
     confidence: ConfidenceBreakdown
     reasoning_steps: list[str]
     caveats: list[str] = field(default_factory=list)
-    
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "summary": self.summary,
@@ -131,7 +130,7 @@ class Explanation:
             "reasoning": self.reasoning_steps,
             "caveats": self.caveats,
         }
-    
+
     def to_markdown(self) -> str:
         """Convert to markdown format for display."""
         lines = [
@@ -140,19 +139,19 @@ class Explanation:
             f"**Summary:** {self.summary}",
             "",
         ]
-        
+
         # Confidence section
         lines.extend([
             "## Confidence",
             f"Overall confidence: **{self.confidence.overall:.0%}**",
             "",
         ])
-        
+
         concerns = self.confidence.top_concerns()
         if concerns:
             lines.append("**Note:** " + "; ".join(concerns))
             lines.append("")
-        
+
         # Reasoning chain
         if self.reasoning_steps:
             lines.extend([
@@ -162,7 +161,7 @@ class Explanation:
             for i, step in enumerate(self.reasoning_steps, 1):
                 lines.append(f"{i}. {step}")
             lines.append("")
-        
+
         # Sources used
         if self.source_attributions:
             lines.extend([
@@ -173,7 +172,7 @@ class Explanation:
                 lines.append(f"- **{source.source_title}** ({source.relevance_score:.0%} relevant)")
                 lines.append(f"  - {source.contribution}")
             lines.append("")
-        
+
         # Caveats
         if self.caveats:
             lines.extend([
@@ -182,7 +181,7 @@ class Explanation:
             ])
             for caveat in self.caveats:
                 lines.append(f"- {caveat}")
-        
+
         return "\n".join(lines)
 
 
@@ -192,17 +191,17 @@ class Explanation:
 
 class AnswerExplainer:
     """Generate explanations for RAG answers.
-    
+
     This class analyzes trace bundles to produce human-readable
     explanations of how an answer was generated.
     """
-    
+
     def explain(self, trace: dict[str, Any]) -> Explanation:
         """Generate explanation from a trace bundle.
-        
+
         Args:
             trace: Full trace bundle from orchestrator
-            
+
         Returns:
             Explanation with decision chain and confidence
         """
@@ -212,10 +211,10 @@ class AnswerExplainer:
         confidence = self._extract_confidence(trace)
         reasoning = self._extract_reasoning(trace)
         caveats = self._generate_caveats(trace, confidence)
-        
+
         # Generate summary
         summary = self._generate_summary(trace, confidence)
-        
+
         return Explanation(
             summary=summary,
             decision_chain=decision_chain,
@@ -224,16 +223,16 @@ class AnswerExplainer:
             reasoning_steps=reasoning,
             caveats=caveats,
         )
-    
+
     def _extract_decisions(self, trace: dict[str, Any]) -> list[DecisionPoint]:
         """Extract key decision points from trace."""
         decisions = []
         stages = trace.get("stages", [])
-        
+
         for stage in stages:
             stage_name = stage.get("name", "unknown")
             duration = stage.get("duration_ms", 0)
-            
+
             if stage_name == "retrieval":
                 docs_found = stage.get("documents_retrieved", 0)
                 decisions.append(DecisionPoint(
@@ -244,7 +243,7 @@ class AnswerExplainer:
                     output_summary=f"{docs_found} documents passed relevance threshold",
                     confidence=stage.get("confidence", 0.7),
                 ))
-            
+
             elif stage_name == "reranking":
                 input_count = stage.get("input_count", 0)
                 output_count = stage.get("output_count", 0)
@@ -256,7 +255,7 @@ class AnswerExplainer:
                     output_summary=f"{output_count} top-ranked documents",
                     confidence=stage.get("confidence", 0.8),
                 ))
-            
+
             elif stage_name == "generation":
                 decisions.append(DecisionPoint(
                     decision_type=DecisionType.GENERATION,
@@ -266,7 +265,7 @@ class AnswerExplainer:
                     output_summary=f"Answer with {stage.get('answer_tokens', 0)} tokens",
                     confidence=stage.get("confidence", 0.7),
                 ))
-            
+
             elif stage_name == "citation_verification":
                 valid = stage.get("valid_citations", 0)
                 total = stage.get("total_citations", 0)
@@ -278,20 +277,20 @@ class AnswerExplainer:
                     output_summary=f"{valid} verified, {total - valid} repaired",
                     confidence=valid / total if total > 0 else 1.0,
                 ))
-        
+
         return decisions
-    
+
     def _extract_sources(self, trace: dict[str, Any]) -> list[SourceAttribution]:
         """Extract source attributions from trace."""
         sources = []
         used_docs = trace.get("sources", []) or trace.get("evidence", [])
-        
+
         for doc in used_docs[:5]:  # Top 5 sources
             doc_id = doc.get("id", doc.get("chunk_id", "unknown"))
             title = doc.get("title", doc.get("source", doc_id))
             score = doc.get("score", doc.get("relevance", 0.5))
             text = doc.get("text", doc.get("snippet", ""))
-            
+
             sources.append(SourceAttribution(
                 source_id=doc_id,
                 source_title=title,
@@ -299,13 +298,13 @@ class AnswerExplainer:
                 relevance_score=score,
                 excerpt=text[:300] if text else "",
             ))
-        
+
         return sources
-    
+
     def _extract_confidence(self, trace: dict[str, Any]) -> ConfidenceBreakdown:
         """Extract confidence breakdown from trace."""
         metrics = trace.get("metrics", {})
-        
+
         return ConfidenceBreakdown(
             overall=metrics.get("confidence", 0.7),
             retrieval_quality=metrics.get("retrieval_score", 0.7),
@@ -318,29 +317,29 @@ class AnswerExplainer:
                 ("Query coverage", metrics.get("query_coverage", 0.75)),
             ],
         )
-    
+
     def _extract_reasoning(self, trace: dict[str, Any]) -> list[str]:
         """Extract reasoning steps from trace."""
         steps = []
-        
+
         # Infer reasoning from stages
         query = trace.get("query", "")
         num_sources = len(trace.get("sources", []))
-        
+
         steps.append(f"Received query: \"{query[:80]}...\"" if len(query) > 80 else f"Received query: \"{query}\"")
         steps.append(f"Searched knowledge base and found {num_sources} relevant sources")
-        
+
         if trace.get("reranker_used"):
             steps.append("Re-ranked sources by relevance to improve answer quality")
-        
+
         if trace.get("compression_applied"):
             steps.append("Compressed context to focus on most relevant information")
-        
+
         steps.append("Generated answer grounded in retrieved sources")
         steps.append("Verified citations point to actual source spans")
-        
+
         return steps
-    
+
     def _generate_caveats(
         self,
         trace: dict[str, Any],
@@ -348,26 +347,26 @@ class AnswerExplainer:
     ) -> list[str]:
         """Generate caveats about the answer."""
         caveats = []
-        
+
         if confidence.overall < 0.6:
             caveats.append("This answer has lower than normal confidence due to limited evidence")
-        
+
         if confidence.retrieval_quality < 0.5:
             caveats.append("The knowledge base may not fully cover this topic")
-        
+
         if confidence.citation_validity < 0.8:
             caveats.append("Some parts of this answer may not be fully supported by sources")
-        
+
         # Check for conflicting sources
         if trace.get("conflicts_detected"):
             caveats.append("Multiple sources provided conflicting information")
-        
+
         # Check if abstention was considered
         if trace.get("abstention_considered"):
             caveats.append("The system considered declining to answer due to limited evidence")
-        
+
         return caveats
-    
+
     def _generate_summary(
         self,
         trace: dict[str, Any],
@@ -375,14 +374,14 @@ class AnswerExplainer:
     ) -> str:
         """Generate a one-line summary of the explanation."""
         num_sources = len(trace.get("sources", []))
-        
+
         if confidence.overall >= 0.8:
             return f"Answer generated with high confidence using {num_sources} sources"
         elif confidence.overall >= 0.6:
             return f"Answer generated with moderate confidence from {num_sources} sources"
         else:
             return f"Answer generated with limited confidence from {num_sources} sources"
-    
+
     def get_reasoning_chain(self, trace: dict[str, Any]) -> list[str]:
         """Get just the reasoning chain without full explanation."""
         return self._extract_reasoning(trace)
@@ -392,7 +391,7 @@ class AnswerExplainer:
 # Singleton
 # =============================================================================
 
-_explainer: Optional[AnswerExplainer] = None
+_explainer: AnswerExplainer | None = None
 
 
 def get_explainer() -> AnswerExplainer:

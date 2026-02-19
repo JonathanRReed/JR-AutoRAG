@@ -114,7 +114,7 @@ class TelemetryStore:
         with self._lock:
             if not self._traces:
                 return {"total_queries": 0}
-            
+
             latencies = [t.metrics.get("duration_ms", 0) for t in self._traces]
             chunk_counts = [t.metrics.get("context_chunks", 0) for t in self._traces]
             embedding_hits = sum(int(t.metrics.get("embedding_cache_hits", 0)) for t in self._traces)
@@ -126,7 +126,7 @@ class TelemetryStore:
                 if embedding_total > 0
                 else (cache_hits / len(self._traces) if self._traces else 0)
             )
-            
+
             return {
                 "total_queries": len(self._traces),
                 "cache_hit_rate": cache_hit_rate,
@@ -147,7 +147,7 @@ class TelemetryStore:
         sorted_traces = sorted(self._traces, key=lambda t: t.started_at)
         first = sorted_traces[0].started_at
         last = sorted_traces[-1].started_at
-        
+
         # Calculate timespan in hours
         hours = (last - first).total_seconds() / 3600
         return len(self._traces) / max(hours, 0.01)
@@ -178,20 +178,20 @@ class TelemetryStore:
 
     def get_stage_latency_breakdown(self) -> dict[str, float]:
         """Get average latency per pipeline stage.
-        
+
         Returns a dict mapping stage name to average duration in ms.
         Useful for identifying bottlenecks.
         """
         with self._lock:
             stage_totals: dict[str, float] = {}
             stage_counts: dict[str, int] = {}
-            
+
             for trace in self._traces:
                 for step in trace.steps:
                     name = step.name
                     stage_totals[name] = stage_totals.get(name, 0) + step.duration_ms
                     stage_counts[name] = stage_counts.get(name, 0) + 1
-            
+
             return {
                 name: stage_totals[name] / stage_counts[name]
                 for name in stage_totals
@@ -232,14 +232,14 @@ class TelemetryStore:
         """Distribution of retrieval modes used (standard, RAPTOR, GraphRAG)."""
         with self._lock:
             dist = {"standard": 0, "raptor": 0, "graph": 0, "combined": 0}
-            
+
             for trace in self._traces:
                 mode = trace.metrics.get("retrieval_mode", "standard")
                 if mode in dist:
                     dist[mode] += 1
                 else:
                     dist["standard"] += 1
-            
+
             return dist
 
     def get_flare_trigger_rate(self) -> float:
@@ -247,7 +247,7 @@ class TelemetryStore:
         with self._lock:
             if not self._traces:
                 return 0.0
-            
+
             flare_count = 0
             for trace in self._traces:
                 # Check if any FLARE step triggered retrieval
@@ -259,7 +259,7 @@ class TelemetryStore:
                     if trace.metrics.get("flare_retrievals", 0) > 0:
                         flare_count += 1
                         break
-            
+
             return flare_count / len(self._traces)
 
     def get_hallucination_pass_rate(self) -> float:
@@ -267,18 +267,18 @@ class TelemetryStore:
         with self._lock:
             if not self._traces:
                 return 0.0
-            
+
             pass_rates = []
             for trace in self._traces:
                 rate = trace.metrics.get("firewall_pass_rate")
                 if rate is not None:
                     pass_rates.append(rate)
-            
+
             return sum(pass_rates) / len(pass_rates) if pass_rates else 0.0
 
     def get_full_metrics_export(self) -> dict:
         """Export all metrics for comprehensive dashboard.
-        
+
         Combines export_metrics with additional stage and feature metrics.
         """
         base = self.export_metrics()

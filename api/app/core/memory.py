@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 
@@ -23,7 +23,7 @@ class ConversationTurn:
     content: str
     timestamp: datetime
     metadata: dict[str, Any] = field(default_factory=dict)
-    
+
     # Optional fields for RAG context
     chunks_used: list[str] = field(default_factory=list)  # Chunk IDs
     query_type: str = ""
@@ -40,14 +40,14 @@ class ConversationContext:
 
 class ConversationMemory:
     """Stores and manages conversation history for multi-turn RAG.
-    
+
     Features:
     - Automatic turn storage
     - Follow-up query detection
     - Context window management
     - Entity extraction for context
     """
-    
+
     # Patterns indicating follow-up questions
     FOLLOW_UP_PATTERNS = [
         r"^(what|how|why|when|where|who) (about|else|more)\b",
@@ -58,14 +58,14 @@ class ConversationMemory:
         r"\b(previous|earlier|above|before)\b",
         r"\b(you (said|mentioned|told))\b",
     ]
-    
+
     # Words that suggest a new topic
     NEW_TOPIC_PATTERNS = [
         r"^(let's talk about|changing topic|new question)\b",
         r"^(forget|ignore) (that|previous)\b",
         r"^(start over|reset)\b",
     ]
-    
+
     def __init__(
         self,
         max_turns: int = 20,
@@ -80,13 +80,13 @@ class ConversationMemory:
         self._new_topic_re = [
             re.compile(p, re.IGNORECASE) for p in self.NEW_TOPIC_PATTERNS
         ]
-    
+
     def create_conversation(self) -> str:
         """Create a new conversation and return its ID."""
         conv_id = str(uuid.uuid4())
         self._conversations[conv_id] = []
         return conv_id
-    
+
     def add_turn(
         self,
         conversation_id: str,
@@ -99,27 +99,27 @@ class ConversationMemory:
         """Add a turn to a conversation."""
         if conversation_id not in self._conversations:
             self._conversations[conversation_id] = []
-        
+
         turn = ConversationTurn(
             id=str(uuid.uuid4()),
             role=role,
             content=content,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             metadata=metadata or {},
             chunks_used=chunks_used or [],
             query_type=query_type,
         )
-        
+
         self._conversations[conversation_id].append(turn)
-        
+
         # Trim if exceeds max
         if len(self._conversations[conversation_id]) > self._max_turns:
             self._conversations[conversation_id] = (
                 self._conversations[conversation_id][-self._max_turns:]
             )
-        
+
         return turn
-    
+
     def get_turns(
         self,
         conversation_id: str,
@@ -130,32 +130,29 @@ class ConversationMemory:
         if limit:
             return turns[-limit:]
         return turns
-    
+
     def is_follow_up(self, query: str) -> bool:
         """Detect if a query is a follow-up to previous context."""
         # Check for new topic indicators first
         for pattern in self._new_topic_re:
             if pattern.search(query):
                 return False
-        
+
         # Check for follow-up indicators
         for pattern in self._follow_up_re:
             if pattern.search(query):
                 return True
-        
+
         # Short queries are often follow-ups
-        if len(query.split()) <= 5:
-            return True
-        
-        return False
-    
+        return len(query.split()) <= 5
+
     def _extract_entities(self, text: str) -> list[str]:
         """Extract potential named entities from text."""
         # Simple heuristic: capitalized words not at sentence start
         # This is a simplified version - production would use NER
         sentences = re.split(r'[.!?]\s+', text)
         entities = set()
-        
+
         for sentence in sentences:
             words = sentence.split()
             for i, word in enumerate(words):
@@ -167,9 +164,9 @@ class ConversationMemory:
                     clean = re.sub(r'[^\w]', '', word)
                     if clean:
                         entities.add(clean)
-        
+
         return list(entities)
-    
+
     def get_context(
         self,
         conversation_id: str,
@@ -177,7 +174,7 @@ class ConversationMemory:
     ) -> ConversationContext:
         """Get relevant context for the current query."""
         turns = self.get_turns(conversation_id, limit=self._context_window)
-        
+
         if not turns:
             return ConversationContext(
                 relevant_turns=[],
@@ -185,13 +182,13 @@ class ConversationMemory:
                 key_entities=[],
                 follow_up_detected=False,
             )
-        
+
         follow_up = self.is_follow_up(current_query)
-        
+
         # Extract entities from recent conversation
         all_text = " ".join(t.content for t in turns)
         entities = self._extract_entities(all_text)
-        
+
         # Build summary from last few turns
         recent = turns[-3:] if len(turns) >= 3 else turns
         summary_parts = []
@@ -201,14 +198,14 @@ class ConversationMemory:
             content = turn.content[:200] + "..." if len(turn.content) > 200 else turn.content
             summary_parts.append(f"{role_label}: {content}")
         summary = "\n".join(summary_parts)
-        
+
         return ConversationContext(
             relevant_turns=turns,
             summary=summary,
             key_entities=entities[:10],  # Limit entities
             follow_up_detected=follow_up,
         )
-    
+
     def build_context_prompt(
         self,
         conversation_id: str,
@@ -216,23 +213,23 @@ class ConversationMemory:
     ) -> str:
         """Build a context string for the LLM prompt."""
         context = self.get_context(conversation_id, current_query)
-        
+
         if not context.relevant_turns:
             return ""
-        
+
         parts = ["Previous conversation:"]
         for turn in context.relevant_turns[-3:]:
             role = "User" if turn.role == "user" else "Assistant"
             content = turn.content[:300] + "..." if len(turn.content) > 300 else turn.content
             parts.append(f"{role}: {content}")
-        
+
         return "\n".join(parts)
-    
+
     def clear_conversation(self, conversation_id: str) -> None:
         """Clear a conversation's history."""
         if conversation_id in self._conversations:
             self._conversations[conversation_id] = []
-    
+
     def delete_conversation(self, conversation_id: str) -> None:
         """Delete a conversation entirely."""
         self._conversations.pop(conversation_id, None)

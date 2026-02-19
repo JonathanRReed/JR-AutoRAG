@@ -12,8 +12,6 @@ import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
-
 
 logger = logging.getLogger("autorag.trace_export")
 
@@ -21,38 +19,38 @@ logger = logging.getLogger("autorag.trace_export")
 @dataclass
 class TraceExport:
     """Enhanced trace export with full context."""
-    
+
     trace_id: str
     query: str
     answer: str
     timestamp: str
-    
+
     # Stage timings
     stages: list[dict] = field(default_factory=list)
     total_duration_ms: float = 0
-    
+
     # Config snapshot
     config: dict = field(default_factory=dict)
     corpus_hash: str = ""
-    
+
     # Model info
     model_ids: dict = field(default_factory=dict)
-    
+
     # Result metadata
     chunks_used: int = 0
     citations_count: int = 0
     grounded: bool = False
     cache_hit: bool = False
-    
+
     def to_dict(self, redact_content: bool = False) -> dict:
         """Export as dictionary.
-        
+
         Args:
             redact_content: If True, redact query/answer text
         """
         query = "[REDACTED]" if redact_content else self.query
         answer = "[REDACTED]" if redact_content else self.answer
-        
+
         return {
             "meta": {
                 "trace_id": self.trace_id,
@@ -77,11 +75,11 @@ class TraceExport:
                 "cache_hit": self.cache_hit,
             },
         }
-    
+
     def to_json(self, redact_content: bool = False, indent: int = 2) -> str:
         """Export as JSON string."""
         return json.dumps(self.to_dict(redact_content), indent=indent)
-    
+
     def to_summary(self, redact_content: bool = False) -> str:
         """Generate human-readable summary."""
         lines = [
@@ -93,7 +91,7 @@ class TraceExport:
             self.query if not redact_content else "[REDACTED]",
             "",
             "## Answer",
-            (self.answer[:200] + "..." if len(self.answer) > 200 else self.answer) 
+            (self.answer[:200] + "..." if len(self.answer) > 200 else self.answer)
                 if not redact_content else "[REDACTED]",
             "",
             "## Metrics",
@@ -104,20 +102,20 @@ class TraceExport:
             "",
             "## Stages",
         ]
-        
+
         for stage in self.stages:
             name = stage.get("name", "unknown")
             duration = stage.get("duration_ms", 0)
             status = stage.get("status", "unknown")
             lines.append(f"- {name}: {duration:.0f}ms ({status})")
-        
+
         lines.extend([
             "",
             "## Models",
             f"- Planner: {self.model_ids.get('planner', 'N/A')}",
             f"- Generator: {self.model_ids.get('generator', 'N/A')}",
         ])
-        
+
         return "\n".join(lines)
 
 
@@ -125,7 +123,7 @@ def compute_corpus_hash(documents: list) -> str:
     """Compute hash of corpus for versioning."""
     if not documents:
         return "empty"
-    
+
     # Hash based on doc IDs and content hashes
     parts = []
     for doc in documents:
@@ -133,7 +131,7 @@ def compute_corpus_hash(documents: list) -> str:
         text = getattr(doc, 'text', None) or doc.get('text', '')
         text_hash = hashlib.md5(text[:1000].encode()).hexdigest()[:8]
         parts.append(f"{doc_id}:{text_hash}")
-    
+
     combined = "|".join(sorted(parts))
     return hashlib.sha256(combined.encode()).hexdigest()[:16]
 
@@ -149,7 +147,7 @@ def create_trace_export(
     documents: list = None,
 ) -> TraceExport:
     """Create enhanced trace export from query result.
-    
+
     Args:
         trace_id: Unique trace identifier
         query: Original query
@@ -159,7 +157,7 @@ def create_trace_export(
         model_ids: Model IDs used (planner, generator, etc.)
         chunks: Evidence chunks used
         documents: Corpus documents for hashing
-        
+
     Returns:
         TraceExport ready for serialization
     """
@@ -182,11 +180,11 @@ def create_trace_export(
                 "status": getattr(step, "status", "unknown"),
             })
             total_ms += getattr(step, "duration_ms", 0)
-    
+
     # Count citations in answer
     import re
     citations = len(set(re.findall(r'\[(\d+)\]', answer)))
-    
+
     return TraceExport(
         trace_id=trace_id,
         query=query,

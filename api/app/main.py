@@ -14,13 +14,22 @@ Environment variables:
 - AUTORAG_MAX_REQUEST_SIZE: Maximum request body size in bytes
 """
 
+import logging
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime
 
-from fastapi import FastAPI, Depends
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .services import get_container
+from .core.audit import AuditAction, AuditEntry, get_audit_log
+from .core.providers import close_shared_client
+from .core.security_middleware import (
+    configure_security,
+    get_allowed_origins,
+    is_exposed_mode,
+    verify_api_key,
+)
 from .routers import (
     artifact_routes,
     cache_routes,
@@ -28,31 +37,26 @@ from .routers import (
     documents,
     evaluation,
     health,
+    metrics_routes,
     monitoring,
     providers,
     query,
-    traces,
-    metrics_routes,
     ragfuzz_audit,
+    traces,
 )
-from .core.security_middleware import (
-    configure_security,
-    get_allowed_origins,
-    is_exposed_mode,
-    verify_api_key,
-)
-from .core.audit import get_audit_log, AuditAction, AuditEntry
-from datetime import datetime
+from .services import get_container
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager for startup and shutdown."""
     # Initialize services on startup
-    print("=" * 60)
-    print("JR AutoRAG API - Starting...")
-    print("=" * 60)
-    
+    logger.info("=" * 60)
+    logger.info("JR AutoRAG API - Starting...")
+    logger.info("=" * 60)
+
     # Log startup in audit log
     audit_log = get_audit_log()
     audit_log.log(AuditEntry(
@@ -60,34 +64,38 @@ async def lifespan(app: FastAPI):
         action=AuditAction.SYSTEM,
         details={"event": "startup", "version": app.version},
     ))
-    
+
     # Initialize service container
-    print("Initializing Application Services...")
+    logger.info("Initializing Application Services...")
     container = get_container()
-    print("Application Services Initialized.")
-    
+    logger.info("Application Services Initialized.")
+
     # Log security configuration
-    print("\nSecurity Configuration:")
-    print(f"  Allowed Origins: {get_allowed_origins()}")
-    print(f"  Exposed Mode: {is_exposed_mode()}")
-    print(f"  Auth Enabled: {os.environ.get('AUTORAG_AUTH_ENABLED', 'false')}")
-    print("")
-    
+    logger.info("Security Configuration:")
+    logger.info(f"  Allowed Origins: {get_allowed_origins()}")
+    logger.info(f"  Exposed Mode: {is_exposed_mode()}")
+    logger.info(f"  Auth Enabled: {os.environ.get('AUTORAG_AUTH_ENABLED', 'false')}")
+    logger.info("")
+
     yield
-    
+
     # Cleanup on shutdown
-    print("Shutting down Orchestrator...")
+    logger.info("Shutting down Orchestrator...")
     if container.orchestrator:
         await container.orchestrator.stop()
-    
+
+    # Close shared HTTP client
+    logger.info("Closing HTTP connection pool...")
+    await close_shared_client()
+
     # Log shutdown in audit log
     audit_log.log(AuditEntry(
         timestamp=datetime.utcnow(),
         action=AuditAction.SYSTEM,
         details={"event": "shutdown"},
     ))
-    
-    print("JR AutoRAG API - Shutdown complete.")
+
+    logger.info("JR AutoRAG API - Shutdown complete.")
 
 
 # Create FastAPI app

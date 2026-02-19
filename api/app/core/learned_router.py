@@ -10,12 +10,12 @@ This implements the "query-complexity routing" pattern from Adaptive-RAG
 
 from __future__ import annotations
 
-import re
 import json
-from dataclasses import dataclass, field
+import re
+from dataclasses import dataclass
 from enum import Enum
-from typing import Any
 from pathlib import Path
+from typing import Any
 
 
 class RouteDecision(str, Enum):
@@ -48,7 +48,7 @@ class RouterFeatures:
     list_signal: bool
     complexity_score: float = 0.0
     historical_success_rate: float = 0.5
-    
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for logging/storage."""
         return {
@@ -70,7 +70,7 @@ class RouterFeatures:
         }
 
 
-@dataclass 
+@dataclass
 class LearnedRouteResult:
     """Result from learned router."""
     decision: RouteDecision
@@ -96,17 +96,17 @@ class RoutingOutcome:
 
 class LearnedRouter:
     """Feature-based router that learns from historical data.
-    
+
     Uses handcrafted features with learned weights to route queries
     to optimal retrieval strategies. Logs outcomes for future training.
-    
+
     Key features extracted:
     - Query length and complexity
     - Question word types (what, how, why, etc.)
     - Entity and numeric presence
     - Signal patterns (comparison, procedural, factual, etc.)
     """
-    
+
     # Question word categories
     WH_WORDS = {
         'what': 'factual',
@@ -117,44 +117,44 @@ class LearnedRouter:
         'how': 'procedural',
         'which': 'selection',
     }
-    
+
     # Signal patterns
     COMPARISON_PATTERNS = [
         r'\bvs\.?\b', r'\bversus\b', r'\bcompare\b', r'\bdifference\b',
         r'\bbetter\b', r'\bworse\b', r'\bor\b.*\bor\b', r'\badvantages?\b',
         r'\bdisadvantages?\b', r'\bpros?\b.*\bcons?\b',
     ]
-    
+
     PROCEDURAL_PATTERNS = [
         r'\bhow to\b', r'\bsteps?\b', r'\bprocess\b', r'\bguide\b',
         r'\btutorial\b', r'\binstructions?\b', r'\bprocedure\b',
     ]
-    
+
     FACTUAL_PATTERNS = [
         r'^what is\b', r'^define\b', r'\bdefinition\b', r'\bmeaning\b',
         r'^who is\b', r'^where is\b', r'\bfact\b',
     ]
-    
+
     ANALYTICAL_PATTERNS = [
         r'\bwhy\b', r'\breason\b', r'\bcause\b', r'\bexplain\b',
         r'\banalyze\b', r'\bevaluate\b', r'\bimpact\b', r'\beffect\b',
     ]
-    
+
     AMBIGUITY_PATTERNS = [
         r'\bmight\b', r'\bcould\b', r'\bmaybe\b', r'\bpossibly\b',
         r'\bsometimes\b', r'\bperhaps\b', r'\bunclear\b',
     ]
-    
+
     TEMPORAL_PATTERNS = [
         r'\bwhen\b', r'\bdate\b', r'\byear\b', r'\btime\b',
         r'\brecent\b', r'\blatest\b', r'\bhistory\b', r'\bfuture\b',
     ]
-    
+
     LIST_PATTERNS = [
         r'\blist\b', r'\benumerate\b', r'\ball\b.*\b(ways|types|kinds)\b',
         r'\bexamples?\b', r'\btop \d+\b',
     ]
-    
+
     # Decision weights (would be learned in production)
     DECISION_WEIGHTS = {
         RouteDecision.NO_RETRIEVAL: {
@@ -181,20 +181,20 @@ class LearnedRouter:
             "overview": True,
         },
     }
-    
+
     def __init__(self, history_path: str | None = None):
         """Initialize router with optional history file.
-        
+
         Args:
             history_path: Path to save/load routing history for learning
         """
         self._history_path = Path(history_path) if history_path else None
         self._history: list[RoutingOutcome] = []
         self._compile_patterns()
-        
+
         if self._history_path and self._history_path.exists():
             self._load_history()
-    
+
     def _compile_patterns(self) -> None:
         """Compile regex patterns for efficiency."""
         self._comparison_re = [re.compile(p, re.I) for p in self.COMPARISON_PATTERNS]
@@ -204,15 +204,15 @@ class LearnedRouter:
         self._ambiguity_re = [re.compile(p, re.I) for p in self.AMBIGUITY_PATTERNS]
         self._temporal_re = [re.compile(p, re.I) for p in self.TEMPORAL_PATTERNS]
         self._list_re = [re.compile(p, re.I) for p in self.LIST_PATTERNS]
-    
+
     def _count_matches(self, patterns: list, text: str) -> int:
         """Count pattern matches in text."""
         return sum(1 for p in patterns if p.search(text))
-    
+
     def extract_features(self, query: str) -> RouterFeatures:
         """Extract comprehensive feature vector from query."""
         words = query.lower().split()
-        
+
         # Find WH word
         wh_word_type = None
         has_wh = False
@@ -222,13 +222,13 @@ class LearnedRouter:
                 has_wh = True
                 wh_word_type = self.WH_WORDS[clean_word]
                 break
-        
+
         # Count entities (capitalized words not at sentence start)
         entity_count = len(re.findall(r'(?<!^)(?<!\. )[A-Z][a-z]+', query))
-        
+
         # Count numbers
         numeric_count = len(re.findall(r'\b\d+[\d,\.]*\b', query))
-        
+
         # Detect signals
         comparison = self._count_matches(self._comparison_re, query) > 0
         procedural = self._count_matches(self._procedural_re, query) > 0
@@ -238,7 +238,7 @@ class LearnedRouter:
         temporal = self._count_matches(self._temporal_re, query) > 0
         list_signal = self._count_matches(self._list_re, query) > 0
         negation = bool(re.search(r'\b(not|no|never|without|except)\b', query, re.I))
-        
+
         # Compute complexity score
         complexity = 0.0
         complexity += min(len(words) / 20, 1.0) * 0.3  # Length factor
@@ -246,7 +246,7 @@ class LearnedRouter:
         complexity += (1 if analytical else 0) * 0.2
         complexity += min(entity_count / 3, 1.0) * 0.15
         complexity += (1 if list_signal else 0) * 0.15
-        
+
         return RouterFeatures(
             query_length=len(query),
             word_count=len(words),
@@ -264,24 +264,24 @@ class LearnedRouter:
             list_signal=list_signal,
             complexity_score=complexity,
         )
-    
+
     def route(self, query: str) -> LearnedRouteResult:
         """Route query to optimal retrieval strategy.
-        
+
         Args:
             query: User query to route
-            
+
         Returns:
             LearnedRouteResult with decision and parameters
         """
         features = self.extract_features(query)
-        
+
         # Decision logic based on features
         decision, confidence, reasoning = self._make_decision(features, query)
-        
+
         # Determine parameters based on decision
         suggested_k, use_rerank, max_iterations = self._get_parameters(decision, features)
-        
+
         return LearnedRouteResult(
             decision=decision,
             confidence=confidence,
@@ -291,95 +291,94 @@ class LearnedRouter:
             features=features,
             reasoning=reasoning,
         )
-    
+
     def _make_decision(
-        self, 
-        features: RouterFeatures, 
+        self,
+        features: RouterFeatures,
         query: str,
     ) -> tuple[RouteDecision, float, str]:
         """Make routing decision based on features."""
         query_lower = query.lower().strip()
-        
+
         # NO_RETRIEVAL: Simple greetings or meta-questions
         if features.word_count < 5 and not features.has_wh_word:
             greetings = ['hello', 'hi', 'hey', 'thanks', 'bye', 'help']
             if any(query_lower.startswith(g) for g in greetings):
                 return RouteDecision.NO_RETRIEVAL, 0.9, "Simple greeting detected"
-        
+
         # CLARIFY: Ambiguous or incomplete queries
         if features.ambiguity_signal or (features.word_count < 4 and not features.has_wh_word):
             return RouteDecision.CLARIFY, 0.7, "Query appears ambiguous or incomplete"
-        
+
         # ITERATIVE: Complex comparative or multi-aspect queries
         if features.comparison_signal:
             return RouteDecision.ITERATIVE, 0.85, "Comparison query requires multiple retrievals"
-        
+
         if features.complexity_score > 0.6:
             return RouteDecision.ITERATIVE, 0.75, f"High complexity score ({features.complexity_score:.2f})"
-        
+
         if features.list_signal and features.word_count > 10:
             return RouteDecision.ITERATIVE, 0.7, "List query with complexity"
-        
+
         # GRAPH: Entity-focused or relationship queries
-        if features.entity_count >= 2:
-            if 'relationship' in query_lower or 'between' in query_lower:
-                return RouteDecision.GRAPH, 0.8, "Entity relationship query"
-        
+        if features.entity_count >= 2 and ('relationship' in query_lower or 'between' in query_lower):
+            return RouteDecision.GRAPH, 0.8, "Entity relationship query"
+
         # RAPTOR: Hierarchical or overview queries
         hierarchical_words = ['overview', 'summary', 'section', 'chapter', 'outline']
         if any(w in query_lower for w in hierarchical_words):
             return RouteDecision.RAPTOR, 0.75, "Hierarchical/overview query"
-        
+
         # HYBRID_HEAVY: Queries needing precision
         if features.entity_count > 0 and features.factual_signal:
             return RouteDecision.HYBRID_HEAVY, 0.7, "Factual entity query needs precision"
-        
+
         # SINGLE: Default for straightforward queries
         return RouteDecision.SINGLE, 0.6, "Standard single-pass retrieval"
-    
+
     def _get_parameters(
-        self, 
-        decision: RouteDecision, 
+        self,
+        decision: RouteDecision,
         features: RouterFeatures,
     ) -> tuple[int, bool, int]:
         """Get retrieval parameters based on decision."""
         # Base parameters
         if decision == RouteDecision.NO_RETRIEVAL:
             return 0, False, 0
-        
+
         if decision == RouteDecision.CLARIFY:
             return 0, False, 0
-        
+
         if decision == RouteDecision.ITERATIVE:
             k = 8 if features.comparison_signal else 6
             return k, True, 3
-        
+
         if decision == RouteDecision.GRAPH:
             return 5, True, 2
-        
+
         if decision == RouteDecision.RAPTOR:
             return 5, False, 1
-        
+
         if decision == RouteDecision.HYBRID_HEAVY:
             return 10, True, 1
-        
+
         # SINGLE
         k = 5 if features.word_count < 10 else 7
         use_rerank = features.entity_count > 0
         return k, use_rerank, 1
-    
+
     def record_outcome(
-        self, 
+        self,
         query: str,
-        features: RouterFeatures, 
-        decision: RouteDecision, 
+        features: RouterFeatures,
+        decision: RouteDecision,
         success: bool,
         answer_quality: float = 0.5,
         latency_ms: float = 0.0,
         chunks_used: int = 0,
     ) -> None:
         """Record routing outcome for future learning.
-        
+
         Args:
             query: Original query
             features: Extracted features
@@ -399,16 +398,16 @@ class LearnedRouter:
             chunks_used=chunks_used,
         )
         self._history.append(outcome)
-        
+
         # Auto-save periodically
         if len(self._history) % 100 == 0:
             self._save_history()
-    
+
     def _save_history(self) -> None:
         """Save routing history to file."""
         if not self._history_path:
             return
-        
+
         data = []
         for outcome in self._history[-1000:]:  # Keep last 1000
             data.append({
@@ -420,44 +419,44 @@ class LearnedRouter:
                 "latency_ms": outcome.latency_ms,
                 "chunks_used": outcome.chunks_used,
             })
-        
+
         self._history_path.parent.mkdir(parents=True, exist_ok=True)
         with open(self._history_path, "w") as f:
             json.dump(data, f, indent=2)
-    
+
     def _load_history(self) -> None:
         """Load routing history from file."""
         if not self._history_path or not self._history_path.exists():
             return
-        
+
         try:
             with open(self._history_path) as f:
-                data = json.load(f)
+                json.load(f)
             # Convert to RoutingOutcome objects (simplified)
             self._history = []  # Start fresh, history used for stats only
         except Exception:
             pass
-    
+
     def get_stats(self) -> dict[str, Any]:
         """Get routing statistics."""
         if not self._history:
             return {"total": 0}
-        
+
         decision_counts: dict[str, int] = {}
         success_by_decision: dict[str, list[bool]] = {}
-        
+
         for outcome in self._history:
             dec = outcome.decision.value
             decision_counts[dec] = decision_counts.get(dec, 0) + 1
             if dec not in success_by_decision:
                 success_by_decision[dec] = []
             success_by_decision[dec].append(outcome.success)
-        
+
         success_rates = {
             dec: sum(successes) / len(successes)
             for dec, successes in success_by_decision.items()
         }
-        
+
         return {
             "total": len(self._history),
             "decision_counts": decision_counts,
@@ -467,7 +466,7 @@ class LearnedRouter:
 
 __all__ = [
     "RouteDecision",
-    "RouterFeatures", 
+    "RouterFeatures",
     "LearnedRouteResult",
     "RoutingOutcome",
     "LearnedRouter",

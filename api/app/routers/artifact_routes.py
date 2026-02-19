@@ -13,7 +13,7 @@ async def get_graph_data() -> dict:
     orchestrator = get_orchestrator()
     if orchestrator is None:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
-    
+
     return orchestrator.get_graph_data()
 
 
@@ -23,7 +23,7 @@ async def get_raptor_data() -> dict:
     orchestrator = get_orchestrator()
     if orchestrator is None:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
-    
+
     return orchestrator.get_raptor_data()
 
 
@@ -33,5 +33,5 @@ async def trigger_build(force: bool = False) -> dict:
     orchestrator = get_orchestrator()
     if orchestrator is None:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
-    
+
     return orchestrator.trigger_artifact_build(force=force)

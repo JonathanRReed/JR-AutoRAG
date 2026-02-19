@@ -49,7 +49,7 @@ class MultiGranularityConfig:
     enable_paragraph: bool = True
     enable_section: bool = True
     enable_document: bool = True
-    
+
     # Size thresholds
     min_sentence_chars: int = 20
     max_sentence_chars: int = 500
@@ -57,23 +57,23 @@ class MultiGranularityConfig:
     max_paragraph_chars: int = 2000
     min_section_chars: int = 500
     max_section_chars: int = 10000
-    
+
     # Document summary settings
     document_summary_max_chars: int = 1000
 
 
 class MultiGranularityIndexer:
     """Index documents at multiple granularity levels.
-    
+
     Creates a hierarchy of chunks:
     - Document summary
     - Section summaries (based on headers)
     - Paragraph chunks (natural paragraph breaks)
     - Sentence chunks (for precise matching)
-    
+
     Each chunk links to its parent and children for traversal.
     """
-    
+
     def __init__(self, config: MultiGranularityConfig | None = None) -> None:
         """Initialize indexer with configuration."""
         self.config = config or MultiGranularityConfig()
@@ -86,7 +86,7 @@ class MultiGranularityIndexer:
 
     def _split_sentences(self, text: str) -> list[tuple[str, int, int]]:
         """Split text into sentences with positions.
-        
+
         Returns list of (sentence, start, end) tuples.
         """
         import re
@@ -99,7 +99,7 @@ class MultiGranularityIndexer:
 
     def _split_paragraphs(self, text: str) -> list[tuple[str, int, int]]:
         """Split text into paragraphs with positions.
-        
+
         Returns list of (paragraph, start, end) tuples.
         """
         import re
@@ -112,42 +112,39 @@ class MultiGranularityIndexer:
 
     def _split_sections(self, text: str) -> list[tuple[str, int, int, str]]:
         """Split text into sections based on headers.
-        
+
         Returns list of (section_text, start, end, header) tuples.
         """
         import re
         sections = []
-        
+
         # Find all headers
         headers = list(re.finditer(r'^(#{1,6})\s+(.+?)$', text, re.MULTILINE))
-        
+
         if not headers:
             # No headers - treat entire text as one section
             if len(text) >= self.config.min_section_chars:
                 sections.append((text, 0, len(text), ""))
             return sections
-        
+
         # Create sections between headers
         for i, header_match in enumerate(headers):
             header_text = header_match.group(2).strip()
             section_start = header_match.start()
-            
+
             # Section ends at next header or end of text
-            if i < len(headers) - 1:
-                section_end = headers[i + 1].start()
-            else:
-                section_end = len(text)
-            
+            section_end = headers[i + 1].start() if i < len(headers) - 1 else len(text)
+
             section_text = text[section_start:section_end].strip()
-            
+
             if self.config.min_section_chars <= len(section_text) <= self.config.max_section_chars:
                 sections.append((section_text, section_start, section_end, header_text))
-        
+
         return sections
 
     def _create_document_summary(self, text: str, title: str = "") -> GranularChunk:
         """Create a document-level summary chunk.
-        
+
         Takes the beginning of the document as a summary.
         """
         summary_text = text[:self.config.document_summary_max_chars]
@@ -156,11 +153,11 @@ class MultiGranularityIndexer:
             last_period = summary_text.rfind('.')
             if last_period > self.config.document_summary_max_chars // 2:
                 summary_text = summary_text[:last_period + 1]
-        
+
         # Prepend title if available
         if title:
             summary_text = f"Document: {title}\n\n{summary_text}"
-        
+
         return GranularChunk(
             text=summary_text,
             level=GranularityLevel.DOCUMENT,
@@ -174,26 +171,26 @@ class MultiGranularityIndexer:
         self,
         text: str,
         title: str = "",
-        existing_chunks: list["Chunk"] | None = None,
+        existing_chunks: list[Chunk] | None = None,
     ) -> list[GranularChunk]:
         """Create multi-granularity index for a document.
-        
+
         Args:
             text: Full document text
             title: Optional document title
             existing_chunks: Optional pre-chunked paragraphs
-            
+
         Returns:
             List of GranularChunks at all enabled levels
         """
         all_chunks: list[GranularChunk] = []
-        
+
         # Document level
         doc_chunk = None
         if self.config.enable_document:
             doc_chunk = self._create_document_summary(text, title)
             all_chunks.append(doc_chunk)
-        
+
         # Section level
         section_chunks: list[GranularChunk] = []
         if self.config.enable_section:
@@ -211,11 +208,11 @@ class MultiGranularityIndexer:
                 )
                 section_chunks.append(chunk)
                 all_chunks.append(chunk)
-            
+
             # Link document to sections
             if doc_chunk:
                 doc_chunk.children_ids = [s.chunk_id for s in section_chunks]
-        
+
         # Paragraph level
         paragraph_chunks: list[GranularChunk] = []
         if self.config.enable_paragraph:
@@ -227,7 +224,7 @@ class MultiGranularityIndexer:
                     if section.start_char <= start < section.end_char:
                         parent_section = section
                         break
-                
+
                 chunk = GranularChunk(
                     text=para_text,
                     level=GranularityLevel.PARAGRAPH,
@@ -239,11 +236,11 @@ class MultiGranularityIndexer:
                 )
                 paragraph_chunks.append(chunk)
                 all_chunks.append(chunk)
-                
+
                 # Link parent to child
                 if parent_section:
                     parent_section.children_ids.append(chunk.chunk_id)
-        
+
         # Sentence level
         if self.config.enable_sentence:
             sentences = self._split_sentences(text)
@@ -254,7 +251,7 @@ class MultiGranularityIndexer:
                     if para.start_char <= start < para.end_char:
                         parent_para = para
                         break
-                
+
                 chunk = GranularChunk(
                     text=sent_text,
                     level=GranularityLevel.SENTENCE,
@@ -265,11 +262,11 @@ class MultiGranularityIndexer:
                     section_path=parent_para.section_path if parent_para else [],
                 )
                 all_chunks.append(chunk)
-                
+
                 # Link parent to child
                 if parent_para:
                     parent_para.children_ids.append(chunk.chunk_id)
-        
+
         return all_chunks
 
     def get_chunks_at_level(
@@ -288,13 +285,13 @@ class MultiGranularityIndexer:
         """Get the chain of parent chunks up to document level."""
         chain = []
         chunk_map = {c.chunk_id: c for c in all_chunks}
-        
+
         current = chunk
         while current.parent_id and current.parent_id in chunk_map:
             parent = chunk_map[current.parent_id]
             chain.append(parent)
             current = parent
-        
+
         return chain
 
 

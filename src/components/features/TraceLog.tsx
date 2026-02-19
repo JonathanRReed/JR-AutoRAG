@@ -94,6 +94,8 @@ function TraceCard({ trace, formatNumber }: { trace: TraceOut; formatNumber: (va
                 <button
                     type="button"
                     onClick={() => setExpanded(!expanded)}
+                    aria-expanded={expanded}
+                    aria-controls={`trace-details-${trace.id}`}
                     className="shrink-0 flex items-center gap-1 rounded-md border border-border/60 px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-muted/40 transition-colors"
                 >
                     {expanded ? (
@@ -301,15 +303,19 @@ export function TraceLog({
                         <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                         <input
                             type="text"
+                            id="trace-search"
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
                             placeholder="Search traces..."
+                            aria-label="Search traces"
                             className="w-full rounded-lg border border-border/60 bg-card pl-9 pr-4 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
                         />
                     </div>
                     <div className="flex items-center gap-2">
                         <Filter className="h-4 w-4 text-muted-foreground" />
+                        <label htmlFor="quality-filter" className="sr-only">Filter by quality</label>
                         <select
+                            id="quality-filter"
                             value={filterStatus}
                             onChange={(e) => setFilterStatus(e.target.value as typeof filterStatus)}
                             className="rounded-lg border border-border/60 bg-card px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"

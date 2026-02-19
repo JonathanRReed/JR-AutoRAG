@@ -46,7 +46,7 @@ class EvaluationScore:
     citation_accuracy: float
     overall: float
     explanations: dict[str, str]
-    
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "faithfulness": self.faithfulness,
@@ -61,7 +61,7 @@ class EvaluationScore:
 
 class HeuristicEvaluator:
     """Heuristic-based evaluation (no LLM required)."""
-    
+
     def evaluate_faithfulness(
         self,
         answer: str,
@@ -69,15 +69,15 @@ class HeuristicEvaluator:
     ) -> tuple[float, str]:
         """Check if answer is grounded in context."""
         # Extract key statements from answer
-        answer_sentences = re.split(r'[.!?]', answer)
+        re.split(r'[.!?]', answer)
         answer_words = set(re.findall(r'\b[a-z]{4,}\b', answer.lower()))
         context_words = set(re.findall(r'\b[a-z]{4,}\b', context.lower()))
-        
+
         if not answer_words:
             return 1.0, "Empty answer"
-        
+
         overlap = len(answer_words & context_words) / len(answer_words)
-        
+
         if overlap > 0.7:
             return 0.9, "High overlap with context"
         elif overlap > 0.5:
@@ -86,7 +86,7 @@ class HeuristicEvaluator:
             return 0.5, "Low overlap - may include external knowledge"
         else:
             return 0.3, "Very low overlap - possibly hallucinated"
-    
+
     def evaluate_relevance(
         self,
         answer: str,
@@ -95,12 +95,12 @@ class HeuristicEvaluator:
         """Check if answer is relevant to query."""
         query_words = set(re.findall(r'\b[a-z]{4,}\b', query.lower()))
         answer_words = set(re.findall(r'\b[a-z]{4,}\b', answer.lower()))
-        
+
         if not query_words:
             return 1.0, "Empty query"
-        
+
         overlap = len(query_words & answer_words) / len(query_words)
-        
+
         if overlap > 0.6:
             return 0.9, "Answer addresses query terms"
         elif overlap > 0.4:
@@ -109,7 +109,7 @@ class HeuristicEvaluator:
             return 0.5, "Answer has limited relevance"
         else:
             return 0.3, "Answer may not address the query"
-    
+
     def evaluate_completeness(
         self,
         answer: str,
@@ -118,17 +118,17 @@ class HeuristicEvaluator:
         """Check if answer fully addresses the query."""
         # Check answer length
         word_count = len(answer.split())
-        
+
         # Check for question words addressed
-        question_words = re.findall(r'\b(what|why|how|when|where|who|which)\b', query.lower())
-        
+        re.findall(r'\b(what|why|how|when|where|who|which)\b', query.lower())
+
         if word_count < 20:
             return 0.4, "Answer may be too brief"
         elif word_count > 500:
             return 0.8, "Comprehensive answer"
         else:
             return 0.7, "Reasonable answer length"
-    
+
     def evaluate_coherence(
         self,
         answer: str,
@@ -136,27 +136,27 @@ class HeuristicEvaluator:
         """Check if answer is well-structured."""
         sentences = re.split(r'[.!?]', answer)
         sentences = [s.strip() for s in sentences if s.strip()]
-        
+
         if not sentences:
             return 0.5, "Could not parse sentences"
-        
+
         # Check basic structure
         has_structure = bool(re.search(r'\n|^\d+\.|^-\s', answer, re.MULTILINE))
         avg_sentence_len = sum(len(s.split()) for s in sentences) / len(sentences)
-        
+
         score = 0.6
         explanation_parts = []
-        
+
         if has_structure:
             score += 0.2
             explanation_parts.append("has structure")
-        
+
         if 10 <= avg_sentence_len <= 30:
             score += 0.2
             explanation_parts.append("good sentence length")
-        
+
         return min(score, 1.0), ", ".join(explanation_parts) or "basic coherence"
-    
+
     def evaluate_citations(
         self,
         answer: str,
@@ -164,25 +164,25 @@ class HeuristicEvaluator:
     ) -> tuple[float, str]:
         """Check citation usage."""
         citations = re.findall(r'\[(\d+)\]', answer)
-        unique_citations = set(int(c) for c in citations)
-        
+        unique_citations = {int(c) for c in citations}
+
         if num_sources == 0:
             return 1.0, "No sources to cite"
-        
+
         if not citations:
             return 0.3, "No citations used"
-        
+
         # Check if citations are valid (within source range)
         valid = all(1 <= c <= num_sources for c in unique_citations)
         coverage = len(unique_citations) / num_sources
-        
+
         if not valid:
             return 0.4, "Some citations reference non-existent sources"
         elif coverage > 0.5:
             return 0.9, "Good citation coverage"
         else:
             return 0.7, "Some sources cited"
-    
+
     def evaluate(
         self,
         answer: str,
@@ -196,7 +196,7 @@ class HeuristicEvaluator:
         comp_score, comp_exp = self.evaluate_completeness(answer, query)
         coh_score, coh_exp = self.evaluate_coherence(answer)
         cit_score, cit_exp = self.evaluate_citations(answer, num_sources)
-        
+
         # Weighted overall score
         overall = (
             faith_score * 0.3 +
@@ -205,7 +205,7 @@ class HeuristicEvaluator:
             coh_score * 0.1 +
             cit_score * 0.1
         )
-        
+
         return EvaluationScore(
             faithfulness=faith_score,
             relevance=rel_score,
@@ -225,7 +225,7 @@ class HeuristicEvaluator:
 
 class LLMJudge:
     """LLM-based evaluation (when provider available)."""
-    
+
     EVALUATION_PROMPT = """Evaluate the following answer based on the given criteria.
 
 Query: {query}
@@ -251,14 +251,14 @@ COHERENCE: [score]/10 - [brief explanation]
 CITATION_ACCURACY: [score]/10 - [brief explanation]
 OVERALL: [score]/10"""
 
-    def __init__(self, provider: "LLMProvider | None" = None) -> None:
+    def __init__(self, provider: LLMProvider | None = None) -> None:
         self._provider = provider
         self._heuristic = HeuristicEvaluator()
-    
-    def set_provider(self, provider: "LLMProvider") -> None:
+
+    def set_provider(self, provider: LLMProvider) -> None:
         """Set or update the LLM provider."""
         self._provider = provider
-    
+
     async def evaluate_async(
         self,
         answer: str,
@@ -269,13 +269,13 @@ OVERALL: [score]/10"""
         """Evaluate using LLM if available, else heuristics."""
         if not self._provider:
             return self._heuristic.evaluate(answer, query, context, num_sources)
-        
+
         prompt = self.EVALUATION_PROMPT.format(
             query=query,
             context=context[:2000],  # Limit context length
             answer=answer,
         )
-        
+
         try:
             response = await self._provider.chat([
                 {"role": "system", "content": "You are an expert evaluator of RAG system answers."},
@@ -285,7 +285,7 @@ OVERALL: [score]/10"""
         except Exception:
             # Fallback to heuristics
             return self._heuristic.evaluate(answer, query, context, num_sources)
-    
+
     def evaluate(
         self,
         answer: str,
@@ -295,12 +295,12 @@ OVERALL: [score]/10"""
     ) -> EvaluationScore:
         """Synchronous evaluation using heuristics only."""
         return self._heuristic.evaluate(answer, query, context, num_sources)
-    
+
     def _parse_response(self, response: str) -> EvaluationScore:
         """Parse LLM evaluation response."""
         scores = {}
         explanations = {}
-        
+
         patterns = {
             "faithfulness": r"FAITHFULNESS:\s*(\d+(?:\.\d+)?)/10\s*-?\s*(.+?)(?:\n|$)",
             "relevance": r"RELEVANCE:\s*(\d+(?:\.\d+)?)/10\s*-?\s*(.+?)(?:\n|$)",
@@ -308,7 +308,7 @@ OVERALL: [score]/10"""
             "coherence": r"COHERENCE:\s*(\d+(?:\.\d+)?)/10\s*-?\s*(.+?)(?:\n|$)",
             "citation_accuracy": r"CITATION_ACCURACY:\s*(\d+(?:\.\d+)?)/10\s*-?\s*(.+?)(?:\n|$)",
         }
-        
+
         for key, pattern in patterns.items():
             match = re.search(pattern, response, re.IGNORECASE)
             if match:
@@ -317,11 +317,11 @@ OVERALL: [score]/10"""
             else:
                 scores[key] = 0.5
                 explanations[key] = "Could not parse"
-        
+
         # Parse overall
         overall_match = re.search(r"OVERALL:\s*(\d+(?:\.\d+)?)/10", response, re.IGNORECASE)
         overall = float(overall_match.group(1)) / 10 if overall_match else sum(scores.values()) / len(scores)
-        
+
         return EvaluationScore(
             faithfulness=scores["faithfulness"],
             relevance=scores["relevance"],

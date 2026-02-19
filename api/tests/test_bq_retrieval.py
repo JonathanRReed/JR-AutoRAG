@@ -8,19 +8,18 @@ Tests cover:
 - BQRetrievalService initialization and configuration
 """
 
-import pytest
-from unittest.mock import MagicMock, patch
-import numpy as np
+from unittest.mock import MagicMock
 
-from app.core.binary_quantization import BQConfig
-from app.core.milvus_store import MilvusConfig
+import numpy as np
+import pytest
+
 from app.core.bq_retrieval import (
-    RetrievalModeV2,
-    RetrievalTimings,
-    RetrievalDebug,
-    RetrievedChunk,
     BQRetrievalConfig,
     BQRetrievalService,
+    RetrievalDebug,
+    RetrievalModeV2,
+    RetrievalTimings,
+    RetrievedChunk,
     get_bq_retrieval_service,
 )
 
@@ -177,7 +176,7 @@ class TestBQRetrievalService:
     def test_init_with_float32_engine(self):
         mock_engine = MagicMock()
         mock_engine._reranker = MagicMock()
-        
+
         service = BQRetrievalService(float32_engine=mock_engine)
         assert service._float32_engine is mock_engine
         assert service._reranker is mock_engine._reranker
@@ -185,7 +184,7 @@ class TestBQRetrievalService:
     def test_get_index_stats_empty(self):
         service = BQRetrievalService()
         stats = service.get_index_stats()
-        
+
         # No stores initialized, should return empty dict
         assert isinstance(stats, dict)
 
@@ -198,7 +197,7 @@ class TestBQRetrievalServiceWithMockEngine:
         engine._embedder.encode.return_value = np.random.randn(768)
         engine._reranker = None
         engine._chunks = []
-        
+
         # Mock retrieve method
         mock_result = MagicMock()
         mock_result.chunk_id = "c1"
@@ -211,7 +210,7 @@ class TestBQRetrievalServiceWithMockEngine:
         mock_result.start_char = 0
         mock_result.end_char = 100
         engine.retrieve.return_value = [mock_result]
-        
+
         return engine
 
     def test_retrieve_float32_mode(self, mock_engine):
@@ -220,9 +219,9 @@ class TestBQRetrievalServiceWithMockEngine:
             config=config,
             float32_engine=mock_engine,
         )
-        
+
         chunks, debug = service.retrieve("test query", mode="float32")
-        
+
         assert debug.mode == "float32"
         assert len(chunks) == 1
         assert chunks[0].chunk_id == "c1"
@@ -234,9 +233,9 @@ class TestBQRetrievalServiceWithMockEngine:
             config=config,
             float32_engine=mock_engine,
         )
-        
+
         chunks, debug = service.retrieve("test query", k=10, mode="float32")
-        
+
         assert debug.top_k == 10
 
 

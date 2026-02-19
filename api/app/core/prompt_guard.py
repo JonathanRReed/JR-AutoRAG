@@ -12,9 +12,8 @@ from __future__ import annotations
 import logging
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable
 
 # Configure logging for injection attempts
 injection_logger = logging.getLogger("prompt_injection")
@@ -39,7 +38,7 @@ class InjectionAttempt:
     threat_level: ThreatLevel
     sanitized_text: str
     source: str = "unknown"
-    
+
     def to_dict(self) -> dict:
         return {
             "timestamp": self.timestamp,
@@ -56,58 +55,58 @@ class InjectionAttempt:
 
 INJECTION_PATTERNS: list[tuple[str, ThreatLevel, str]] = [
     # Direct instruction override attempts
-    (r"ignore\s+(all\s+)?(previous|prior|above)\s+(instructions?|prompts?|rules?)", 
+    (r"ignore\s+(all\s+)?(previous|prior|above)\s+(instructions?|prompts?|rules?)",
      ThreatLevel.CRITICAL, "instruction_override"),
-    (r"disregard\s+(all\s+)?(previous|prior)\s+(instructions?|context)", 
+    (r"disregard\s+(all\s+)?(previous|prior)\s+(instructions?|context)",
      ThreatLevel.CRITICAL, "instruction_override"),
-    (r"forget\s+(everything|all)\s+(you|i)\s+(told|said)", 
+    (r"forget\s+(everything|all)\s+(you|i)\s+(told|said)",
      ThreatLevel.CRITICAL, "instruction_override"),
-    
+
     # Role/persona hijacking
-    (r"you\s+are\s+(now|actually)\s+a?\s*(different|new|evil|bad)", 
+    (r"you\s+are\s+(now|actually)\s+a?\s*(different|new|evil|bad)",
      ThreatLevel.HIGH, "role_hijacking"),
-    (r"pretend\s+(to\s+be|you\'?re)\s+a?\s*(hacker|admin|root|system)", 
+    (r"pretend\s+(to\s+be|you\'?re)\s+a?\s*(hacker|admin|root|system)",
      ThreatLevel.HIGH, "role_hijacking"),
-    (r"act\s+as\s+(if\s+you\s+(are|were)|a)\s*(malicious|evil)", 
+    (r"act\s+as\s+(if\s+you\s+(are|were)|a)\s*(malicious|evil)",
      ThreatLevel.HIGH, "role_hijacking"),
-    (r"you\s+must\s+(now\s+)?obey\s+me", 
+    (r"you\s+must\s+(now\s+)?obey\s+me",
      ThreatLevel.HIGH, "role_hijacking"),
-    
+
     # System prompt extraction
-    (r"(reveal|show|tell|output|print)\s+(me\s+)?(your|the|system)\s*(prompt|instructions?|rules?)", 
+    (r"(reveal|show|tell|output|print)\s+(me\s+)?(your|the|system)\s*(prompt|instructions?|rules?)",
      ThreatLevel.HIGH, "system_extraction"),
-    (r"what\s+(are|is)\s+your\s+(original|system|base)\s*(prompt|instructions?)", 
+    (r"what\s+(are|is)\s+your\s+(original|system|base)\s*(prompt|instructions?)",
      ThreatLevel.MEDIUM, "system_extraction"),
-    
+
     # Delimiter/format exploitation
-    (r"\[system\]|\[user\]|\[assistant\]|<\|im_start\|>|<\|im_end\|>", 
+    (r"\[system\]|\[user\]|\[assistant\]|<\|im_start\|>|<\|im_end\|>",
      ThreatLevel.HIGH, "delimiter_injection"),
-    (r"###\s*(system|instruction|prompt)|```\s*system", 
+    (r"###\s*(system|instruction|prompt)|```\s*system",
      ThreatLevel.MEDIUM, "delimiter_injection"),
-    
+
     # Code execution attempts
-    (r"(exec|eval|import|subprocess|os\.system|__import__)\s*\(", 
+    (r"(exec|eval|import|subprocess|os\.system|__import__)\s*\(",
      ThreatLevel.CRITICAL, "code_execution"),
-    (r"<script>|javascript:|onclick=|onerror=", 
+    (r"<script>|javascript:|onclick=|onerror=",
      ThreatLevel.HIGH, "code_execution"),
-    
+
     # Data exfiltration
-    (r"(send|post|upload|exfiltrate)\s+(to|data|the)\s*(server|url|endpoint)", 
+    (r"(send|post|upload|exfiltrate)\s+(to|data|the)\s*(server|url|endpoint)",
      ThreatLevel.HIGH, "data_exfiltration"),
-    (r"curl\s+|wget\s+|http[s]?://\S+\?", 
+    (r"curl\s+|wget\s+|http[s]?://\S+\?",
      ThreatLevel.MEDIUM, "data_exfiltration"),
-    
+
     # Jailbreak keywords
-    (r"\bdan\s*mode\b|\bdev\s*mode\b|\bunlocked\s*mode\b", 
+    (r"\bdan\s*mode\b|\bdev\s*mode\b|\bunlocked\s*mode\b",
      ThreatLevel.HIGH, "jailbreak"),
-    (r"jail\s*break|bypass\s+(safety|filter|restriction)", 
+    (r"jail\s*break|bypass\s+(safety|filter|restriction)",
      ThreatLevel.HIGH, "jailbreak"),
 ]
 
 
 class PromptGuard:
     """Main class for prompt injection defense."""
-    
+
     def __init__(
         self,
         patterns: list[tuple[str, ThreatLevel, str]] | None = None,
@@ -119,7 +118,7 @@ class PromptGuard:
         self._log_attempts = log_attempts
         self._block_threshold = block_threshold
         self._attempt_log: list[InjectionAttempt] = []
-        
+
         # Compile patterns
         for pattern, level, name in self._patterns:
             try:
@@ -127,39 +126,39 @@ class PromptGuard:
                 self._compiled_patterns.append((compiled, level, name))
             except re.error as e:
                 print(f"Warning: Invalid injection pattern '{name}': {e}")
-        
+
     def detect(self, text: str) -> list[tuple[str, ThreatLevel, str]]:
         """Detect potential injection attempts in text.
-        
+
         Returns list of (matched_text, threat_level, pattern_name) tuples.
         """
         detections: list[tuple[str, ThreatLevel, str]] = []
-        
+
         for compiled, level, name in self._compiled_patterns:
             matches = compiled.findall(text)
             for match in matches:
                 matched_str = match if isinstance(match, str) else match[0] if match else ""
                 detections.append((matched_str, level, name))
-        
+
         return detections
-    
+
     def get_threat_level(self, text: str) -> ThreatLevel:
         """Get the highest threat level detected in text."""
         detections = self.detect(text)
         if not detections:
             return ThreatLevel.NONE
-        
+
         # Return highest threat level
-        level_order = [ThreatLevel.NONE, ThreatLevel.LOW, ThreatLevel.MEDIUM, 
+        level_order = [ThreatLevel.NONE, ThreatLevel.LOW, ThreatLevel.MEDIUM,
                        ThreatLevel.HIGH, ThreatLevel.CRITICAL]
         max_level = ThreatLevel.NONE
-        
+
         for _, level, _ in detections:
             if level_order.index(level) > level_order.index(max_level):
                 max_level = level
-        
+
         return max_level
-    
+
     def sanitize(
         self,
         text: str,
@@ -167,15 +166,15 @@ class PromptGuard:
         source: str = "unknown",
     ) -> tuple[str, list[InjectionAttempt]]:
         """Sanitize text by removing/replacing detected injections.
-        
+
         Returns (sanitized_text, list_of_attempts).
         """
         sanitized = text
         attempts: list[InjectionAttempt] = []
-        
+
         for compiled, level, name in self._compiled_patterns:
             matches = list(compiled.finditer(sanitized))
-            for match in matches:
+            for _match in matches:
                 attempt = InjectionAttempt(
                     timestamp=time.time(),
                     input_text=text,
@@ -185,36 +184,36 @@ class PromptGuard:
                     source=source,
                 )
                 attempts.append(attempt)
-                
+
                 if self._log_attempts:
                     injection_logger.warning(
                         f"Injection attempt detected: pattern={name}, "
                         f"level={level.value}, source={source}"
                     )
-            
+
             # Replace all matches
             sanitized = compiled.sub(replacement, sanitized)
-        
+
         # Update sanitized text in attempts
         for attempt in attempts:
             attempt.sanitized_text = sanitized
-        
+
         # Store in log
         self._attempt_log.extend(attempts)
-        
+
         return sanitized, attempts
-    
+
     def should_block(self, text: str) -> bool:
         """Check if input should be blocked based on threat level."""
         level = self.get_threat_level(text)
-        level_order = [ThreatLevel.NONE, ThreatLevel.LOW, ThreatLevel.MEDIUM, 
+        level_order = [ThreatLevel.NONE, ThreatLevel.LOW, ThreatLevel.MEDIUM,
                        ThreatLevel.HIGH, ThreatLevel.CRITICAL]
         return level_order.index(level) >= level_order.index(self._block_threshold)
-    
+
     def get_attempt_log(self, limit: int = 100) -> list[dict]:
         """Get recent injection attempts."""
         return [a.to_dict() for a in self._attempt_log[-limit:]]
-    
+
     def clear_log(self) -> None:
         """Clear the attempt log."""
         self._attempt_log.clear()
@@ -302,17 +301,17 @@ def get_policy_prompt(
 ) -> str:
     """Build a combined policy prompt for generation."""
     parts = []
-    
+
     if include_safety:
         parts.append(SAFETY_POLICY_PROMPT)
-    
+
     if include_citation:
         parts.append(CITATION_POLICY_PROMPT)
-    
+
     if custom_policies:
         for policy in custom_policies:
             parts.append(policy)
-    
+
     return "\n".join(parts)
 
 
@@ -337,15 +336,15 @@ def wrap_ingested_content(
     source_id: str,
 ) -> str:
     """Wrap ingested content with delimiters to treat as data, not instructions.
-    
+
     This prevents indirect prompt injection by clearly marking content boundaries.
     Any instruction-like text within these delimiters should be treated as
     document content, NOT as instructions to the model.
-    
+
     Args:
         content: The document content to wrap
         source_id: Identifier for the source document
-        
+
     Returns:
         Content wrapped with clear boundary markers
     """
@@ -360,45 +359,45 @@ def sanitize_at_ingest(
     wrap_delimiters: bool = True,
 ) -> tuple[str, list[InjectionAttempt]]:
     """Sanitize content at ingestion time for prompt injection.
-    
+
     Applies both:
     1. Pattern-based sanitization of known injection patterns
     2. Delimiter wrapping to mark content as data (if enabled)
-    
+
     Args:
         content: Document content to sanitize
         source: Source identifier for logging
         wrap_delimiters: Whether to wrap with boundary markers
-        
+
     Returns:
         Tuple of (sanitized_content, list_of_attempts)
     """
     guard = get_prompt_guard()
     sanitized, attempts = guard.sanitize(content, source=source)
-    
+
     if wrap_delimiters:
         sanitized = wrap_ingested_content(sanitized, source)
-    
+
     return sanitized, attempts
 
 
 def get_ingestion_warning(content: str) -> str | None:
     """Check if content contains potential injection patterns without sanitizing.
-    
+
     Useful for UI warnings before ingestion.
-    
+
     Returns:
         Warning message if threats detected, None otherwise
     """
     guard = get_prompt_guard()
     threat_level = guard.get_threat_level(content)
-    
+
     if threat_level == ThreatLevel.NONE:
         return None
-    
+
     detections = guard.detect(content)
-    pattern_names = set(name for _, _, name in detections)
-    
+    pattern_names = {name for _, _, name in detections}
+
     return (
         f"⚠️ This document may contain prompt injection attempts. "
         f"Detected patterns: {', '.join(pattern_names)}. "

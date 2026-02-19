@@ -21,7 +21,12 @@ select = [
 ignore = [
   "E501",  # line too long (handled by formatter)
   "B008",  # function calls in argument defaults (standard FastAPI pattern)
+  "B904",  # raise-from (noisy in internal exception handling)
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]  # intentional public API re-exports
+"tests/*" = ["F841"]  # unused variables common in test stubs
 
 [tool.ruff.lint.isort]
 known-first-party = ["app"]
@@ -35,4 +40,4 @@ reportMissingTypeStubs = false
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-addopts = "-v --tb=short"
+addopts = "-v --tb=short --cov=app --cov-report=term-missing --cov-fail-under=60"

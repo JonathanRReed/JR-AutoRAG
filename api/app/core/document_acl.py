@@ -12,12 +12,12 @@ This ensures users only see documents they're authorized to access.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional, TYPE_CHECKING
-import logging
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .gatherer import EvidenceChunk
@@ -53,12 +53,12 @@ class DocumentACL:
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
     metadata: dict[str, Any] = field(default_factory=dict)
-    
+
     @property
     def is_public(self) -> bool:
         """Check if document is publicly readable."""
         return "*" in self.readers
-    
+
     def can_read(self, user_id: str) -> bool:
         """Check if user can read this document."""
         if self.is_public:
@@ -66,25 +66,25 @@ class DocumentACL:
         if user_id == self.owner:
             return True
         return user_id in self.readers or user_id in self.writers
-    
+
     def can_write(self, user_id: str) -> bool:
         """Check if user can modify this document."""
         if user_id == self.owner:
             return True
         return user_id in self.writers
-    
+
     def add_reader(self, user_id: str) -> None:
         """Add a reader."""
         if user_id not in self.readers:
             self.readers.append(user_id)
             self.updated_at = datetime.utcnow()
-    
+
     def add_writer(self, user_id: str) -> None:
         """Add a writer (writers can also read)."""
         if user_id not in self.writers:
             self.writers.append(user_id)
             self.updated_at = datetime.utcnow()
-    
+
     def remove_reader(self, user_id: str) -> bool:
         """Remove a reader."""
         if user_id in self.readers:
@@ -92,7 +92,7 @@ class DocumentACL:
             self.updated_at = datetime.utcnow()
             return True
         return False
-    
+
     def remove_writer(self, user_id: str) -> bool:
         """Remove a writer."""
         if user_id in self.writers:
@@ -100,18 +100,18 @@ class DocumentACL:
             self.updated_at = datetime.utcnow()
             return True
         return False
-    
+
     def make_public(self) -> None:
         """Make document publicly readable."""
         if "*" not in self.readers:
             self.readers.append("*")
             self.updated_at = datetime.utcnow()
-    
+
     def make_private(self) -> None:
         """Make document private (owner-only)."""
         self.readers = [r for r in self.readers if r != "*"]
         self.updated_at = datetime.utcnow()
-    
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "document_id": self.document_id,
@@ -123,9 +123,9 @@ class DocumentACL:
             "is_public": self.is_public,
             "metadata": self.metadata,
         }
-    
+
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "DocumentACL":
+    def from_dict(cls, data: dict[str, Any]) -> DocumentACL:
         return cls(
             document_id=data["document_id"],
             owner=data["owner"],
@@ -135,18 +135,18 @@ class DocumentACL:
             updated_at=datetime.fromisoformat(data["updated_at"]) if "updated_at" in data else datetime.utcnow(),
             metadata=data.get("metadata", {}),
         )
-    
+
     @classmethod
-    def create_public(cls, document_id: str, owner: str) -> "DocumentACL":
+    def create_public(cls, document_id: str, owner: str) -> DocumentACL:
         """Create a public document ACL."""
         return cls(
             document_id=document_id,
             owner=owner,
             readers=["*"],
         )
-    
+
     @classmethod
-    def create_private(cls, document_id: str, owner: str) -> "DocumentACL":
+    def create_private(cls, document_id: str, owner: str) -> DocumentACL:
         """Create a private document ACL."""
         return cls(
             document_id=document_id,
@@ -160,12 +160,12 @@ class DocumentACL:
 
 class ACLStore:
     """Persistent storage for document ACLs."""
-    
-    def __init__(self, path: Optional[Path] = None) -> None:
+
+    def __init__(self, path: Path | None = None) -> None:
         self._path = path or Path("data/document_acls.json")
         self._acls: dict[str, DocumentACL] = {}
         self._load()
-    
+
     def _load(self) -> None:
         """Load ACLs from disk."""
         if self._path.exists():
@@ -179,7 +179,7 @@ class ACLStore:
             except Exception as e:
                 logger.warning(f"Failed to load ACLs: {e}")
                 self._acls = {}
-    
+
     def _save(self) -> None:
         """Save ACLs to disk."""
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -189,16 +189,16 @@ class ACLStore:
                 f,
                 indent=2,
             )
-    
-    def get(self, document_id: str) -> Optional[DocumentACL]:
+
+    def get(self, document_id: str) -> DocumentACL | None:
         """Get ACL for a document."""
         return self._acls.get(document_id)
-    
+
     def set(self, acl: DocumentACL) -> None:
         """Set ACL for a document."""
         self._acls[acl.document_id] = acl
         self._save()
-    
+
     def delete(self, document_id: str) -> bool:
         """Delete ACL for a document."""
         if document_id in self._acls:
@@ -211,11 +211,11 @@ class ACLStore:
         """Delete all ACLs."""
         self._acls = {}
         self._save()
-    
+
     def list_by_owner(self, owner: str) -> list[DocumentACL]:
         """List all ACLs owned by a user."""
         return [acl for acl in self._acls.values() if acl.owner == owner]
-    
+
     def list_readable_by(self, user_id: str) -> list[str]:
         """List all document IDs readable by a user."""
         return [
@@ -230,20 +230,20 @@ class ACLStore:
 
 class ACLEnforcer:
     """Enforce document access controls at query time.
-    
+
     Usage:
         enforcer = ACLEnforcer()
         accessible = enforcer.filter_by_access(chunks, user_id="user123")
     """
-    
+
     def __init__(
         self,
-        store: Optional[ACLStore] = None,
+        store: ACLStore | None = None,
         default_public: bool = True,  # If no ACL exists, treat as public
     ) -> None:
         self.store = store or ACLStore()
         self.default_public = default_public
-    
+
     def check_access(
         self,
         document_id: str,
@@ -251,17 +251,17 @@ class ACLEnforcer:
         action: str = "read",
     ) -> tuple[bool, str]:
         """Check if user can access a document.
-        
+
         Args:
             document_id: Document to check
             user_id: User requesting access
             action: "read" or "write"
-            
+
         Returns:
             Tuple of (allowed, reason)
         """
         acl = self.store.get(document_id)
-        
+
         if acl is None:
             if action == "write":
                 if not user_id and self.default_public:
@@ -270,14 +270,14 @@ class ACLEnforcer:
             if self.default_public:
                 return True, "No ACL defined, default public access"
             return False, "No ACL defined, default private"
-        
+
         if action == "write":
             if not user_id:
                 return False, "Missing user context for write access"
             if acl.can_write(user_id):
                 return True, "User has write access"
             return False, "User lacks write permission"
-        
+
         # Default to read check
         if not user_id:
             if acl.is_public:
@@ -286,18 +286,18 @@ class ACLEnforcer:
         if acl.can_read(user_id):
             return True, "User has read access"
         return False, "User lacks read permission"
-    
+
     def filter_by_access(
         self,
-        chunks: list["EvidenceChunk"],
+        chunks: list[EvidenceChunk],
         user_id: str | None,
-    ) -> list["EvidenceChunk"]:
+    ) -> list[EvidenceChunk]:
         """Filter chunks to only those the user can access.
-        
+
         Args:
             chunks: Retrieved evidence chunks
             user_id: User requesting access
-            
+
         Returns:
             Filtered list of accessible chunks
         """
@@ -314,10 +314,10 @@ class ACLEnforcer:
                 if acl and acl.is_public:
                     accessible.append(chunk)
             return accessible
-        
+
         accessible = []
         denied_count = 0
-        
+
         for chunk in chunks:
             # Extract document ID from chunk
             doc_id = self._get_document_id(chunk)
@@ -326,19 +326,19 @@ class ACLEnforcer:
                 if self.default_public:
                     accessible.append(chunk)
                 continue
-            
+
             allowed, _ = self.check_access(doc_id, user_id, "read")
             if allowed:
                 accessible.append(chunk)
             else:
                 denied_count += 1
-        
+
         if denied_count > 0:
             logger.info(f"ACL filtered out {denied_count} chunks for user {user_id}")
-        
+
         return accessible
-    
-    def _get_document_id(self, chunk: "EvidenceChunk") -> Optional[str]:
+
+    def _get_document_id(self, chunk: EvidenceChunk) -> str | None:
         """Extract document ID from a chunk."""
         # Try various attributes
         if hasattr(chunk, 'document_id'):
@@ -348,7 +348,7 @@ class ACLEnforcer:
         if hasattr(chunk, 'metadata') and isinstance(chunk.metadata, dict):
             return chunk.metadata.get('document_id') or chunk.metadata.get('doc_id')
         return None
-    
+
     def create_acl_for_document(
         self,
         document_id: str,
@@ -356,12 +356,12 @@ class ACLEnforcer:
         public: bool = True,
     ) -> DocumentACL:
         """Create an ACL for a new document.
-        
+
         Args:
             document_id: Document ID
             owner: User ID of the owner
             public: Whether to make public by default
-            
+
         Returns:
             Created ACL
         """
@@ -369,7 +369,7 @@ class ACLEnforcer:
             acl = DocumentACL.create_public(document_id, owner)
         else:
             acl = DocumentACL.create_private(document_id, owner)
-        
+
         self.store.set(acl)
         return acl
 
@@ -378,8 +378,8 @@ class ACLEnforcer:
 # Singleton
 # =============================================================================
 
-_acl_store: Optional[ACLStore] = None
-_acl_enforcer: Optional[ACLEnforcer] = None
+_acl_store: ACLStore | None = None
+_acl_enforcer: ACLEnforcer | None = None
 
 
 def get_acl_store() -> ACLStore:

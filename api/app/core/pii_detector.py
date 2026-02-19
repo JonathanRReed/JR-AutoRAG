@@ -16,11 +16,11 @@ This helps ensure sensitive data isn't exposed in RAG responses.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Optional
-import logging
+from typing import Any
 
 logger = logging.getLogger("autorag.pii")
 
@@ -50,7 +50,7 @@ class PIIMatch:
     start: int
     end: int
     confidence: float = 1.0
-    
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "type": self.pii_type.value,
@@ -59,7 +59,7 @@ class PIIMatch:
             "end": self.end,
             "confidence": round(self.confidence, 3),
         }
-    
+
     @property
     def length(self) -> int:
         return self.end - self.start
@@ -72,7 +72,7 @@ class DetectionResult:
     matches: list[PIIMatch] = field(default_factory=list)
     has_pii: bool = False
     pii_types_found: set[PIIType] = field(default_factory=set)
-    
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "has_pii": self.has_pii,
@@ -144,47 +144,47 @@ SENSITIVE_KEYWORDS = {
 
 class PIIDetector:
     """Detect PII in text.
-    
+
     Usage:
         detector = PIIDetector()
         result = detector.detect("Contact me at john@example.com")
         if result.has_pii:
             print(f"Found PII: {result.pii_types_found}")
     """
-    
+
     def __init__(
         self,
-        enabled_types: Optional[set[PIIType]] = None,
+        enabled_types: set[PIIType] | None = None,
         min_confidence: float = 0.5,
     ) -> None:
         """Initialize detector.
-        
+
         Args:
             enabled_types: PII types to detect (all if None)
             min_confidence: Minimum confidence to report
         """
         self.enabled_types = enabled_types or set(PIIType)
         self.min_confidence = min_confidence
-    
+
     def detect(self, text: str) -> DetectionResult:
         """Detect PII in text.
-        
+
         Args:
             text: Text to scan for PII
-            
+
         Returns:
             DetectionResult with all matches
         """
         matches = []
-        
+
         # Run pattern-based detection
         for pii_type, pattern in PII_PATTERNS.items():
             if pii_type not in self.enabled_types:
                 continue
-            
+
             for match in pattern.finditer(text):
                 confidence = self._validate_match(pii_type, match.group())
-                
+
                 if confidence >= self.min_confidence:
                     matches.append(PIIMatch(
                         pii_type=pii_type,
@@ -193,7 +193,7 @@ class PIIDetector:
                         end=match.end(),
                         confidence=confidence,
                     ))
-        
+
         # Check for sensitive keywords
         text_lower = text.lower()
         for keyword in SENSITIVE_KEYWORDS:
@@ -212,7 +212,7 @@ class PIIDetector:
                         confidence=0.6,  # Lower confidence for keywords
                     ))
                     pos = idx + 1
-        
+
         # Remove duplicates and sort by position
         seen = set()
         unique_matches = []
@@ -221,19 +221,19 @@ class PIIDetector:
             if key not in seen:
                 seen.add(key)
                 unique_matches.append(m)
-        
+
         pii_types = {m.pii_type for m in unique_matches}
-        
+
         return DetectionResult(
             original_text=text,
             matches=unique_matches,
             has_pii=len(unique_matches) > 0,
             pii_types_found=pii_types,
         )
-    
+
     def _validate_match(self, pii_type: PIIType, text: str) -> float:
         """Validate a potential PII match.
-        
+
         Returns confidence score 0.0-1.0.
         """
         if pii_type == PIIType.SSN:
@@ -243,7 +243,7 @@ class PIIDetector:
             if len(set(digits)) == 1:
                 return 0.0  # All same digit, probably not SSN
             return 0.9
-        
+
         elif pii_type == PIIType.CREDIT_CARD:
             # Luhn algorithm check
             digits = re.sub(r'\D', '', text)
@@ -252,7 +252,7 @@ class PIIDetector:
             if self._luhn_check(digits):
                 return 0.95
             return 0.3
-        
+
         elif pii_type == PIIType.IP_ADDRESS:
             # Check octets are valid (0-255)
             parts = text.split('.')
@@ -265,98 +265,98 @@ class PIIDetector:
             except ValueError:
                 return 0.0
             return 0.5
-        
+
         elif pii_type == PIIType.PHONE:
             # Validate phone number format
             digits = re.sub(r'\D', '', text)
             if len(digits) < 7 or len(digits) > 15:
                 return 0.0
             return 0.8
-        
+
         elif pii_type == PIIType.EMAIL:
             # Basic email validation
             if '@' in text and '.' in text:
                 return 0.95
             return 0.0
-        
+
         return 0.7  # Default confidence
-    
+
     def _luhn_check(self, card_number: str) -> bool:
         """Luhn algorithm for credit card validation."""
         def digits_of(n):
             return [int(d) for d in str(n)]
-        
+
         digits = digits_of(card_number)
         odd_digits = digits[-1::-2]
         even_digits = digits[-2::-2]
-        
+
         checksum = sum(odd_digits)
         for d in even_digits:
             checksum += sum(digits_of(d * 2))
-        
+
         return checksum % 10 == 0
-    
+
     def redact(
         self,
         text: str,
-        matches: Optional[list[PIIMatch]] = None,
+        matches: list[PIIMatch] | None = None,
         replacement: str = "[REDACTED]",
     ) -> str:
         """Redact PII from text.
-        
+
         Args:
             text: Text to redact
             matches: Pre-computed matches (detects if None)
             replacement: Replacement string for PII
-            
+
         Returns:
             Redacted text
         """
         if matches is None:
             result = self.detect(text)
             matches = result.matches
-        
+
         if not matches:
             return text
-        
+
         # Sort matches by position (reverse order to preserve positions)
         sorted_matches = sorted(matches, key=lambda m: m.start, reverse=True)
-        
+
         redacted = text
         for match in sorted_matches:
             # Use type-specific replacement if desired
             repl = f"[{match.pii_type.value.upper()}_REDACTED]"
             redacted = redacted[:match.start] + repl + redacted[match.end:]
-        
+
         return redacted
-    
+
     def mask(
         self,
         text: str,
-        matches: Optional[list[PIIMatch]] = None,
+        matches: list[PIIMatch] | None = None,
         mask_char: str = "*",
         show_last: int = 4,
     ) -> str:
         """Partially mask PII instead of full redaction.
-        
+
         Args:
             text: Text to mask
             matches: Pre-computed matches
             mask_char: Character to use for masking
             show_last: Number of characters to leave visible
-            
+
         Returns:
             Masked text
         """
         if matches is None:
             result = self.detect(text)
             matches = result.matches
-        
+
         if not matches:
             return text
-        
+
         sorted_matches = sorted(matches, key=lambda m: m.start, reverse=True)
-        
+
         masked = text
         for match in sorted_matches:
             pii_text = match.text
@@ -364,9 +364,9 @@ class PIIDetector:
                 masked_pii = mask_char * (len(pii_text) - show_last) + pii_text[-show_last:]
             else:
                 masked_pii = mask_char * len(pii_text)
-            
+
             masked = masked[:match.start] + masked_pii + masked[match.end:]
-        
+
         return masked
 
 
@@ -374,7 +374,7 @@ class PIIDetector:
 # Singleton
 # =============================================================================
 
-_pii_detector: Optional[PIIDetector] = None
+_pii_detector: PIIDetector | None = None
 
 
 def get_pii_detector() -> PIIDetector:

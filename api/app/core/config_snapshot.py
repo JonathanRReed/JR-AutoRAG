@@ -13,14 +13,14 @@ Each snapshot includes:
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
-import json
 import importlib.metadata
-from dataclasses import dataclass, field, asdict
+import json
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
-
+from typing import Any
 
 # =============================================================================
 # Version Detection
@@ -29,7 +29,7 @@ from typing import Any, Optional
 def get_tool_versions() -> dict[str, str]:
     """Get versions of key libraries for reproducibility."""
     versions = {}
-    
+
     packages = [
         "sentence-transformers",
         "transformers",
@@ -42,28 +42,26 @@ def get_tool_versions() -> dict[str, str]:
         "langchain",
         "ragas",
     ]
-    
+
     for package in packages:
-        try:
+        with contextlib.suppress(importlib.metadata.PackageNotFoundError):
             versions[package] = importlib.metadata.version(package)
-        except importlib.metadata.PackageNotFoundError:
-            pass
-    
+
     return versions
 
 
 def compute_corpus_hash(document_hashes: list[str]) -> str:
     """Compute a deterministic hash of the corpus.
-    
+
     Args:
         document_hashes: List of content hashes for each document
-        
+
     Returns:
         SHA-256 hash of the sorted document hashes
     """
     if not document_hashes:
         return "empty_corpus"
-    
+
     # Sort for deterministic ordering
     sorted_hashes = sorted(document_hashes)
     combined = "|".join(sorted_hashes)
@@ -80,7 +78,7 @@ class RetrievalSnapshot:
     dense_k: int
     sparse_k: int
     hybrid_alpha: float
-    reranker_model: Optional[str]
+    reranker_model: str | None
     reranker_top_k: int
     use_colbert: bool
     use_raptor: bool
@@ -89,12 +87,12 @@ class RetrievalSnapshot:
     use_compression: bool
     chunk_size: int
     chunk_overlap: int
-    
+
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
-    
+
     @classmethod
-    def from_config(cls, config: dict[str, Any]) -> "RetrievalSnapshot":
+    def from_config(cls, config: dict[str, Any]) -> RetrievalSnapshot:
         """Create snapshot from config dictionary."""
         return cls(
             dense_k=config.get("dense_k", 10),
@@ -117,16 +115,16 @@ class ModelSnapshot:
     """Immutable snapshot of model configuration."""
     provider: str
     model_id: str
-    model_version: Optional[str]
+    model_version: str | None
     embedding_model: str
     temperature: float
     max_tokens: int
-    
+
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
-    
+
     @classmethod
-    def from_config(cls, config: dict[str, Any]) -> "ModelSnapshot":
+    def from_config(cls, config: dict[str, Any]) -> ModelSnapshot:
         """Create snapshot from config dictionary."""
         return cls(
             provider=config.get("provider", "unknown"),
@@ -144,17 +142,17 @@ class PromptSnapshot:
     system_prompt_hash: str
     query_template_hash: str
     citation_template_hash: str
-    
+
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
-    
+
     @classmethod
     def from_prompts(
         cls,
         system_prompt: str,
         query_template: str,
         citation_template: str,
-    ) -> "PromptSnapshot":
+    ) -> PromptSnapshot:
         """Create snapshot from prompt strings."""
         return cls(
             system_prompt_hash=hashlib.sha256(system_prompt.encode()).hexdigest()[:12],
@@ -166,26 +164,26 @@ class PromptSnapshot:
 @dataclass(frozen=True)
 class ConfigSnapshot:
     """Immutable configuration snapshot for reproducibility.
-    
+
     This captures the complete state of the system at query time,
     enabling exact reproduction of results.
     """
     snapshot_id: str  # SHA-256 of contents
     timestamp: str  # ISO format
-    
+
     # Configuration components
     model: ModelSnapshot
     retrieval: RetrievalSnapshot
     prompts: PromptSnapshot
-    
+
     # Corpus state
     corpus_hash: str
     corpus_doc_count: int
-    
+
     # Environment
     tool_versions: tuple[tuple[str, str], ...]  # Hashable version of dict
-    random_seed: Optional[int]
-    
+    random_seed: int | None
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
@@ -199,9 +197,9 @@ class ConfigSnapshot:
             "tool_versions": dict(self.tool_versions),
             "random_seed": self.random_seed,
         }
-    
+
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ConfigSnapshot":
+    def from_dict(cls, data: dict[str, Any]) -> ConfigSnapshot:
         """Create from dictionary."""
         return cls(
             snapshot_id=data["snapshot_id"],
@@ -214,7 +212,7 @@ class ConfigSnapshot:
             tool_versions=tuple(sorted(data["tool_versions"].items())),
             random_seed=data.get("random_seed"),
         )
-    
+
     @classmethod
     def create(
         cls,
@@ -224,10 +222,10 @@ class ConfigSnapshot:
         query_template: str,
         citation_template: str,
         corpus_doc_hashes: list[str],
-        random_seed: Optional[int] = None,
-    ) -> "ConfigSnapshot":
+        random_seed: int | None = None,
+    ) -> ConfigSnapshot:
         """Create a new config snapshot from current configuration.
-        
+
         Args:
             model_config: Model-related configuration
             retrieval_config: Retrieval-related configuration
@@ -236,21 +234,21 @@ class ConfigSnapshot:
             citation_template: The citation formatting template
             corpus_doc_hashes: List of document content hashes
             random_seed: Optional random seed for deterministic behavior
-            
+
         Returns:
             Immutable ConfigSnapshot with computed ID
         """
         timestamp = datetime.utcnow().isoformat()
-        
+
         model = ModelSnapshot.from_config(model_config)
         retrieval = RetrievalSnapshot.from_config(retrieval_config)
         prompts = PromptSnapshot.from_prompts(
             system_prompt, query_template, citation_template
         )
-        
+
         corpus_hash = compute_corpus_hash(corpus_doc_hashes)
         tool_versions = tuple(sorted(get_tool_versions().items()))
-        
+
         # Compute snapshot ID from all components
         id_content = json.dumps({
             "model": model.to_dict(),
@@ -260,7 +258,7 @@ class ConfigSnapshot:
             "tool_versions": dict(tool_versions),
         }, sort_keys=True)
         snapshot_id = hashlib.sha256(id_content.encode()).hexdigest()[:16]
-        
+
         return cls(
             snapshot_id=snapshot_id,
             timestamp=timestamp,
@@ -280,12 +278,12 @@ class ConfigSnapshot:
 
 class ConfigSnapshotStore:
     """Persistent storage for configuration snapshots."""
-    
-    def __init__(self, path: Optional[Path] = None) -> None:
+
+    def __init__(self, path: Path | None = None) -> None:
         self._path = path or Path("data/config_snapshots.json")
         self._snapshots: dict[str, dict[str, Any]] = {}
         self._load()
-    
+
     def _load(self) -> None:
         """Load snapshots from disk."""
         if self._path.exists():
@@ -295,26 +293,26 @@ class ConfigSnapshotStore:
             except Exception as e:
                 print(f"Warning: Could not load snapshots: {e}")
                 self._snapshots = {}
-    
+
     def _save(self) -> None:
         """Save snapshots to disk."""
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with open(self._path, "w") as f:
             json.dump(self._snapshots, f, indent=2)
-    
+
     def save(self, snapshot: ConfigSnapshot) -> str:
         """Save a snapshot and return its ID."""
         self._snapshots[snapshot.snapshot_id] = snapshot.to_dict()
         self._save()
         return snapshot.snapshot_id
-    
-    def get(self, snapshot_id: str) -> Optional[ConfigSnapshot]:
+
+    def get(self, snapshot_id: str) -> ConfigSnapshot | None:
         """Get a snapshot by ID."""
         data = self._snapshots.get(snapshot_id)
         if data:
             return ConfigSnapshot.from_dict(data)
         return None
-    
+
     def list_recent(self, limit: int = 20) -> list[dict[str, Any]]:
         """List recent snapshots with summary info."""
         # Sort by timestamp descending
@@ -323,7 +321,7 @@ class ConfigSnapshotStore:
             key=lambda x: x["timestamp"],
             reverse=True,
         )
-        
+
         return [
             {
                 "snapshot_id": s["snapshot_id"],
@@ -333,22 +331,22 @@ class ConfigSnapshotStore:
             }
             for s in sorted_snapshots[:limit]
         ]
-    
+
     def delete_old(self, keep_count: int = 100) -> int:
         """Delete old snapshots, keeping the most recent ones."""
         if len(self._snapshots) <= keep_count:
             return 0
-        
+
         sorted_ids = sorted(
             self._snapshots.keys(),
             key=lambda x: self._snapshots[x]["timestamp"],
             reverse=True,
         )
-        
+
         to_delete = sorted_ids[keep_count:]
         for snapshot_id in to_delete:
             del self._snapshots[snapshot_id]
-        
+
         self._save()
         return len(to_delete)
 
@@ -357,7 +355,7 @@ class ConfigSnapshotStore:
 # Singleton
 # =============================================================================
 
-_snapshot_store: Optional[ConfigSnapshotStore] = None
+_snapshot_store: ConfigSnapshotStore | None = None
 
 
 def get_snapshot_store() -> ConfigSnapshotStore:

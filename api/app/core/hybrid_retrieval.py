@@ -9,18 +9,19 @@ This module provides a state-of-the-art retrieval implementation that combines:
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import math
 import os
 import re
-import asyncio
-import concurrent.futures
 import threading
-from datetime import datetime, timezone
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
 
-import numpy as np
 import httpx
+import numpy as np
 
 try:
     import torch
@@ -30,16 +31,16 @@ except ImportError:
     F = None
 
 from .cache import get_cache_manager
-from .documents import Document, DocumentStore
 from .chunking import Chunk, ChunkingStrategy, get_chunker
+from .documents import Document, DocumentStore
 from .hierarchy import DocumentTree
 from .secrets_vault import get_secrets_vault
 
 if TYPE_CHECKING:
-    from sentence_transformers import SentenceTransformer, CrossEncoder
+    from sentence_transformers import CrossEncoder, SentenceTransformer
 
 try:
-    from transformers import AutoTokenizer, AutoModel
+    from transformers import AutoModel, AutoTokenizer
 except ImportError:
     AutoTokenizer = AutoModel = None
 
@@ -103,10 +104,7 @@ class RemoteEmbeddingClient:
         self.timeout = timeout
 
     def encode(self, texts, convert_to_numpy: bool = False, show_progress_bar: bool = False):
-        if isinstance(texts, str):
-            inputs = [texts]
-        else:
-            inputs = list(texts)
+        inputs = [texts] if isinstance(texts, str) else list(texts)
 
         headers = {"Authorization": f"Bearer {self.api_key}"}
         payload = {"model": self.model, "input": inputs}
@@ -137,7 +135,7 @@ class RetrievalResult:
 
 class EmbeddingModelPreset:
     """2025 MTEB-validated embedding model presets.
-    
+
     These models are selected based on MTEB leaderboard performance
     as of late 2025, balancing accuracy, speed, and resource usage.
     """
@@ -153,7 +151,7 @@ class EmbeddingModelPreset:
     TEXT_EMBEDDING_3_LARGE = "text-embedding-3-large"
     # Fast/lightweight for resource-constrained environments
     SENTENCE_MINI = "sentence-transformers/all-MiniLM-L6-v2"
-    
+
     # Model metadata for auto-configuration
     MODEL_INFO = {
         BGE_BASE: {"dimensions": 768, "max_tokens": 512, "requires_api": False},
@@ -163,7 +161,7 @@ class EmbeddingModelPreset:
         TEXT_EMBEDDING_3_LARGE: {"dimensions": 3072, "max_tokens": 8191, "requires_api": True},
         SENTENCE_MINI: {"dimensions": 384, "max_tokens": 512, "requires_api": False},
     }
-    
+
     @classmethod
     def get_info(cls, model: str) -> dict:
         """Get model metadata for configuration."""
@@ -177,7 +175,7 @@ class HybridConfig:
     embedding_model: str = "BAAI/bge-base-en-v1.5"
     model_preset: str | None = None  # Set to EmbeddingModelPreset value to auto-configure
     reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-    
+
     # Retrieval parameters
     dense_weight: float = 0.6
     sparse_weight: float = 0.4
@@ -189,19 +187,19 @@ class HybridConfig:
     heading_boost: float = 0.4
     proximity_weight: float = 0.5
     diversity: float = 0.0
-    
+
     # Chunking
     chunking_strategy: ChunkingStrategy = ChunkingStrategy.SEMANTIC
     chunk_size: int = 400
     chunk_overlap: int = 50
-    
+
     # Feature toggles
     raptor: bool = False
     graph: bool = False
     use_colbert: bool = False
     colbert_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     colbert_top_k: int = 12
-    
+
     def __post_init__(self):
         """Apply model preset if specified."""
         if self.model_preset:
@@ -210,13 +208,13 @@ class HybridConfig:
 
 class HybridRetrievalEngine:
     """Advanced retrieval engine with hybrid search and reranking.
-    
+
     Combines dense vector search (semantic) with BM25 (keyword) retrieval,
     then optionally applies cross-encoder or ColBERT-style reranking for maximum precision.
-    
+
     Supports disk persistence for indexes to avoid rebuild on restart.
     """
-    
+
     def __init__(
         self,
         documents: DocumentStore,
@@ -226,13 +224,13 @@ class HybridRetrievalEngine:
         self._docs = documents
         self._config = config or HybridConfig()
         self._persist_path = persist_path
-        
+
         # Models (lazy loaded)
         self._embedder: SentenceTransformer | None = None
         self._reranker: CrossEncoder | None = None
         self._embedder_failed = False
         self._reranker_failed = False
-        
+
         # Index data
         self._chunks: list[tuple[str, Chunk]] = []  # (doc_id, chunk)
         self._embeddings: np.ndarray | None = None
@@ -250,7 +248,7 @@ class HybridRetrievalEngine:
         self._doc_title_tokens: dict[str, set[str]] = {}
         self._chunk_heading_tokens: dict[int, set[str]] = {}
         self._doc_timestamps: dict[str, datetime] = {}
-        
+
         # Persistence and corpus versioning (G3: Cache never stale)
         self._index_persistence = None
         self._corpus_version: str = ""
@@ -258,17 +256,17 @@ class HybridRetrievalEngine:
         self._corpus_version_counter: int = 0  # Monotonically increasing on any change
         self._doc_content_hashes: dict[str, str] = {}  # doc_id -> content_hash for incremental
         self._index_lock = threading.RLock()
-        
+
         # Phase 4/6/5: Hierarchical & Graph structures
         self._trees: dict[str, Any] = {}  # doc_id -> DocumentTree
         self._graph: dict[str, set[int]] = {}  # term -> set of chunk indices
         self._graph_rag: Any | None = None
         self._graph_ready: bool = False
         self._graph_failed: bool = False
-        
+
         # Load models
         self._init_models()
-    
+
     def _init_models(self) -> None:
         """Lazy load heavy models."""
         if self._config.embedding_model and not self._embedder_failed and self._embedder is None:
@@ -304,7 +302,7 @@ class HybridRetrievalEngine:
                         except (TypeError, Exception):
                             # Fallback for older versions or unexpected errors
                             self._embedder = SentenceTransformer(
-                                self._config.embedding_model, 
+                                self._config.embedding_model,
                                 device="cpu"
                             )
                         print(f"Embedding model loaded successfully from {location}.")
@@ -314,7 +312,7 @@ class HybridRetrievalEngine:
                         self._embedder_failed = True
                 else:
                     print("⚠️ Warning: sentence-transformers not installed. Dense retrieval disabled.")
-        
+
         if self._config.use_reranking and self._config.reranker_model and not self._reranker_failed and self._reranker is None:
             CrossEncoder = _get_cross_encoder()
             if CrossEncoder:
@@ -327,13 +325,13 @@ class HybridRetrievalEngine:
                         self._reranker = CrossEncoder(
                             self._config.reranker_model,
                             device="cpu",
-                            # Note: CrossEncoder usually kwargs are passed to AutoModel, 
+                            # Note: CrossEncoder usually kwargs are passed to AutoModel,
                             # checking support varies but this is the safest 'meta' fix attempt
                             model_kwargs={"low_cpu_mem_usage": False, "device_map": None}
                         )
                     except (TypeError, Exception):
                         self._reranker = CrossEncoder(
-                            self._config.reranker_model, 
+                            self._config.reranker_model,
                             device="cpu"
                         )
                     print(f"Reranker model loaded successfully from {location}.")
@@ -342,12 +340,12 @@ class HybridRetrievalEngine:
                     self._reranker = None
                     self._reranker_failed = True
 
-    def _requires_rebuild(self, config: "HybridConfig") -> bool:
+    def _requires_rebuild(self, config: HybridConfig) -> bool:
         """Check if config changes require index rebuild."""
         fields = ("embedding_model", "chunking_strategy", "chunk_size", "chunk_overlap")
         return any(getattr(self._config, f) != getattr(config, f) for f in fields)
 
-    def reconfigure(self, config: "HybridConfig", rebuild: bool | None = None) -> bool:
+    def reconfigure(self, config: HybridConfig, rebuild: bool | None = None) -> bool:
         """Apply a new retrieval config and rebuild indexes if needed.
 
         Returns True if a rebuild was triggered.
@@ -389,7 +387,7 @@ class HybridRetrievalEngine:
             self._rebuild_trees_parallel()
 
         return False
-    
+
     def _tokenize(self, text: str) -> list[str]:
         """Simple tokenization for BM25."""
         return text.lower().split()
@@ -411,7 +409,7 @@ class HybridRetrievalEngine:
                 epoch = int(raw)
                 if len(raw) > 10:
                     epoch = int(epoch / 1000)
-                return datetime.fromtimestamp(epoch, tz=timezone.utc)
+                return datetime.fromtimestamp(epoch, tz=UTC)
             except Exception:
                 return None
         if raw.endswith("Z"):
@@ -419,8 +417,8 @@ class HybridRetrievalEngine:
         try:
             parsed = datetime.fromisoformat(raw)
             if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=timezone.utc)
-            return parsed.astimezone(timezone.utc)
+                parsed = parsed.replace(tzinfo=UTC)
+            return parsed.astimezone(UTC)
         except Exception:
             return None
 
@@ -542,7 +540,7 @@ class HybridRetrievalEngine:
         if len(positions) < 2:
             return 0.0
         positions.sort()
-        needed = {t for t in query_terms}
+        needed = set(query_terms)
         counts: dict[str, int] = {}
         covered = 0
         left = 0
@@ -573,7 +571,7 @@ class HybridRetrievalEngine:
         """Apply recency prior to result scores."""
         if recency_weight <= 0 or half_life_days <= 0:
             return results
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         adjusted: list[tuple[int, float]] = []
         with self._index_lock:
             for idx, score in results:
@@ -642,22 +640,22 @@ class HybridRetrievalEngine:
             "dense_enabled": self._embedder is not None,
             "reranker_enabled": self._reranker is not None and self._config.use_reranking,
         }
-    
+
     # =========================================================================
     # Corpus Version Management (Guarantee G3: Cache never stale)
     # =========================================================================
-    
+
     def get_corpus_version(self) -> str:
         """Return current corpus version as string.
-        
+
         Used in cache keys to ensure stale results are never returned
         after corpus changes.
         """
         return str(self._corpus_version_counter)
-    
+
     def increment_corpus_version(self) -> int:
         """Increment corpus version counter on any corpus change.
-        
+
         Called on document ingest, delete, or re-chunk operations.
         Returns the new version number.
         """
@@ -665,10 +663,10 @@ class HybridRetrievalEngine:
         # Also invalidate hash-based version since corpus changed
         self._corpus_version = ""
         return self._corpus_version_counter
-    
+
     def get_retrieval_mode_flags(self) -> int:
         """Get current retrieval mode as bitmask for cache keys.
-        
+
         Returns an integer bitmask indicating which retrieval modes are enabled.
         Used in cache keys to prevent stale hits when modes are toggled.
         """
@@ -679,38 +677,38 @@ class HybridRetrievalEngine:
             rerank=self._config.use_reranking,
             colbert=self._config.use_colbert,
         ))
-    
+
     def compute_content_hash(self, text: str) -> str:
         """Compute SHA-256 hash of document content for change detection.
-        
+
         Used by incremental ingestion to skip re-processing unchanged docs.
         """
         import hashlib
         return hashlib.sha256(text.encode('utf-8')).hexdigest()
-    
+
     def is_doc_changed(self, doc_id: str, content_hash: str) -> bool:
         """Check if document content has changed since last indexing.
-        
+
         Args:
             doc_id: The document identifier
             content_hash: Hash of current document content
-            
+
         Returns:
             True if document is new or changed, False if unchanged
         """
         existing_hash = self._doc_content_hashes.get(doc_id)
         return existing_hash != content_hash
-    
+
     def register_doc_hash(self, doc_id: str, content_hash: str) -> None:
         """Register document content hash after successful indexing."""
         self._doc_content_hashes[doc_id] = content_hash
-    
+
     def clear_cache(self, include_disk: bool = True) -> bool:
         """Clear all cached indexes and reset to fresh state.
-        
+
         Args:
             include_disk: If True, also delete persisted index files on disk.
-            
+
         Returns:
             True if cache was cleared successfully.
         """
@@ -723,7 +721,7 @@ class HybridRetrievalEngine:
                     print("HybridRetrievalEngine: Cleared disk cache")
                 except Exception as e:
                     print(f"HybridRetrievalEngine: Failed to clear disk cache: {e}")
-        
+
         # Clear in-memory indexes
         with self._index_lock:
             self._chunks = []
@@ -733,19 +731,19 @@ class HybridRetrievalEngine:
             self._trees = {}
             self._graph = {}
             self._doc_content_hashes = {}
-        
+
         # Increment corpus version to invalidate query caches
         self.increment_corpus_version()
-        
+
         print("HybridRetrievalEngine: Cache cleared")
         return True
-    
+
     def build(
         self,
         on_progress: Callable[[str, int, int, str | None], None] | None = None,
     ) -> None:
         """Build the retrieval index from all documents.
-        
+
         Args:
             on_progress: Optional callback (stage, current, total) for progress updates.
                         stage: Name of current processing stage
@@ -754,20 +752,20 @@ class HybridRetrievalEngine:
         """
         docs = self._docs.list()
         print(f"HybridRetrievalEngine: Building index for {len(docs)} documents...")
-        
+
         def emit(stage: str, current: int, total: int) -> None:
             if on_progress:
                 on_progress(stage, current, total)
-        
+
         emit("loading_documents", 0, len(docs))
-        
+
         if not docs:
             print("HybridRetrievalEngine: No documents found in store.")
             self._chunks = []
             self._embeddings = None
             self._bm25 = None
             return
-        
+
         # Get chunker
         chunker = get_chunker(
             strategy=self._config.chunking_strategy,
@@ -775,36 +773,36 @@ class HybridRetrievalEngine:
             target_size=self._config.chunk_size,
             overlap=self._config.chunk_overlap,
         )
-        
+
         # Build chunks from all documents
         self._chunks = []
         corpus_texts: list[str] = []
-        
+
         for idx, doc in enumerate(docs):
             emit("chunking_documents", idx, len(docs))
             if not doc.text.strip():
                 print(f"HybridRetrievalEngine: Skipping empty document: {doc.title}")
                 continue
-                
+
             chunks = chunker.chunk(doc.text)
             print(f"HybridRetrievalEngine: Processing '{doc.title}' -> {len(chunks)} chunks")
             for chunk in chunks:
                 self._chunks.append((doc.id, chunk))
                 corpus_texts.append(chunk.text)
-        
+
         emit("chunking_documents", len(docs), len(docs))
-        
+
         if not corpus_texts:
             print("HybridRetrievalEngine: No text chunks generated (all docs might be empty).")
             return
-        
+
         # Build dense embeddings with batching for progress feedback
         if self._embedder:
             try:
                 batch_size = 64
                 all_embeddings = []
                 total_chunks = len(corpus_texts)
-                
+
                 for i in range(0, total_chunks, batch_size):
                     batch = corpus_texts[i:i + batch_size]
                     batch_embeddings = self._embedder.encode(
@@ -814,7 +812,7 @@ class HybridRetrievalEngine:
                     )
                     all_embeddings.append(batch_embeddings)
                     emit("embedding_chunks", min(i + batch_size, total_chunks), total_chunks)
-                
+
                 if all_embeddings:
                     self._embeddings = np.vstack(all_embeddings)
                 else:
@@ -822,9 +820,9 @@ class HybridRetrievalEngine:
             except Exception as e:
                 print(f"Warning: Embedding failed: {e}")
                 self._embeddings = None
-        
+
         emit("building_sparse_index", 0, 1)
-        
+
         # Tokenize corpus for sparse retrieval (BM25 or fallback overlap scoring)
         self._tokenized_corpus = [self._tokenize(text) for text in corpus_texts]
 
@@ -844,21 +842,21 @@ class HybridRetrievalEngine:
         # Build hierarchy in parallel if enabled
         if self._config.raptor or self._config.chunking_strategy != ChunkingStrategy.FIXED:
             self._rebuild_trees_parallel(on_progress=on_progress)
-        
+
         # Build GraphRAG if enabled (restricted to max chunks for build time)
         if self._config.graph:
             emit("building_knowledge_graph", 0, 1)
             try:
                 # Use a background loop for async GraphRAG building if we're in a sync context
-                from .graph_rag import GraphRAG
                 from .gatherer import EvidenceChunk
+                from .graph_rag import GraphRAG
                 from .providers import ProviderFactory
-                
+
                 # We need a provider for building. Default to OpenAI if not fixed.
                 # In JR-AutoRAG, Orchestrator usually provides this, but here we try factory.
                 factory = ProviderFactory()
                 provider = factory.get_default_provider() # Simplified for build phase
-                
+
                 if provider:
                     self._graph_rag = GraphRAG()
                     max_graph_chunks = 100 # Safety limit for build phase
@@ -871,13 +869,13 @@ class HybridRetrievalEngine:
                         )
                         for did, c in self._chunks[:max_graph_chunks]
                     ]
-                    
+
                     async def build_g():
                         await self._graph_rag.build_from_chunks(evidence, provider)
                         self._graph_rag.detect_communities()
                         await self._graph_rag.summarize_communities(provider)
                         self._graph_ready = True
-                    
+
                     try:
                         try:
                             asyncio.get_running_loop()
@@ -912,9 +910,9 @@ class HybridRetrievalEngine:
                 print(f"Warning: GraphRAG indexing failed: {e}")
                 self._graph_failed = True
             emit("building_knowledge_graph", 1, 1)
-        
+
         emit("building_keyword_graph", 0, 1)
-        
+
         # Build simple keyword graph for context expansion
         if self._tokenized_corpus:
             self._graph = {}
@@ -936,9 +934,9 @@ class HybridRetrievalEngine:
             if ts:
                 self._doc_timestamps[doc.id] = ts
         self._build_field_tokens(docs)
-        
+
         emit("building_metadata_cache", 1, 1)
-        
+
         # Auto-save if persistence enabled
         if self._persist_path and self._chunks:
             emit("saving_index", 0, 1)
@@ -1094,7 +1092,7 @@ class HybridRetrievalEngine:
 
         if self._persist_path and self._chunks:
             self.save_index()
-    
+
     def _get_persistence(self):
         """Lazy-load persistence manager."""
         if self._index_persistence is None and self._persist_path:
@@ -1103,17 +1101,17 @@ class HybridRetrievalEngine:
                 if self._index_persistence is None:
                     self._index_persistence = IndexPersistence(self._persist_path)
         return self._index_persistence
-    
+
     def _compute_versions(self) -> tuple[str, str]:
         """Compute corpus version and config hash for cache invalidation."""
         import hashlib
         import json
-        
+
         # Corpus version from document IDs
         doc_ids = sorted(d.id for d in self._docs.list())
         corpus_str = ",".join(doc_ids)
         corpus_version = hashlib.sha256(corpus_str.encode()).hexdigest()[:16]
-        
+
         # Config hash from retrieval config
         config_dict = {
             "embedding_model": self._config.embedding_model,
@@ -1123,9 +1121,9 @@ class HybridRetrievalEngine:
         }
         config_str = json.dumps(config_dict, sort_keys=True)
         config_hash = hashlib.sha256(config_str.encode()).hexdigest()[:16]
-        
+
         return corpus_version, config_hash
-    
+
     def save_index(self, index_name: str = "default") -> bool:
         """Save current index to disk for fast reload."""
         persistence = self._get_persistence()
@@ -1139,18 +1137,19 @@ class HybridRetrievalEngine:
             tokenized_corpus = list(self._tokenized_corpus)
             trees = {id: t.to_dict() for id, t in self._trees.items()} if self._trees else {}
             graph_data = self._graph_rag.to_dict() if self._graph_rag and self._graph_ready else None
-        
+
         if not chunks or embeddings is None:
             print("HybridRetrievalEngine: No index to save")
             return False
-        
-        from .persistence import IndexMetadata
+
         import time
-        
+
+        from .persistence import IndexMetadata
+
         corpus_version, config_hash = self._compute_versions()
         self._corpus_version = corpus_version
         self._config_hash = config_hash
-        
+
         metadata = IndexMetadata(
             corpus_version=corpus_version,
             config_hash=config_hash,
@@ -1158,7 +1157,7 @@ class HybridRetrievalEngine:
             created_at=time.time(),
             model_name=self._config.embedding_model,
         )
-        
+
         # 1. Save dense index
         try:
             persistence.save_dense_index(
@@ -1171,7 +1170,7 @@ class HybridRetrievalEngine:
         except Exception as e:
             print(f"HybridRetrievalEngine: Failed to save dense index: {e}")
             return False
-        
+
         # 2. Save sparse index
         if bm25 and tokenized_corpus:
             try:
@@ -1181,7 +1180,7 @@ class HybridRetrievalEngine:
                     tokenized_corpus=tokenized_corpus,
                     metadata=metadata,
                 )
-                print(f"HybridRetrievalEngine: Saved sparse index")
+                print("HybridRetrievalEngine: Saved sparse index")
             except Exception as e:
                 print(f"HybridRetrievalEngine: Failed to save sparse index: {e}")
 
@@ -1208,7 +1207,7 @@ class HybridRetrievalEngine:
                 print("HybridRetrievalEngine: Saved document trees")
             except Exception as e:
                 print(f"HybridRetrievalEngine: Failed to save trees: {e}")
-        
+
         return True
 
     def load_index(self, index_name: str = "default", on_progress: Callable[[str, int, int, str | None], None] | None = None) -> bool:
@@ -1216,20 +1215,20 @@ class HybridRetrievalEngine:
         persistence = self._get_persistence()
         if not persistence:
             return False
-        
+
         corpus_version, config_hash = self._compute_versions()
-        
+
         # Check if saved index is valid
         if not persistence.is_valid(index_name, corpus_version, config_hash):
             print("HybridRetrievalEngine: Saved index invalid or stale, will rebuild")
             return False
-        
+
         # 1. Load dense index
         try:
             embeddings, chunks, metadata = persistence.load_dense_index(index_name)
             if embeddings is None or chunks is None:
                 return False
-            
+
             with self._index_lock:
                 self._embeddings = embeddings
                 self._chunks = chunks
@@ -1239,7 +1238,7 @@ class HybridRetrievalEngine:
         except Exception as e:
             print(f"HybridRetrievalEngine: Failed to load dense index: {e}")
             return False
-        
+
         # 2. Load sparse index
         try:
             bm25, tokenized, _ = persistence.load_sparse_index(index_name)
@@ -1301,7 +1300,7 @@ class HybridRetrievalEngine:
                 if ts:
                     self._doc_timestamps[doc.id] = ts
             self._build_field_tokens(docs)
-        
+
         return True
 
     def _rebuild_trees_parallel(self, on_progress: Callable[[str, int, int, str | None], None] | None = None) -> None:
@@ -1309,11 +1308,11 @@ class HybridRetrievalEngine:
         docs = self._docs.list()
         if not docs or not self._chunks:
             return
-            
+
         from .hierarchy import HierarchyBuilder
         hb = HierarchyBuilder()
         print(f"HybridRetrievalEngine: Rebuilding {len(docs)} trees in parallel...")
-        
+
         def process_doc(idx_doc):
             idx, doc = idx_doc
             if on_progress:
@@ -1329,10 +1328,10 @@ class HybridRetrievalEngine:
             with self._index_lock:
                 for doc_id, tree in results:
                     self._trees[doc_id] = tree
-        
+
         if on_progress:
             on_progress("building_hierarchy", len(docs), len(docs))
-    
+
     def _dense_search(self, query: str, top_k: int) -> list[tuple[int, float]]:
         """Dense vector similarity search."""
         with self._index_lock:
@@ -1349,15 +1348,15 @@ class HybridRetrievalEngine:
             query_embedding = embedder.encode([query], convert_to_numpy=True)[0]
             self._cache_manager.embeddings.set(query, query_embedding.tolist())
             self._last_cache = {"embedding_cache": "miss"}
-        
+
         # Cosine similarity
         similarities = np.dot(embeddings, query_embedding) / (
             np.linalg.norm(embeddings, axis=1) * np.linalg.norm(query_embedding)
         )
-        
+
         top_indices = np.argsort(similarities)[::-1][:top_k]
         return [(int(idx), float(similarities[idx])) for idx in top_indices]
-    
+
     def _sparse_search(
         self,
         query: str,
@@ -1376,7 +1375,7 @@ class HybridRetrievalEngine:
                     heading_boost=heading_boost,
                     proximity_weight=proximity_weight,
                 )
-            
+
             query_tokens = self._tokenize(query)
             scores = self._bm25.get_scores(query_tokens)
             query_terms = {t for t in self._tokenize_terms(query) if len(t) > 2}
@@ -1427,10 +1426,9 @@ class HybridRetrievalEngine:
                         title_boost=title_boost,
                         heading_boost=heading_boost,
                     )
-                    if proximity_weight > 0 and query_terms:
-                        if idx < len(self._chunks):
-                            chunk_terms = self._tokenize_terms(self._chunks[idx][1].text)
-                            base_score += proximity_weight * self._term_proximity(query_terms, chunk_terms)
+                    if proximity_weight > 0 and query_terms and idx < len(self._chunks):
+                        chunk_terms = self._tokenize_terms(self._chunks[idx][1].text)
+                        base_score += proximity_weight * self._term_proximity(query_terms, chunk_terms)
                     scores.append((idx, base_score))
             if not scores:
                 return []
@@ -1477,7 +1475,7 @@ class HybridRetrievalEngine:
                 return [], 0
             scores.sort(key=lambda x: x[1], reverse=True)
             return scores[:top_k], len(scores)
-    
+
     def _reciprocal_rank_fusion(
         self,
         result_lists: list[list[tuple[int, float]]],
@@ -1485,27 +1483,27 @@ class HybridRetrievalEngine:
         weights: list[float] | None = None,
     ) -> list[tuple[int, float]]:
         """Combine multiple result lists using RRF.
-        
+
         RRF score = sum(1 / (k + rank_i)) for each result list
         """
         scores: dict[int, float] = {}
-        
+
         weight_list = weights or [1.0] * len(result_lists)
-        for results, weight in zip(result_lists, weight_list):
+        for results, weight in zip(result_lists, weight_list, strict=False):
             for rank, (idx, _) in enumerate(results):
                 if idx not in scores:
                     scores[idx] = 0.0
                 scores[idx] += weight / (k + rank + 1)
-        
+
         # Sort by RRF score
         sorted_results = sorted(scores.items(), key=lambda x: x[1], reverse=True)
         return sorted_results
-    
+
     def _rerank(self, query: str, candidates: list[tuple[int, float]], top_k: int) -> list[tuple[int, float]]:
         """Rerank candidates using cross-encoder."""
         if self._reranker is None or not candidates:
             return candidates[:top_k]
-        
+
         # Prepare query-document pairs
         pairs = []
         with self._index_lock:
@@ -1513,18 +1511,18 @@ class HybridRetrievalEngine:
                 if idx < len(self._chunks):
                     _, chunk = self._chunks[idx]
                     pairs.append((query, chunk.text))
-        
+
         if not pairs:
             return candidates[:top_k]
-        
+
         # Get cross-encoder scores
         try:
             scores = self._reranker.predict(pairs)
-            
+
             # Combine with indices
             reranked = [(candidates[i][0], float(scores[i])) for i in range(len(scores))]
             reranked.sort(key=lambda x: x[1], reverse=True)
-            
+
             return reranked[:top_k]
         except Exception as e:
             print(f"Warning: Reranking failed: {e}")
@@ -1546,7 +1544,7 @@ class HybridRetrievalEngine:
         except Exception as exc:
             print(f"Warning: ColBERT query encoding failed: {exc}")
             return candidates[:top_k]
-        
+
         scored: list[tuple[int, float]] = []
         limit = min(len(candidates), self._config.colbert_top_k)
         with self._index_lock:
@@ -1566,7 +1564,7 @@ class HybridRetrievalEngine:
         if not scored:
             return candidates[:top_k]
         scored.sort(key=lambda x: x[1], reverse=True)
-        
+
         # Merge ColBERT ordering with original candidate scores
         seen = set()
         refined: list[tuple[int, float]] = []
@@ -1654,7 +1652,7 @@ class HybridRetrievalEngine:
     def colbert_enabled(self) -> bool:
         """Return True if ColBERT precision mode is active."""
         return bool(self._config.use_colbert and self._colbert_model is not None)
-    
+
     def precision_stats(self) -> dict[str, Any]:
         """Return latest ColBERT precision stats for telemetry."""
         return dict(self._last_colbert_stats)
@@ -1665,7 +1663,7 @@ class HybridRetrievalEngine:
             self._config.use_reranking = False
             return
         self._config.use_reranking = bool(self._reranker)
-    
+
     async def query(
         self,
         text: str,
@@ -1675,9 +1673,9 @@ class HybridRetrievalEngine:
         on_progress: Callable[[str, float], None] | None = None,
     ) -> list[RetrievalResult]:
         """Execute hybrid retrieval query.
-        
+
         1. Dense search for semantic matches
-        2. Sparse BM25 search for keyword matches  
+        2. Sparse BM25 search for keyword matches
         3. RRF fusion to combine results
         4. Cross-encoder reranking for precision
         """
@@ -1688,10 +1686,10 @@ class HybridRetrievalEngine:
         if not self._chunks:
             emit("Building retrieval index...", 0.0)
             self.build()
-        
+
         if not self._chunks or not text.strip():
             return []
-        
+
         # Reset cache info for this query
         self._last_cache = {}
         overrides = self._normalize_routing_params(routing_params)
@@ -1705,8 +1703,8 @@ class HybridRetrievalEngine:
 
         async def run_sparse():
             emit("Keyword search (sparse)...", 0.3)
-            return await loop.run_in_executor(None, self._sparse_search, text, rerank_k, 
-                                           overrides["title_boost"], overrides["heading_boost"], 
+            return await loop.run_in_executor(None, self._sparse_search, text, rerank_k,
+                                           overrides["title_boost"], overrides["heading_boost"],
                                            overrides.get("proximity_weight", 0.0))
 
         async def run_literal():
@@ -1716,18 +1714,18 @@ class HybridRetrievalEngine:
         dense_task = asyncio.create_task(run_dense())
         sparse_task = asyncio.create_task(run_sparse())
         literal_task = asyncio.create_task(run_literal())
-        
+
         dense_results, sparse_results, (literal_results, literal_hits) = await asyncio.gather(
             dense_task, sparse_task, literal_task
         )
 
         if literal_hits:
             self._last_cache["literal_hits"] = literal_hits
-        
+
         # Handle fallback cases
         if not dense_results and not sparse_results and not literal_results:
             return []
-        
+
         # Combine with RRF
         emit("Fusing results...", 0.5)
         result_lists = [lst for lst in (dense_results, sparse_results, literal_results) if lst]
@@ -1743,14 +1741,14 @@ class HybridRetrievalEngine:
             fused = self._reciprocal_rank_fusion(result_lists, weights=weights)
         else:
             fused = result_lists[0]
-        
+
         # Rerank if enabled (Slowest step, run in executor)
         if self._config.use_reranking and self._reranker:
             emit("Reranking candidates...", 0.6)
             final_results = await loop.run_in_executor(None, self._rerank, text, fused, top_k)
         else:
             final_results = fused[:top_k]
-        
+
         self._last_colbert_stats = {
             "applied": False,
             "candidates": len(final_results),
@@ -1768,22 +1766,22 @@ class HybridRetrievalEngine:
         )
         final_results.sort(key=lambda x: x[1], reverse=True)
         final_results = await loop.run_in_executor(
-            None, 
-            self._apply_diversity_rerank, 
-            final_results, 
-            top_k, 
+            None,
+            self._apply_diversity_rerank,
+            final_results,
+            top_k,
             overrides["diversity"]
         )
-        
+
         # Build result objects
         id_to_doc = {doc.id: doc for doc in self._docs.list()}
         results: list[RetrievalResult] = []
         allowed_ids = set(document_ids) if document_ids else None
-        
+
         with self._index_lock:
             # Hierarchy/Graph Expansion (Phase 4/6)
-            expanded_indices = set(idx for idx, _ in final_results)
-            
+            expanded_indices = {idx for idx, _ in final_results}
+
             # 1. Graph expansion: Find related chunks via shared keywords
             if self._config.graph and allowed_ids is None:
                 query_tokens = self._tokenize(text)
@@ -1791,7 +1789,7 @@ class HybridRetrievalEngine:
                     if token in self._graph:
                         # Add top related chunks for each keyword
                         expanded_indices.update(list(self._graph[token])[:2])
-            
+
             retrieval_method = "hybrid" if len(result_lists) > 1 else (
                 "dense" if dense_results else "sparse" if sparse_results else "literal"
             )
@@ -1804,14 +1802,14 @@ class HybridRetrievalEngine:
                     doc = id_to_doc.get(doc_id)
                     if not doc:
                         continue
-                    
+
                     # 2. Hierarchy expansion (RAPTOR): Get parent summary
                     extra_context = []
                     if self._config.raptor and doc_id in self._trees:
                         from .hierarchy import HierarchicalRetriever
                         hr = HierarchicalRetriever(self._trees[doc_id])
                         extra_context = hr.get_context_chain(f"{chunk.index}")
-                    
+
                     # Create a transient document for the chunk
                     chunk_text = chunk.text
                     if extra_context:
@@ -1834,7 +1832,7 @@ class HybridRetrievalEngine:
                         start_char=chunk.start_char,
                         end_char=chunk.end_char,
                     ))
-        
+
         return results
 
     def get_last_cache_info(self) -> dict[str, Any]:
@@ -1860,7 +1858,7 @@ class HybridRetrievalEngine:
 # Backward compatibility: alias for the old class name
 class RetrievalEngine(HybridRetrievalEngine):
     """Alias for backward compatibility with existing code."""
-    
+
     def __init__(self, documents: DocumentStore) -> None:
         # Use a simpler config for backward compat
         config = HybridConfig(
@@ -1873,7 +1871,7 @@ class RetrievalEngine(HybridRetrievalEngine):
 # Keep original RetrievalResult available
 __all__ = [
     "RetrievalResult",
-    "HybridRetrievalEngine", 
+    "HybridRetrievalEngine",
     "RetrievalEngine",
     "HybridConfig",
 ]

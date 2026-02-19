@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    pass
 
 logger = logging.getLogger("autorag.onboarding")
 
@@ -22,7 +22,7 @@ SAMPLE_DOCUMENTS = [
     {
         "title": "Introduction to RAG",
         "content": """Retrieval-Augmented Generation (RAG) combines retrieval with language models.
-        
+
 When a user asks a question, RAG:
 1. Retrieves relevant documents from a knowledge base
 2. Provides those documents as context to an LLM
@@ -93,13 +93,13 @@ EXAMPLE_QUERIES = [
 @dataclass
 class OnboardingStep:
     """A single onboarding step."""
-    
+
     id: str
     title: str
     description: str
     action: str
     completed: bool = False
-    
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -113,12 +113,12 @@ class OnboardingStep:
 @dataclass
 class OnboardingFlow:
     """Complete onboarding flow state."""
-    
+
     steps: list[OnboardingStep] = field(default_factory=list)
     current_step: int = 0
-    
+
     @classmethod
-    def create_default(cls) -> "OnboardingFlow":
+    def create_default(cls) -> OnboardingFlow:
         """Create default onboarding flow."""
         steps = [
             OnboardingStep(
@@ -159,18 +159,18 @@ class OnboardingFlow:
             ),
         ]
         return cls(steps=steps)
-    
+
     @property
     def is_complete(self) -> bool:
         return all(s.completed for s in self.steps)
-    
+
     @property
     def progress_percent(self) -> float:
         if not self.steps:
             return 100.0
         completed = sum(1 for s in self.steps if s.completed)
         return (completed / len(self.steps)) * 100
-    
+
     def complete_step(self, step_id: str) -> bool:
         """Mark a step as completed."""
         for step in self.steps:
@@ -184,7 +184,7 @@ class OnboardingFlow:
                 self.current_step = len(self.steps)
                 return True
         return False
-    
+
     def to_dict(self) -> dict:
         return {
             "steps": [s.to_dict() for s in self.steps],

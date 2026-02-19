@@ -13,7 +13,7 @@ from fastapi.responses import StreamingResponse
 from ..core.auth import get_auth
 from ..core.document_acl import get_acl_enforcer, resolve_acl_defaults
 from ..core.telemetry import PipelineStep
-from ..schemas.query import QueryRequest, QueryResponse, TraceOut, TraceStepOut
+from ..schemas.query import MAX_QUESTION_LENGTH, QueryRequest, QueryResponse, TraceOut, TraceStepOut
 from ..services import ServiceContainer, get_container
 
 router = APIRouter(prefix="/query", tags=["query"])
@@ -88,6 +88,11 @@ async def ask(
 ):
     if not payload.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty")
+    if len(payload.question) > MAX_QUESTION_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Question exceeds maximum length of {MAX_QUESTION_LENGTH} characters",
+        )
     document_ids, cache_scope = _resolve_query_access(payload, request, container)
     result = await container.orchestrator.answer(
         payload.question,
@@ -106,6 +111,11 @@ async def ask_stream(
 ):
     if not payload.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty")
+    if len(payload.question) > MAX_QUESTION_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Question exceeds maximum length of {MAX_QUESTION_LENGTH} characters",
+        )
 
     document_ids, cache_scope = _resolve_query_access(payload, request, container)
     queue: asyncio.Queue[dict | None] = asyncio.Queue()

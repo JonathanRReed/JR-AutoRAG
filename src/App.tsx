@@ -1,20 +1,21 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BarChart3, FileText, MessageSquare, Moon, Settings, Sun } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/components/ui/toast";
+import { LoadingSpinner } from "@/components/ui/loading";
 
-import { AdvancedRAGSettings } from "@/components/features/AdvancedRAGSettings";
-import { ChatInterface } from "@/components/features/ChatInterface";
-import { EnterpriseStatusPanel } from "@/components/features/EnterpriseStatusPanel";
-import { IngestPanel } from "@/components/features/IngestPanel";
-import { MetricsDashboard } from "@/components/features/MetricsDashboard";
-import { ProviderConfig } from "@/components/features/ProviderConfig";
-import { ProviderCarousel } from "@/components/features/ProviderCarousel";
-import { TraceLog } from "@/components/features/TraceLog";
-import { PresetSelector } from "@/components/features/PresetSelector";
+const AdvancedRAGSettings = lazy(() => import("@/components/features/AdvancedRAGSettings").then(m => ({ default: m.AdvancedRAGSettings })));
+const ChatInterface = lazy(() => import("@/components/features/ChatInterface").then(m => ({ default: m.ChatInterface })));
+const EnterpriseStatusPanel = lazy(() => import("@/components/features/EnterpriseStatusPanel").then(m => ({ default: m.EnterpriseStatusPanel })));
+const IngestPanel = lazy(() => import("@/components/features/IngestPanel").then(m => ({ default: m.IngestPanel })));
+const MetricsDashboard = lazy(() => import("@/components/features/MetricsDashboard").then(m => ({ default: m.MetricsDashboard })));
+const ProviderConfig = lazy(() => import("@/components/features/ProviderConfig").then(m => ({ default: m.ProviderConfig })));
+const ProviderCarousel = lazy(() => import("@/components/features/ProviderCarousel").then(m => ({ default: m.ProviderCarousel })));
+const TraceLog = lazy(() => import("@/components/features/TraceLog").then(m => ({ default: m.TraceLog })));
+const PresetSelector = lazy(() => import("@/components/features/PresetSelector").then(m => ({ default: m.PresetSelector })));
 
 import "./index.css";
 import type { AppConfig, CacheStats, DocumentOut, IngestResponse, LocalProviderInfo, ModelStatus, ProviderConfig as ProviderConfigType, ProviderProfile, QueryResponse, RetrievalDefaults, RoleSelection, TraceOut, ChatSession, PresetLevel } from "@/types";
@@ -1080,7 +1081,7 @@ export function App() {
             </div>
 
             {/* Top Navigation */}
-            <nav className="flex items-center gap-1 bg-muted/30 p-1 rounded-lg">
+            <nav className="flex items-center gap-1 bg-muted/30 p-1 rounded-lg" role="tablist" aria-label="Main navigation">
               {tabs.map(tab => {
                 const Icon = tab.icon;
                 const isActive = activeTab === tab.id;
@@ -1088,6 +1089,9 @@ export function App() {
                   <button
                     key={tab.id}
                     onClick={() => setActiveTab(tab.id)}
+                    role="tab"
+                    aria-selected={isActive}
+                    aria-controls={`tabpanel-${tab.id}`}
                     className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-all ${isActive
                       ? "bg-primary text-primary-foreground shadow-sm"
                       : "text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -1109,6 +1113,7 @@ export function App() {
                 value={baseUrl}
                 onChange={e => setBaseUrl(e.target.value)}
                 placeholder="API URL"
+                aria-label="API base URL"
               />
               <Input
                 className="w-40 text-xs"
@@ -1117,6 +1122,7 @@ export function App() {
                 type="password"
                 autoComplete="off"
                 placeholder="X-API-Key (session)"
+                aria-label="API key"
               />
               <Button size="sm" variant="outline" onClick={handleTestConnection}>
                 {apiReady ? "Connected" : "Connect"}
@@ -1139,6 +1145,7 @@ export function App() {
               size="icon"
               onClick={() => setIsDarkMode(!isDarkMode)}
               className="text-foreground"
+              aria-label={isDarkMode ? "Switch to light mode" : "Switch to dark mode"}
             >
               {isDarkMode ? <Moon className="h-5 w-5" /> : <Sun className="h-5 w-5" />}
             </Button>
@@ -1160,38 +1167,42 @@ export function App() {
 
                 <div className="grid gap-6">
                   {/* Provider Carousel - Ollama, LM Studio, OpenRouter */}
-                  <ProviderCarousel
-                    config={config}
-                    setConfig={setConfig}
-                    isSavingConfig={isSavingConfig}
-                    handleSaveConfig={handleSaveConfig}
-                    persistConfig={persistConfig}
-                    localProviders={localProviders}
-                    localProvidersStatus={localProvidersStatus}
-                    refreshLocalProviders={refreshLocalProviders}
-                    localSelections={localSelections}
-                    setLocalSelection={setLocalSelection}
-                    applyLocalProvider={applyLocalProvider}
-                    apiBaseUrl={baseUrl}
-                    apiKey={apiKey}
-                    isConnected={isConnected}
-                  />
+                  <Suspense fallback={<LoadingSpinner message="Loading providers..." />}>
+                    <ProviderCarousel
+                      config={config}
+                      setConfig={setConfig}
+                      isSavingConfig={isSavingConfig}
+                      handleSaveConfig={handleSaveConfig}
+                      persistConfig={persistConfig}
+                      localProviders={localProviders}
+                      localProvidersStatus={localProvidersStatus}
+                      refreshLocalProviders={refreshLocalProviders}
+                      localSelections={localSelections}
+                      setLocalSelection={setLocalSelection}
+                      applyLocalProvider={applyLocalProvider}
+                      apiBaseUrl={baseUrl}
+                      apiKey={apiKey}
+                      isConnected={isConnected}
+                    />
+                  </Suspense>
 
                   {/* Advanced Provider Configuration */}
-                  <ProviderConfig
-                    config={config}
-                    setConfig={setConfig}
-                    handleSaveConfig={handleSaveConfig}
-                    modelOptions={modelOptions}
-                    handleDiscoverModels={handleDiscoverModels}
-                    isSavingConfig={isSavingConfig}
-                    selectedProfile={selectedProfile}
-                    handleSelectProfile={handleSelectProfile}
-                    handleAddProfile={handleAddProfile}
-                    newProfileName={newProfileName}
-                    setNewProfileName={setNewProfileName}
-                    refreshAll={refreshAll}
-                  />
+                  <Suspense fallback={<LoadingSpinner message="Loading configuration..." />}>
+                    <ProviderConfig
+                      config={config}
+                      setConfig={setConfig}
+                      handleSaveConfig={handleSaveConfig}
+                      modelOptions={modelOptions}
+                      handleDiscoverModels={handleDiscoverModels}
+                      isSavingConfig={isSavingConfig}
+                      selectedProfile={selectedProfile}
+                      handleSelectProfile={handleSelectProfile}
+                      handleAddProfile={handleAddProfile}
+                      newProfileName={newProfileName}
+                      setNewProfileName={setNewProfileName}
+                      refreshAll={refreshAll}
+                    />
+                  </Suspense>
 
                   {/* Advanced Engineering Presets */}
                   <div className="bg-card rounded-lg border border-border/60 p-6 shadow-sm">
@@ -1202,39 +1213,43 @@ export function App() {
                     <p className="text-sm text-muted-foreground mb-4">
                       Apply tuned defaults for common workflows
                     </p>
-                    <PresetSelector
-                      value={activePreset}
-                      onChange={async (newPreset: PresetLevel) => {
-                        setActivePreset(newPreset);
-                        try {
-                          const updated = await fetchJson<AppConfig>(`/config/presets/${newPreset}`, { method: "POST" });
-                          setConfig(updated);
-                          toast({ title: `Applied ${newPreset} preset`, variant: "default" });
-                        } catch (e) {
-                          toast({ title: toMessage(e), variant: "error" });
-                        }
-                      }}
-                      disabled={isSavingConfig}
-                    />
+                    <Suspense fallback={<LoadingSpinner message="Loading presets..." />}>
+                      <PresetSelector
+                        value={activePreset}
+                        onChange={async (newPreset: PresetLevel) => {
+                          setActivePreset(newPreset);
+                          try {
+                            const updated = await fetchJson<AppConfig>(`/config/presets/${newPreset}`, { method: "POST" });
+                            setConfig(updated);
+                            toast({ title: `Applied ${newPreset} preset`, variant: "default" });
+                          } catch (e) {
+                            toast({ title: toMessage(e), variant: "error" });
+                          }
+                        }}
+                        disabled={isSavingConfig}
+                      />
+                    </Suspense>
                   </div>
 
                   {/* Retrieval Settings */}
-                  <AdvancedRAGSettings
-                    retrieval={config?.retrieval}
-                    updateRetrieval={updateRetrieval}
-                    onSave={handleSaveConfig}
-                    isSaving={isSavingConfig}
-                    modelStatus={modelStatus}
-                    onRefreshModelStatus={() => refreshModelStatus(config?.retrieval?.embedding_model, config?.retrieval?.reranker_model)}
-                    onDownloadEmbedding={() => downloadModel("embedding")}
-                    onDownloadReranker={() => downloadModel("reranker")}
-                    onDeleteEmbedding={() => deleteModel("embedding")}
-                    onDeleteReranker={() => deleteModel("reranker")}
-                    isDownloadingEmbedding={isDownloadingEmbedding}
-                    isDownloadingReranker={isDownloadingReranker}
-                    isCheckingModels={isCheckingModels}
-                    modelActionMessage={modelActionMessage}
-                  />
+                  <Suspense fallback={<LoadingSpinner message="Loading RAG settings..." />}>
+                    <AdvancedRAGSettings
+                      retrieval={config?.retrieval}
+                      updateRetrieval={updateRetrieval}
+                      onSave={handleSaveConfig}
+                      isSaving={isSavingConfig}
+                      modelStatus={modelStatus}
+                      onRefreshModelStatus={() => refreshModelStatus(config?.retrieval?.embedding_model, config?.retrieval?.reranker_model)}
+                      onDownloadEmbedding={() => downloadModel("embedding")}
+                      onDownloadReranker={() => downloadModel("reranker")}
+                      onDeleteEmbedding={() => deleteModel("embedding")}
+                      onDeleteReranker={() => deleteModel("reranker")}
+                      isDownloadingEmbedding={isDownloadingEmbedding}
+                      isDownloadingReranker={isDownloadingReranker}
+                      isCheckingModels={isCheckingModels}
+                      modelActionMessage={modelActionMessage}
+                    />
+                  </Suspense>
 
                   {/* Cache Controls */}
                   <div className="bg-card rounded-lg border border-border/60 p-6 shadow-sm">
@@ -1280,29 +1295,31 @@ export function App() {
                 </div>
 
                 <div className="grid lg:grid-cols-[350px,1fr] gap-6 min-h-0">
-                  <IngestPanel
-                    ingestTitle={ingestTitle}
-                    setIngestTitle={setIngestTitle}
-                    ingestText={ingestText}
-                    setIngestText={setIngestText}
-                    handleIngest={handleIngest}
-                    isIngesting={isIngesting}
-                    ingestSync={ingestSync}
-                    setIngestSync={setIngestSync}
-                    uploadFile={uploadFile}
-                    isUploadingFile={isUploadingFile}
-                    fileInputRef={fileInputRef}
-                    documents={documents}
-                    handleDeleteDocument={handleDeleteDocument}
-                    handleDeleteAllDocuments={handleDeleteAllDocuments}
-                    waitForDocumentReady={waitForDocumentReady}
-                    formatDateTime={formatDateTime}
-                    langextractProfileOverride={langextractProfileOverride}
-                    setLangextractProfileOverride={setLangextractProfileOverride}
-                    langextractPromptOverride={langextractPromptOverride}
-                    setLangextractPromptOverride={setLangextractPromptOverride}
-                    langextractDefaultProfile={config?.retrieval?.langextract_profile_default}
-                  />
+                  <Suspense fallback={<LoadingSpinner message="Loading ingest panel..." />}>
+                    <IngestPanel
+                      ingestTitle={ingestTitle}
+                      setIngestTitle={setIngestTitle}
+                      ingestText={ingestText}
+                      setIngestText={setIngestText}
+                      handleIngest={handleIngest}
+                      isIngesting={isIngesting}
+                      ingestSync={ingestSync}
+                      setIngestSync={setIngestSync}
+                      uploadFile={uploadFile}
+                      isUploadingFile={isUploadingFile}
+                      fileInputRef={fileInputRef}
+                      documents={documents}
+                      handleDeleteDocument={handleDeleteDocument}
+                      handleDeleteAllDocuments={handleDeleteAllDocuments}
+                      waitForDocumentReady={waitForDocumentReady}
+                      formatDateTime={formatDateTime}
+                      langextractProfileOverride={langextractProfileOverride}
+                      setLangextractProfileOverride={setLangextractProfileOverride}
+                      langextractPromptOverride={langextractPromptOverride}
+                      setLangextractPromptOverride={setLangextractPromptOverride}
+                      langextractDefaultProfile={config?.retrieval?.langextract_profile_default}
+                    />
+                  </Suspense>
 
                   <div className="bg-card rounded-lg border border-border/60 shadow-sm flex flex-col min-h-0">
                     <div className="p-4 border-b border-border/40 flex items-center justify-between">
@@ -1369,41 +1386,65 @@ export function App() {
 
             <div className={`h-full animate-in fade-in slide-in-from-bottom-2 duration-300 ${activeTab !== "query" ? "hidden" : ""}`}>
               {/* Query Interface */}
-              <ChatInterface
-                question={question}
-                setQuestion={setQuestion}
-                handleAsk={handleAsk}
-                isQuerying={isQuerying}
-                queryResult={queryResult}
-                history={chatHistory}
-                documents={documents}
-                selectedDocumentIds={selectedDocumentIds}
-                setSelectedDocumentIds={setSelectedDocumentIds}
-                activeStage={activeStage}
-                progress={progress ? { ...progress, progress: progress.progress || 0 } : undefined}
-                providerConfig={config?.provider}
-                baseUrl={baseUrl}
-                apiKey={apiKey}
-                onNewChat={handleNewChat}
-                onCancel={handleCancelQuery}
-                savedSessions={savedSessions}
-                onLoadSession={handleLoadSession}
-                onDeleteSession={handleDeleteSession}
-                onClearHistory={handleClearHistory}
-                scrollRef={chatEndRef}
-                currentSessionId={currentSessionId}
-                preset={activePreset}
-                onPresetChange={async (preset) => {
-                  setActivePreset(preset);
-                  try {
-                    const updated = await fetchJson<AppConfig>(`/config/presets/${preset}`, { method: "POST" });
-                    setConfig(updated);
-                    toast({ title: "Preset applied", description: `Switched to ${preset} mode`, variant: "success" });
-                  } catch (e) {
-                    console.error("Failed to apply preset:", e);
-                  }
-                }}
-              />
+              <Suspense fallback={<LoadingSpinner message="Loading chat interface..." />}>
+                <ChatInterface
+                  question={question}
+                  setQuestion={setQuestion}
+                  handleAsk={handleAsk}
+                  isQuerying={isQuerying}
+                  queryResult={queryResult}
+                  history={chatHistory}
+                  documents={documents}
+                  selectedDocumentIds={selectedDocumentIds}
+                  setSelectedDocumentIds={setSelectedDocumentIds}
+                  activeStage={activeStage}
+                  progress={progress ? { ...progress, progress: progress.progress || 0 } : undefined}
+                  providerConfig={config?.provider}
+                  baseUrl={baseUrl}
+                  apiKey={apiKey}
+                  onNewChat={handleNewChat}
+                  onCancel={handleCancelQuery}
+                  savedSessions={savedSessions}
+                  onLoadSession={handleLoadSession}
+                  onDeleteSession={handleDeleteSession}
+                  onClearHistory={handleClearHistory}
+                  scrollRef={chatEndRef}
+                  currentSessionId={currentSessionId}
+                  preset={activePreset}
+                  onPresetChange={async (preset) => {
+                    setActivePreset(preset);
+                    try {
+                      const updated = await fetchJson<AppConfig>(`/config/presets/${preset}`, { method: "POST" });
+                      setConfig(updated);
+                      toast({ title: "Preset applied", description: `Switched to ${preset} mode`, variant: "success" });
+                    } catch (e) {
+                      console.error("Failed to apply preset:", e);
+                    }
+                  }}
+                />
+              </Suspense>
+            </div>
+
+            <div className={`h-full animate-in fade-in slide-in-from-bottom-2 duration-300 ${activeTab !== "metrics" ? "hidden" : ""}`}>
+              {/* Metrics & Traces */}
+              <div className="space-y-6 max-w-5xl mx-auto">
+                <Suspense fallback={<LoadingSpinner message="Loading status panel..." />}>
+                  <EnterpriseStatusPanel baseUrl={baseUrl} apiKey={apiKey} />
+                </Suspense>
+
+                <Suspense fallback={<LoadingSpinner message="Loading metrics..." />}>
+                  <MetricsDashboard traces={traces} />
+                </Suspense>
+                <Suspense fallback={<LoadingSpinner message="Loading traces..." />}>
+                  <TraceLog
+                    isEvaluating={isEvaluating}
+                    handleEvaluation={handleEvaluation}
+                    evaluationSummary={evaluationSummary}
+                    traces={traces}
+                    formatNumber={formatNumber}
+                  />
+                </Suspense>
+              </div>
             </div>
 
             <div className={`h-full animate-in fade-in slide-in-from-bottom-2 duration-300 ${activeTab !== "metrics" ? "hidden" : ""}`}>

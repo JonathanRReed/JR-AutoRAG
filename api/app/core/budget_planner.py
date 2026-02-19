@@ -18,7 +18,7 @@ from enum import Enum
 class BudgetClass(str, Enum):
     """Budget tiers for retrieval."""
     MINIMAL = "minimal"      # Fast, cheap, ~2s target
-    STANDARD = "standard"    # Balanced, ~5s target  
+    STANDARD = "standard"    # Balanced, ~5s target
     PREMIUM = "premium"      # High quality, ~15s target
 
 
@@ -31,7 +31,7 @@ class BudgetConstraints:
     use_colbert: bool = False
     use_graph: bool = False
     use_raptor: bool = False
-    
+
     def to_dict(self) -> dict:
         """Convert to dictionary."""
         return {
@@ -55,7 +55,7 @@ class BudgetPlan:
     use_raptor: bool
     estimated_latency_ms: float
     budget_class: BudgetClass = BudgetClass.STANDARD
-    
+
     def to_dict(self) -> dict:
         """Convert to dictionary for logging."""
         return {
@@ -72,17 +72,17 @@ class BudgetPlan:
 
 class BudgetPlanner:
     """Plan retrieval parameters based on budget constraints.
-    
+
     Estimates latencies for each component and adjusts parameters
     to fit within the target budget while maximizing quality.
-    
+
     Key features:
     - Three preset budget tiers (minimal, standard, premium)
     - Dynamic adjustment based on query complexity
     - Latency estimation for planning
     - Feature toggles based on available budget
     """
-    
+
     # Estimated latencies (ms) - conservative estimates
     LATENCY_ESTIMATES = {
         "embedding": 50,          # Query embedding
@@ -97,7 +97,7 @@ class BudgetPlanner:
         "conflict_detection": 20, # Conflict analysis
         "claim_verification": 30, # Hallucination check
     }
-    
+
     def __init__(self):
         """Initialize budget planner with preset configurations."""
         self.presets = {
@@ -126,7 +126,7 @@ class BudgetPlanner:
                 use_raptor=True,
             ),
         }
-    
+
     def _estimate_base_latency(self) -> float:
         """Estimate base latency for any query."""
         return (
@@ -136,7 +136,7 @@ class BudgetPlanner:
             self.LATENCY_ESTIMATES["rrf_fusion"] +
             self.LATENCY_ESTIMATES["llm_generation"]
         )
-    
+
     def _estimate_per_doc_latency(self, use_rerank: bool, use_colbert: bool) -> float:
         """Estimate per-document processing latency."""
         latency = 2  # Base per-doc overhead
@@ -145,7 +145,7 @@ class BudgetPlanner:
         if use_colbert:
             latency += self.LATENCY_ESTIMATES["colbert_per_doc"]
         return latency
-    
+
     def plan(
         self,
         budget_class: BudgetClass = BudgetClass.STANDARD,
@@ -153,21 +153,21 @@ class BudgetPlanner:
         constraints: BudgetConstraints | None = None,
     ) -> BudgetPlan:
         """Generate budget-aware retrieval plan.
-        
+
         Args:
             budget_class: Preset budget tier to use
             query_complexity: Estimated query complexity (0-1)
             constraints: Optional custom constraints override
-            
+
         Returns:
             BudgetPlan with optimized parameters
         """
         c = constraints or self.presets[budget_class]
-        
+
         # Calculate base latency
         base_latency = self._estimate_base_latency()
         remaining_budget = c.max_latency_ms - base_latency
-        
+
         if remaining_budget < 0:
             # Budget too tight, use absolute minimum
             return BudgetPlan(
@@ -180,24 +180,24 @@ class BudgetPlanner:
                 estimated_latency_ms=base_latency,
                 budget_class=budget_class,
             )
-        
+
         # Calculate per-document cost
         per_doc_cost = self._estimate_per_doc_latency(c.use_rerank, c.use_colbert)
-        
+
         # Reserve budget for optional features
         feature_budget = 0
         if c.use_graph:
             feature_budget += self.LATENCY_ESTIMATES["graph_query"]
         if c.use_raptor:
             feature_budget += self.LATENCY_ESTIMATES["raptor_expansion"]
-        
+
         remaining_for_retrieval = remaining_budget - feature_budget
-        
+
         # Determine k based on remaining budget
         # Leave 50% headroom for uncertainty
         max_k = int(remaining_for_retrieval / per_doc_cost / 2)
         suggested_k = max(3, min(20, max_k))
-        
+
         # Adjust iterations based on budget
         iteration_cost = (
             self.LATENCY_ESTIMATES["dense_search"] +
@@ -205,7 +205,7 @@ class BudgetPlanner:
             (per_doc_cost * suggested_k)
         )
         max_iterations = max(1, min(c.max_retrieval_calls, int(remaining_for_retrieval / iteration_cost)))
-        
+
         # Scale by query complexity
         if query_complexity > 0.7:
             # Complex query: more docs, more iterations
@@ -215,12 +215,12 @@ class BudgetPlanner:
             # Simple query: fewer docs, single pass
             suggested_k = max(suggested_k - 2, 3)
             max_iterations = 1
-        
+
         # Determine which features to enable based on remaining budget
         actual_raptor = c.use_raptor and remaining_for_retrieval > 300
         actual_graph = c.use_graph and remaining_for_retrieval > 500
         actual_colbert = c.use_colbert and remaining_for_retrieval > 1000
-        
+
         # Estimate final latency
         estimated = (
             base_latency +
@@ -228,7 +228,7 @@ class BudgetPlanner:
             (self.LATENCY_ESTIMATES["graph_query"] if actual_graph else 0) +
             (self.LATENCY_ESTIMATES["raptor_expansion"] if actual_raptor else 0)
         )
-        
+
         return BudgetPlan(
             suggested_k=suggested_k,
             max_iterations=max_iterations,
@@ -239,27 +239,27 @@ class BudgetPlanner:
             estimated_latency_ms=estimated,
             budget_class=budget_class,
         )
-    
+
     def estimate_query_complexity(self, query: str) -> float:
         """Estimate query complexity on 0-1 scale.
-        
+
         Args:
             query: User query string
-            
+
         Returns:
             Complexity score from 0 (simple) to 1 (complex)
         """
         import re
-        
+
         score = 0.5  # Base score
-        
+
         # Query length factor
         words = query.split()
         if len(words) > 20:
             score += 0.2
         elif len(words) < 5:
             score -= 0.2
-        
+
         # Complexity indicators
         if any(w in query.lower() for w in ['compare', 'versus', 'vs', 'difference', 'similarities']):
             score += 0.2
@@ -269,13 +269,13 @@ class BudgetPlanner:
             score += 0.05
         if query.count('?') > 1:  # Multiple questions
             score += 0.15
-        
+
         # Simplicity indicators
         if query.lower().startswith(('what is', 'define', 'who is')):
             score -= 0.1
         if len(words) < 3:
             score -= 0.2
-        
+
         return max(0.0, min(1.0, score))
 
 

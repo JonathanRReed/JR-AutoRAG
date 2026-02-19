@@ -9,15 +9,14 @@ This module provides:
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .orchestrator import Orchestrator
@@ -35,7 +34,7 @@ class GoldenTestCase:
     expected_answer_points: list[str] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
     id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
-    
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
@@ -44,9 +43,9 @@ class GoldenTestCase:
             "expected_answer_points": self.expected_answer_points,
             "tags": self.tags,
         }
-    
+
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "GoldenTestCase":
+    def from_dict(cls, data: dict[str, Any]) -> GoldenTestCase:
         return cls(
             id=data.get("id", str(uuid.uuid4())[:8]),
             question=data["question"],
@@ -63,7 +62,7 @@ class RetrievalMetrics:
     mrr: float = 0.0  # Mean Reciprocal Rank
     ndcg: float = 0.0  # Normalized Discounted Cumulative Gain
     citation_coverage: float = 0.0  # % of answer claims backed by retrieved spans
-    
+
     def to_dict(self) -> dict[str, float]:
         return {
             "recall_at_k": self.recall_at_k,
@@ -80,7 +79,7 @@ class AnswerMetrics:
     completeness: float = 0.0  # Covers expected points
     refusal_accuracy: float = 0.0  # Correctly refused when no info
     coherence: float = 0.0  # Well-structured
-    
+
     def to_dict(self) -> dict[str, float]:
         return {
             "faithfulness": self.faithfulness,
@@ -101,7 +100,7 @@ class TestCaseResult:
     answer_metrics: AnswerMetrics
     duration_ms: float = 0.0
     trace_id: str = ""
-    
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "test_case_id": self.test_case_id,
@@ -125,7 +124,7 @@ class EvalRunResult:
     answer_metrics: AnswerMetrics  # Aggregated
     individual_results: list[TestCaseResult] = field(default_factory=list)
     duration_ms: float = 0.0
-    
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "run_id": self.run_id,
@@ -136,9 +135,9 @@ class EvalRunResult:
             "individual_results": [r.to_dict() for r in self.individual_results],
             "duration_ms": self.duration_ms,
         }
-    
+
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "EvalRunResult":
+    def from_dict(cls, data: dict[str, Any]) -> EvalRunResult:
         return cls(
             run_id=data["run_id"],
             golden_set_name=data["golden_set_name"],
@@ -156,7 +155,7 @@ class EvalRunResult:
 
 class GoldenSetStore:
     """Persistent storage for golden test sets."""
-    
+
     def __init__(self, path: Path | str | None = None) -> None:
         if path is None:
             path = Path("data/golden_sets.json")
@@ -164,7 +163,7 @@ class GoldenSetStore:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._sets: dict[str, list[GoldenTestCase]] = {}
         self._load()
-    
+
     def _load(self) -> None:
         if self._path.exists():
             try:
@@ -175,37 +174,37 @@ class GoldenSetStore:
                     ]
             except (json.JSONDecodeError, KeyError):
                 self._sets = {}
-    
+
     def _save(self) -> None:
         data = {
             name: [c.to_dict() for c in cases]
             for name, cases in self._sets.items()
         }
         self._path.write_text(json.dumps(data, indent=2))
-    
+
     def create_set(self, name: str, cases: list[GoldenTestCase]) -> None:
         """Create or replace a golden set."""
         self._sets[name] = cases
         self._save()
-    
+
     def add_case(self, set_name: str, case: GoldenTestCase) -> None:
         """Add a test case to an existing set."""
         if set_name not in self._sets:
             self._sets[set_name] = []
         self._sets[set_name].append(case)
         self._save()
-    
+
     def get_set(self, name: str) -> list[GoldenTestCase]:
         """Get a golden set by name."""
         return self._sets.get(name, [])
-    
+
     def list_sets(self) -> list[dict[str, Any]]:
         """List all golden sets with metadata."""
         return [
             {"name": name, "count": len(cases)}
             for name, cases in self._sets.items()
         ]
-    
+
     def delete_set(self, name: str) -> bool:
         """Delete a golden set."""
         if name in self._sets:
@@ -221,7 +220,7 @@ class GoldenSetStore:
 
 class EvalRunStore:
     """Persistent storage for evaluation runs."""
-    
+
     def __init__(self, path: Path | str | None = None) -> None:
         if path is None:
             path = Path("data/eval_runs.json")
@@ -229,28 +228,28 @@ class EvalRunStore:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._runs: dict[str, dict[str, Any]] = {}
         self._load()
-    
+
     def _load(self) -> None:
         if self._path.exists():
             try:
                 self._runs = json.loads(self._path.read_text())
             except json.JSONDecodeError:
                 self._runs = {}
-    
+
     def _save(self) -> None:
         self._path.write_text(json.dumps(self._runs, indent=2))
-    
+
     def save_run(self, result: EvalRunResult) -> None:
         """Save an evaluation run."""
         self._runs[result.run_id] = result.to_dict()
         self._save()
-    
+
     def get_run(self, run_id: str) -> EvalRunResult | None:
         """Get a run by ID."""
         if run_id in self._runs:
             return EvalRunResult.from_dict(self._runs[run_id])
         return None
-    
+
     def list_runs(self, limit: int = 50) -> list[dict[str, Any]]:
         """List recent runs (summary only)."""
         runs = sorted(
@@ -306,16 +305,16 @@ def compute_ndcg(
     """Compute Normalized Discounted Cumulative Gain."""
     if not expected_ids:
         return 1.0
-    
+
     # DCG: sum of relevance / log2(rank+1)
     dcg = 0.0
     for rank, rid in enumerate(retrieved_ids, 1):
         if rid in expected_ids:
             dcg += 1.0 / math.log2(rank + 1)
-    
+
     # Ideal DCG: all relevant in top positions
     idcg = sum(1.0 / math.log2(i + 2) for i in range(len(expected_ids)))
-    
+
     return dcg / idcg if idcg > 0 else 0.0
 
 
@@ -326,7 +325,7 @@ def compute_completeness(
     """Compute answer completeness: fraction of expected points mentioned."""
     if not expected_points:
         return 1.0
-    
+
     answer_lower = answer.lower()
     hits = sum(
         1 for point in expected_points
@@ -344,7 +343,7 @@ def compute_citation_coverage(
     citations = re.findall(r'\[(\d+)\]', answer)
     if num_sources == 0:
         return 1.0 if not citations else 0.0
-    unique_citations = len(set(int(c) for c in citations if c.isdigit()))
+    unique_citations = len({int(c) for c in citations if c.isdigit()})
     return min(unique_citations / num_sources, 1.0)
 
 
@@ -354,7 +353,7 @@ def compute_citation_coverage(
 
 class GoldenSetEvaluator:
     """Runs batch evaluations against golden test sets."""
-    
+
     def __init__(
         self,
         golden_store: GoldenSetStore | None = None,
@@ -362,10 +361,10 @@ class GoldenSetEvaluator:
     ) -> None:
         self.golden_store = golden_store or GoldenSetStore()
         self.run_store = run_store or EvalRunStore()
-    
+
     async def run_batch(
         self,
-        orchestrator: "Orchestrator",
+        orchestrator: Orchestrator,
         set_name: str,
         on_progress: callable | None = None,
     ) -> EvalRunResult:
@@ -373,27 +372,27 @@ class GoldenSetEvaluator:
         test_cases = self.golden_store.get_set(set_name)
         if not test_cases:
             raise ValueError(f"Golden set '{set_name}' not found or empty")
-        
+
         run_id = str(uuid.uuid4())[:12]
         start_time = time.perf_counter()
         individual_results: list[TestCaseResult] = []
-        
+
         for i, case in enumerate(test_cases):
             if on_progress:
                 on_progress(i + 1, len(test_cases), case.question)
-            
+
             case_start = time.perf_counter()
-            
+
             # Run the query
             response = await orchestrator.answer(case.question)
-            
+
             case_duration = (time.perf_counter() - case_start) * 1000
-            
+
             # Extract retrieved source IDs
             retrieved_ids = [
                 s.get("id", "") for s in response.get("sources", [])
             ]
-            
+
             # Compute retrieval metrics
             retrieval_metrics = RetrievalMetrics(
                 recall_at_k=compute_recall_at_k(retrieved_ids, case.expected_source_ids),
@@ -404,7 +403,7 @@ class GoldenSetEvaluator:
                     len(response.get("sources", [])),
                 ),
             )
-            
+
             # Compute answer metrics
             answer_metrics = AnswerMetrics(
                 completeness=compute_completeness(
@@ -415,7 +414,7 @@ class GoldenSetEvaluator:
                 faithfulness=response.get("metrics", {}).get("faithfulness", 0.0),
                 coherence=response.get("metrics", {}).get("coherence", 0.0),
             )
-            
+
             individual_results.append(TestCaseResult(
                 test_case_id=case.id,
                 question=case.question,
@@ -426,7 +425,7 @@ class GoldenSetEvaluator:
                 duration_ms=case_duration,
                 trace_id=response.get("trace_id", ""),
             ))
-        
+
         # Aggregate metrics
         n = len(individual_results)
         agg_retrieval = RetrievalMetrics(
@@ -440,24 +439,24 @@ class GoldenSetEvaluator:
             completeness=sum(r.answer_metrics.completeness for r in individual_results) / n,
             coherence=sum(r.answer_metrics.coherence for r in individual_results) / n,
         )
-        
+
         total_duration = (time.perf_counter() - start_time) * 1000
-        
+
         result = EvalRunResult(
             run_id=run_id,
             golden_set_name=set_name,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             retrieval_metrics=agg_retrieval,
             answer_metrics=agg_answer,
             individual_results=individual_results,
             duration_ms=total_duration,
         )
-        
+
         # Persist the run
         self.run_store.save_run(result)
-        
+
         return result
-    
+
     def compare_runs(
         self,
         run_id_a: str,
@@ -466,10 +465,10 @@ class GoldenSetEvaluator:
         """Compare two evaluation runs to detect regressions."""
         run_a = self.run_store.get_run(run_id_a)
         run_b = self.run_store.get_run(run_id_b)
-        
+
         if not run_a or not run_b:
             raise ValueError("One or both runs not found")
-        
+
         def diff(a: float, b: float) -> dict[str, float]:
             return {
                 "before": a,
@@ -477,7 +476,7 @@ class GoldenSetEvaluator:
                 "delta": b - a,
                 "delta_pct": ((b - a) / a * 100) if a > 0 else 0,
             }
-        
+
         return {
             "run_a": run_id_a,
             "run_b": run_id_b,
@@ -511,7 +510,7 @@ class GoldenSetEvaluator:
             },
             "regressions": self._detect_regressions(run_a, run_b),
         }
-    
+
     def _detect_regressions(
         self,
         before: EvalRunResult,
@@ -520,20 +519,20 @@ class GoldenSetEvaluator:
     ) -> list[str]:
         """Detect significant regressions."""
         regressions = []
-        
+
         checks = [
             ("recall_at_k", before.retrieval_metrics.recall_at_k, after.retrieval_metrics.recall_at_k),
             ("mrr", before.retrieval_metrics.mrr, after.retrieval_metrics.mrr),
             ("faithfulness", before.answer_metrics.faithfulness, after.answer_metrics.faithfulness),
             ("completeness", before.answer_metrics.completeness, after.answer_metrics.completeness),
         ]
-        
+
         for name, before_val, after_val in checks:
             if before_val > 0 and (before_val - after_val) / before_val > threshold:
                 regressions.append(
                     f"{name} dropped {((before_val - after_val) / before_val * 100):.1f}%"
                 )
-        
+
         return regressions
 
 

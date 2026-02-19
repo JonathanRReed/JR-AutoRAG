@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import sqlite3
 import time
@@ -136,10 +137,8 @@ class DocumentStore:
             )
         self._conn.commit()
         self._touch_mutation()
-        try:
+        with contextlib.suppress(Exception):
             self._legacy_json_path.unlink()
-        except Exception:
-            pass
 
     def _load_all(self) -> None:
         self._docs = {}
@@ -286,7 +285,5 @@ class DocumentStore:
             self._docs = {}
             self._title_index = {}
             if self._legacy_json_path and self._legacy_json_path.exists():
-                try:
+                with contextlib.suppress(Exception):
                     self._legacy_json_path.unlink()
-                except Exception:
-                    pass

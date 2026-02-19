@@ -4,16 +4,16 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Header
+from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
 from ..core.providers import (
-    discover_local_providers,
-    OpenRouterProvider,
     OllamaCloudProvider,
+    OpenRouterProvider,
     ProviderError,
+    discover_local_providers,
 )
-from ..schemas.config import LocalProviderInfo, ProviderKind
+from ..schemas.config import LocalProviderInfo
 
 router = APIRouter(prefix="/providers", tags=["providers"])
 
@@ -85,7 +85,7 @@ async def openrouter_status(
     provided_key = _extract_openrouter_key(x_openrouter_key, authorization)
     provider = OpenRouterProvider(api_key=provided_key)
     api_key = provider.api_key
-    
+
     if not api_key:
         return OpenRouterStatus(
             available=False,
@@ -93,9 +93,9 @@ async def openrouter_status(
             default_model=provider.default_model or "openai/gpt-4o-mini",
             error_message="OpenRouter API key not configured",
         )
-    
+
     try:
-        models = await provider.list_models()
+        await provider.list_models()
         return OpenRouterStatus(
             available=True,
             api_key_configured=True,
@@ -125,7 +125,7 @@ async def list_openrouter_models(
             status_code=401,
             detail="OpenRouter API key not configured",
         )
-    
+
     try:
         models = await provider.list_models()
         return [
@@ -181,19 +181,19 @@ async def test_openrouter(
 ) -> OpenRouterTestResponse:
     """Test OpenRouter connection with a simple prompt."""
     import time
-    
+
     provided_key = _extract_openrouter_key(x_openrouter_key, authorization)
     provider = OpenRouterProvider(api_key=provided_key)
     api_key = provider.api_key
     model = request.model or provider.default_model or "openai/gpt-4o-mini"
-    
+
     if not api_key:
         return OpenRouterTestResponse(
             success=False,
             model=model,
             error="OpenRouter API key not configured",
         )
-    
+
     start = time.perf_counter()
     try:
         response = await provider.chat(

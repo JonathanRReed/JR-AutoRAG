@@ -12,7 +12,7 @@ import random
 import statistics
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -73,7 +73,7 @@ class Experiment:
     description: str
     variants: list[ExperimentVariant]
     status: ExperimentStatus = ExperimentStatus.DRAFT
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     started_at: datetime | None = None
     completed_at: datetime | None = None
     results: list[ExperimentResult] = field(default_factory=list)
@@ -139,7 +139,7 @@ class ABTestingFramework:
             return False
 
         exp.status = ExperimentStatus.RUNNING
-        exp.started_at = datetime.now(timezone.utc)
+        exp.started_at = datetime.now(UTC)
         self._active_experiment_id = experiment_id
         return True
 
@@ -150,7 +150,7 @@ class ABTestingFramework:
             return False
 
         exp.status = ExperimentStatus.COMPLETED
-        exp.completed_at = datetime.now(timezone.utc)
+        exp.completed_at = datetime.now(UTC)
 
         if self._active_experiment_id == experiment_id:
             self._active_experiment_id = None
@@ -201,7 +201,7 @@ class ABTestingFramework:
         result = ExperimentResult(
             variant_id=variant_id,
             query=query,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             latency_ms=latency_ms,
             precision=precision,
             recall=recall,
@@ -288,19 +288,20 @@ class ABTestingFramework:
             elif metric == "recall":
                 if stat.avg_recall > best_stat.avg_recall:
                     best_stat = stat
-            elif metric == "quality" and stat.avg_quality is not None:
-                if best_stat.avg_quality is None or stat.avg_quality > best_stat.avg_quality:
-                    best_stat = stat
-        
+            elif metric == "quality" and stat.avg_quality is not None and (
+                best_stat.avg_quality is None or stat.avg_quality > best_stat.avg_quality
+            ):
+                best_stat = stat
+
         if not best_stat:
             return None
-        
+
         return exp.get_variant(best_stat.variant_id)
-    
+
     def get_experiment(self, experiment_id: str) -> Experiment | None:
         """Get experiment by ID."""
         return self._experiments.get(experiment_id)
-    
+
     def list_experiments(self) -> list[Experiment]:
         """List all experiments."""
         return list(self._experiments.values())
