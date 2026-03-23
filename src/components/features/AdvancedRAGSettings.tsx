@@ -1,14 +1,17 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Boxes, ChevronDown, GitMerge, Layers3, Package, Sliders, Info, ShieldCheck, Loader2, Binary, Zap } from "lucide-react";
-import type { RetrievalDefaults } from "@/types";
+import type { FallbackConfig, RetrievalDefaults, SubsystemBackendConfig } from "@/types";
 
 interface AdvancedRAGSettingsProps {
     retrieval: RetrievalDefaults | undefined;
+    backends: Record<string, SubsystemBackendConfig> | undefined;
+    fallbacks: Record<string, FallbackConfig> | undefined;
+    updateBackend: (subsystem: string, patch: Partial<SubsystemBackendConfig>) => void;
     updateRetrieval: (field: keyof RetrievalDefaults, value: string | number | boolean) => void;
     onSave: () => void;
     isSaving: boolean;
@@ -43,6 +46,9 @@ function InlineHint({ label, detail }: { label: string; detail: string }) {
 
 export function AdvancedRAGSettings({
     retrieval,
+    backends,
+    fallbacks,
+    updateBackend,
     updateRetrieval,
     onSave,
     isSaving,
@@ -93,6 +99,13 @@ export function AdvancedRAGSettings({
         "BAAI/bge-reranker-large",
         "mixedbread-ai/mxbai-rerank-base-v1",
     ];
+    const retrievalBackends = [
+        ["embedding", "Embedding Lane"],
+        ["reranker", "Reranker Lane"],
+        ["vector_store", "Vector Store"],
+        ["sparse_index", "Sparse Index"],
+        ["graph_store", "Graph Store"],
+    ] as const;
     return (
         <Card className="overflow-hidden">
             <CardHeader className="bg-muted/20">
@@ -139,6 +152,36 @@ export function AdvancedRAGSettings({
             {isExpanded && (
                 <CardContent className="pt-8">
                     <div className="grid gap-6">
+                        <section className="space-y-4 rounded-lg border border-border/60 bg-muted/10 p-4">
+                            <div className="flex items-center gap-2">
+                                <div className="h-4 w-1 rounded-full bg-border" />
+                                <div>
+                                    <h4 className="text-sm font-semibold uppercase tracking-wider text-foreground">Backend Routing</h4>
+                                    <p className="text-xs text-muted-foreground">Control local-first retrieval backends and fallback chains.</p>
+                                </div>
+                            </div>
+                            <div className="grid gap-4 sm:grid-cols-2">
+                                {retrievalBackends.map(([key, label]) => {
+                                    const backend = backends?.[key];
+                                    const fallback = fallbacks?.[key];
+                                    return (
+                                        <div key={key} className="space-y-2">
+                                            <Label htmlFor={`routing-${key}`} className="text-xs">{label}</Label>
+                                            <Input
+                                                id={`routing-${key}`}
+                                                value={backend?.backend_id ?? ""}
+                                                onChange={(e) => updateBackend(key, { backend_id: e.target.value, label: backend?.label ?? label })}
+                                                className="font-mono text-xs"
+                                            />
+                                            <p className="text-[10px] uppercase tracking-tight text-muted-foreground">
+                                                {backend?.capabilities?.mode ?? "local"} · fallback {fallback?.enabled ? "on" : "off"} · {fallback?.order?.[0] ?? "none"}
+                                            </p>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </section>
+
                         {/* Chunking Strategy */}
                         <section className="space-y-4 rounded-lg border border-border/60 bg-muted/10 p-4">
                             <div className="flex items-center gap-2">

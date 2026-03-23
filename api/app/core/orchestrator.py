@@ -45,6 +45,8 @@ from .hallucination_firewall import HallucinationFirewall
 from .hierarchy import DocumentTree, HierarchicalRetriever, HierarchyBuilder
 from .hyde import get_hyde_generator
 from .learned_router import LearnedRouter, RouteDecision
+from .local_first import LocalFirstRegistry
+from .memory import ConversationMemory
 from .persistence import get_disk_query_cache
 from .pii_detector import get_pii_detector
 from .planner import Planner, PlanStep
@@ -93,12 +95,16 @@ class Orchestrator:
         gatherer: Gatherer,
         provider_factory: ProviderFactory,
         telemetry: TelemetryStore,
+        memory_store: ConversationMemory | None = None,
+        policy_registry: LocalFirstRegistry | None = None,
     ) -> None:
         self._planner = planner
         self._retrieval = retrieval
         self._gatherer = gatherer
         self._providers = provider_factory
         self._telemetry = telemetry
+        self._memory = memory_store
+        self._policy_registry = policy_registry
         self._provider: LLMProvider | None = None
         self._compressor = ContextCompressor()
         self._reflector = SelfReflector()
@@ -150,6 +156,8 @@ class Orchestrator:
         self._config = config
         self._planner.rebuild(config)
         if config.provider:
+            if self._policy_registry is not None:
+                self._policy_registry.ensure_runtime_allowed("llm")
             self._provider = self._providers.build(config.provider)
         if hasattr(self._planner, "set_provider"):
             self._planner.set_provider(self._provider)
@@ -658,6 +666,7 @@ class Orchestrator:
         on_stage: Callable[[str], None] | None = None,
         on_progress: Callable[[dict], None] | None = None,
         history: list[dict[str, str]] | None = None,
+        conversation_id: str | None = None,
         trace_id: str | None = None,
         query_mode: QueryMode | None = None,  # P0.1: Grounded vs Open Domain
         cache_scope: str | None = None,
@@ -673,6 +682,10 @@ class Orchestrator:
         pipeline_start = datetime.utcnow()
         pipeline_steps: list[PipelineStep] = []
         reflection_result = None
+        runtime_profile = self._retrieval.get_runtime_profile() if hasattr(self._retrieval, "get_runtime_profile") else {}
+        memory_context = ""
+        if conversation_id and self._memory is not None:
+            memory_context = self._memory.build_context_prompt(conversation_id, query)
 
         # Progress tracking
         query_start_time = time.perf_counter()
@@ -842,6 +855,20 @@ class Orchestrator:
         )
         record_step(cache_step)
 
+        policy_step_start = datetime.utcnow()
+        policy_step = self._make_step(
+            "policy",
+            time.perf_counter(),
+            policy_step_start,
+            {
+                "conversation_id": conversation_id or "",
+                "deployment_profile": runtime_profile.get("deployment_profile", ""),
+                "runtime_backends": runtime_profile.get("backends", {}),
+                "memory_context_loaded": bool(memory_context),
+            },
+        )
+        record_step(policy_step)
+
         # Step 1: Planning (now with query analysis)
         if on_stage:
             on_stage("planning")
@@ -905,7 +932,10 @@ class Orchestrator:
             # Generate direct answer without retrieval
             return await self._generate_direct_answer(
                 query, pipeline_start, pipeline_steps, cache_hash,
-                on_step, on_token, on_stage, record_step
+                on_step, on_token, on_stage, record_step,
+                conversation_id=conversation_id,
+                memory_context=memory_context,
+                runtime_profile=runtime_profile,
             )
 
         # Handle clarification case
@@ -914,7 +944,9 @@ class Orchestrator:
             record_step(self._make_step("gating", gating_start, gating_start_time, gating_details))
             # Return clarification request
             return self._build_clarification_response(
-                query, gate_result.clarification_question, pipeline_start, pipeline_steps
+                query, gate_result.clarification_question, pipeline_start, pipeline_steps,
+                conversation_id=conversation_id,
+                runtime_profile=runtime_profile,
             )
 
         # Update max iterations based on gating decision
@@ -1625,6 +1657,8 @@ class Orchestrator:
                     chunks=chunks,
                     pipeline_start=pipeline_start,
                     pipeline_steps=pipeline_steps,
+                    conversation_id=conversation_id,
+                    runtime_profile=runtime_profile,
                 )
 
         compression_enabled = bool(self._config and self._config.retrieval.compression)
@@ -1811,6 +1845,8 @@ For each question:
                             messages = [
                                 {"role": "system", "content": system_prompt},
                             ]
+                            if memory_context:
+                                messages.append({"role": "system", "content": memory_context})
                             # Inject history if available (Phase 12)
                             if history:
                                 for turn in history:
@@ -2232,6 +2268,18 @@ The retrieved evidence contains some conflicting information. When you encounter
             retrieval_mode = "raptor"
         flare_retrievals = int(gen_details.get("flare_retrievals", 0)) if gen_details else 0
         firewall_pass_rate = firewall_details.get("pass_rate", 1.0)
+        memory_result = None
+        if conversation_id and self._memory is not None:
+            memory_result = self._memory.record_exchange(
+                conversation_id=conversation_id,
+                user_query=query,
+                answer=answer,
+                metadata={
+                    "chunks_used": [chunk.id for chunk in chunks],
+                    "sources_count": len(citations),
+                    "query_type": str(query_type),
+                },
+            )
 
         trace = self._telemetry.record(
             prompt=query,
@@ -2260,6 +2308,11 @@ The retrieved evidence contains some conflicting information. When you encounter
                 "precision_stats": precision_stats,
                 "rerank_enabled": rerank_enabled,
                 "pii_redacted": pii_redacted,
+                "deployment_profile": runtime_profile.get("deployment_profile", ""),
+                "runtime_backends": runtime_profile.get("backends", {}),
+                "memory_written": bool(memory_result and memory_result.get("memory_written")),
+                "memory_score": memory_result.get("memory_score", 0.0) if memory_result else 0.0,
+                "conversation_id": conversation_id or "",
             },
             steps=pipeline_steps,
             started_at=pipeline_start,
@@ -2315,6 +2368,11 @@ The retrieved evidence contains some conflicting information. When you encounter
                 "precision_stats": precision_stats,
                 "rerank_enabled": rerank_enabled,
                 "pii_redacted": pii_redacted,
+                "deployment_profile": runtime_profile.get("deployment_profile", ""),
+                "runtime_backends": runtime_profile.get("backends", {}),
+                "memory_written": bool(memory_result and memory_result.get("memory_written")),
+                "memory_score": memory_result.get("memory_score", 0.0) if memory_result else 0.0,
+                "conversation_id": conversation_id or "",
             },
             "confidence": {
                 "overall": reflection_result.confidence if reflection_result else 0.5,
@@ -2387,6 +2445,9 @@ The retrieved evidence contains some conflicting information. When you encounter
         on_token: Callable[[str], None] | None,
         on_stage: Callable[[str], None] | None,
         record_step: Callable[[PipelineStep], None],
+        conversation_id: str | None = None,
+        memory_context: str = "",
+        runtime_profile: dict[str, Any] | None = None,
     ) -> dict:
         """Generate answer directly without retrieval (for simple queries LLM can handle)."""
         if on_stage:
@@ -2432,8 +2493,10 @@ Be helpful, accurate, and concise."""
 
             messages = [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": query},
             ]
+            if memory_context:
+                messages.append({"role": "system", "content": memory_context})
+            messages.append({"role": "user", "content": query})
 
             gen_details["provider"] = getattr(provider, "base_url", "unknown")
             gen_details["model"] = getattr(provider, "default_model", "unknown")
@@ -2465,6 +2528,14 @@ Be helpful, accurate, and concise."""
         total_duration_ms = sum(s.duration_ms for s in pipeline_steps)
 
         answer, pii_redacted = self._maybe_redact_pii(answer)
+        memory_result = None
+        if conversation_id and self._memory is not None:
+            memory_result = self._memory.record_exchange(
+                conversation_id=conversation_id,
+                user_query=query,
+                answer=answer,
+                metadata={"chunks_used": [], "sources_count": 0, "query_type": "direct"},
+            )
         trace = self._telemetry.record(
             prompt=query,
             answer=answer,
@@ -2476,6 +2547,11 @@ Be helpful, accurate, and concise."""
                 "cache_hit": False,
                 "mode": "direct_no_retrieval",
                 "pii_redacted": pii_redacted,
+                "deployment_profile": (runtime_profile or {}).get("deployment_profile", ""),
+                "runtime_backends": (runtime_profile or {}).get("backends", {}),
+                "conversation_id": conversation_id or "",
+                "memory_written": bool(memory_result and memory_result.get("memory_written")),
+                "memory_score": memory_result.get("memory_score", 0.0) if memory_result else 0.0,
             },
             steps=pipeline_steps,
             started_at=pipeline_start,
@@ -2506,6 +2582,11 @@ Be helpful, accurate, and concise."""
                 "cache_hit": False,
                 "mode": "direct_no_retrieval",
                 "pii_redacted": pii_redacted,
+                "deployment_profile": (runtime_profile or {}).get("deployment_profile", ""),
+                "runtime_backends": (runtime_profile or {}).get("backends", {}),
+                "conversation_id": conversation_id or "",
+                "memory_written": bool(memory_result and memory_result.get("memory_written")),
+                "memory_score": memory_result.get("memory_score", 0.0) if memory_result else 0.0,
             },
             "steps": steps_out,
         }
@@ -2521,6 +2602,8 @@ Be helpful, accurate, and concise."""
         clarification_question: str | None,
         pipeline_start: datetime,
         pipeline_steps: list[PipelineStep],
+        conversation_id: str | None = None,
+        runtime_profile: dict[str, Any] | None = None,
     ) -> dict:
         """Build response asking user for clarification."""
         total_duration_ms = sum(s.duration_ms for s in pipeline_steps)
@@ -2538,6 +2621,9 @@ Be helpful, accurate, and concise."""
                 "duration_ms": total_duration_ms,
                 "cache_hit": False,
                 "mode": "clarification_needed",
+                "deployment_profile": (runtime_profile or {}).get("deployment_profile", ""),
+                "runtime_backends": (runtime_profile or {}).get("backends", {}),
+                "conversation_id": conversation_id or "",
             },
             steps=pipeline_steps,
             started_at=pipeline_start,
@@ -2568,6 +2654,9 @@ Be helpful, accurate, and concise."""
                 "cache_hit": False,
                 "mode": "clarification_needed",
                 "clarification_question": clarification,
+                "deployment_profile": (runtime_profile or {}).get("deployment_profile", ""),
+                "runtime_backends": (runtime_profile or {}).get("backends", {}),
+                "conversation_id": conversation_id or "",
             },
             "steps": steps_out,
             "needs_clarification": True,
@@ -2580,6 +2669,8 @@ Be helpful, accurate, and concise."""
         chunks: list[EvidenceChunk],
         pipeline_start: datetime,
         pipeline_steps: list[PipelineStep],
+        conversation_id: str | None = None,
+        runtime_profile: dict[str, Any] | None = None,
     ) -> dict:
         """Build response when abstaining due to insufficient evidence.
 
@@ -2607,6 +2698,9 @@ Be helpful, accurate, and concise."""
                 "mode": "abstained",
                 "abstention_reason": abstention_result.reason.value if abstention_result.reason else "unknown",
                 "pii_redacted": pii_redacted,
+                "deployment_profile": (runtime_profile or {}).get("deployment_profile", ""),
+                "runtime_backends": (runtime_profile or {}).get("backends", {}),
+                "conversation_id": conversation_id or "",
             },
             steps=pipeline_steps,
             started_at=pipeline_start,

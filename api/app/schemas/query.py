@@ -13,6 +13,7 @@ class QueryRequest(BaseModel):
     question: str = Field(..., max_length=MAX_QUESTION_LENGTH, description="The question to answer")
     document_ids: list[str] | None = None
     history: list[dict[str, str]] | None = None
+    conversation_id: str | None = None
 
 
 class ChunkOut(BaseModel):

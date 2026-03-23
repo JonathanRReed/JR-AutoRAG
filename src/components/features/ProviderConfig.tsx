@@ -5,11 +5,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Settings2, Info } from "lucide-react";
-import type { AppConfig, ProviderConfig as ProviderConfigType } from "@/types";
+import type { AppConfig, DeploymentProfile, ProviderConfig as ProviderConfigType, SubsystemBackendConfig } from "@/types";
 
 interface ProviderConfigProps {
   config: AppConfig | null;
   setConfig: React.Dispatch<React.SetStateAction<AppConfig | null>>;
+  updateDeploymentProfile: (value: DeploymentProfile) => void;
+  updateBackend: (subsystem: string, patch: Partial<SubsystemBackendConfig>) => void;
   selectedProfile: string;
   handleSelectProfile: (name: string) => void;
   newProfileName: string;
@@ -37,6 +39,8 @@ function InlineHint({ label, detail }: { label: string; detail: string }) {
 export function ProviderConfig({
   config,
   setConfig,
+  updateDeploymentProfile,
+  updateBackend,
   selectedProfile,
   handleSelectProfile,
   newProfileName,
@@ -55,6 +59,14 @@ export function ProviderConfig({
   }, [config, selectedProfile]);
 
   const configProvider = config?.provider;
+  const backendEntries = [
+    ["document_parser", "Document Parser"],
+    ["ocr", "OCR Backend"],
+    ["llm", "LLM Lane"],
+    ["memory", "Memory"],
+    ["telemetry", "Telemetry"],
+  ] as const;
+  const ocrVisionModel = config?.backends?.ocr?.settings?.vision_model;
 
   const updateProvider = (field: keyof ProviderConfigType, value: string) => {
     setConfig(cfg =>
@@ -154,6 +166,22 @@ export function ProviderConfig({
           <div className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
+                <Label htmlFor="deploymentProfile" className="text-xs">Deployment Profile</Label>
+                <Select
+                  value={config?.deployment_profile ?? "local_only"}
+                  onValueChange={(value) => updateDeploymentProfile(value as DeploymentProfile)}
+                >
+                  <SelectTrigger id="deploymentProfile">
+                    <SelectValue placeholder="Select deployment mode" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="local_only">Local Only</SelectItem>
+                    <SelectItem value="hybrid">Hybrid</SelectItem>
+                    <SelectItem value="cloud_accelerated">Cloud Accelerated</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
                 <Label htmlFor="providerName" className="text-xs">Provider Name</Label>
                 <Input
                   id="providerName"
@@ -216,6 +244,52 @@ export function ProviderConfig({
                 placeholder="sk-..."
                 className="max-w-md"
               />
+            </div>
+
+            <div className="space-y-3 rounded-lg border border-border/60 bg-muted/10 p-4">
+              <div>
+                <p className="text-sm font-medium text-foreground">Local-First Backend Lanes</p>
+                <p className="text-xs text-muted-foreground">Choose the active backend class per subsystem.</p>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                {backendEntries.map(([key, label]) => {
+                  const backend = config?.backends?.[key];
+                  return (
+                    <div key={key} className="space-y-2">
+                      <Label htmlFor={`backend-${key}`} className="text-xs">{label}</Label>
+                      <Input
+                        id={`backend-${key}`}
+                        value={backend?.backend_id ?? ""}
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                          updateBackend(key, { backend_id: e.target.value, label: backend?.label ?? label })
+                        }
+                        placeholder={`${key}.local.default`}
+                        className="font-mono text-xs"
+                      />
+                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                        {backend?.capabilities?.mode ?? "local"} · {backend?.capabilities?.requires_network ? "networked" : "offline-capable"}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="ocrVisionModel" className="text-xs">OCR Vision Model</Label>
+                <Input
+                  id="ocrVisionModel"
+                  value={typeof ocrVisionModel === "string" ? ocrVisionModel : ""}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    updateBackend("ocr", {
+                      settings: {
+                        ...(config?.backends?.ocr?.settings ?? {}),
+                        vision_model: e.target.value,
+                      },
+                    })
+                  }
+                  placeholder="Uses provider generator model if empty"
+                  className="font-mono text-xs"
+                />
+              </div>
             </div>
 
             <div className="flex items-center gap-3 pt-2">

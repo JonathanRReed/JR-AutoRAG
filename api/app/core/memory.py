@@ -38,6 +38,15 @@ class ConversationContext:
     follow_up_detected: bool
 
 
+@dataclass
+class EpisodicMemory:
+    id: str
+    summary: str
+    timestamp: datetime
+    evidence: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
 class ConversationMemory:
     """Stores and manages conversation history for multi-turn RAG.
 
@@ -74,6 +83,7 @@ class ConversationMemory:
         self._max_turns = max_turns
         self._context_window = context_window_turns
         self._conversations: dict[str, list[ConversationTurn]] = {}
+        self._episodic_memories: dict[str, list[EpisodicMemory]] = {}
         self._follow_up_re = [
             re.compile(p, re.IGNORECASE) for p in self.FOLLOW_UP_PATTERNS
         ]
@@ -213,17 +223,95 @@ class ConversationMemory:
     ) -> str:
         """Build a context string for the LLM prompt."""
         context = self.get_context(conversation_id, current_query)
+        episodic = self._episodic_memories.get(conversation_id, [])
 
         if not context.relevant_turns:
-            return ""
+            if not episodic:
+                return ""
+            return "\n".join(
+                [
+                    "Important prior memories:",
+                    *[f"- {memory.summary}" for memory in episodic[-3:]],
+                ]
+            )
 
         parts = ["Previous conversation:"]
         for turn in context.relevant_turns[-3:]:
             role = "User" if turn.role == "user" else "Assistant"
             content = turn.content[:300] + "..." if len(turn.content) > 300 else turn.content
             parts.append(f"{role}: {content}")
+        if episodic:
+            parts.append("Important prior memories:")
+            parts.extend(f"- {memory.summary}" for memory in episodic[-3:])
 
         return "\n".join(parts)
+
+    def score_memory_worthiness(
+        self,
+        user_query: str,
+        answer: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> float:
+        score = 0.0
+        if len(user_query.split()) >= 6:
+            score += 0.25
+        if len(answer.split()) >= 40:
+            score += 0.2
+        if metadata and metadata.get("chunks_used"):
+            score += 0.2
+        if metadata and metadata.get("sources_count", 0) >= 2:
+            score += 0.2
+        if self.is_follow_up(user_query):
+            score += 0.1
+        if any(term in user_query.lower() for term in ("remember", "preference", "always", "never", "my ", "our ")):
+            score += 0.25
+        return min(score, 1.0)
+
+    def record_exchange(
+        self,
+        conversation_id: str,
+        user_query: str,
+        answer: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        user_turn = self.add_turn(conversation_id, "user", user_query, metadata=metadata or {})
+        assistant_turn = self.add_turn(
+            conversation_id,
+            "assistant",
+            answer,
+            metadata=metadata or {},
+            chunks_used=list((metadata or {}).get("chunks_used", [])),
+            query_type=str((metadata or {}).get("query_type", "")),
+        )
+        score = self.score_memory_worthiness(user_query, answer, metadata)
+        memory_written = False
+        if score >= 0.55:
+            summary = self._summarize_exchange(user_query, answer)
+            self._episodic_memories.setdefault(conversation_id, []).append(
+                EpisodicMemory(
+                    id=str(uuid.uuid4()),
+                    summary=summary,
+                    timestamp=datetime.now(UTC),
+                    evidence=list((metadata or {}).get("chunks_used", [])),
+                    metadata={"score": round(score, 3)},
+                )
+            )
+            self._episodic_memories[conversation_id] = self._episodic_memories[conversation_id][-10:]
+            memory_written = True
+        return {
+            "user_turn_id": user_turn.id,
+            "assistant_turn_id": assistant_turn.id,
+            "memory_score": round(score, 3),
+            "memory_written": memory_written,
+            "episodic_count": len(self._episodic_memories.get(conversation_id, [])),
+        }
+
+    def _summarize_exchange(self, user_query: str, answer: str) -> str:
+        trimmed_query = user_query.strip()
+        trimmed_answer = answer.strip().replace("\n", " ")
+        if len(trimmed_answer) > 180:
+            trimmed_answer = trimmed_answer[:177].rstrip() + "..."
+        return f"Q: {trimmed_query} A: {trimmed_answer}"
 
     def clear_conversation(self, conversation_id: str) -> None:
         """Clear a conversation's history."""

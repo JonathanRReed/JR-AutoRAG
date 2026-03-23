@@ -35,6 +35,25 @@ def test_config_roundtrip(client: TestClient) -> None:
     assert update.json()["profile"] == "Smoke"
 
 
+def test_config_rejects_cloud_provider_in_local_only_mode(client: TestClient) -> None:
+    resp = client.get("/config")
+    assert resp.status_code == 200
+    config = resp.json()
+    config["deployment_profile"] = "local_only"
+    config["provider"] = {
+        "name": "OpenRouter",
+        "base_url": "https://openrouter.ai/api/v1",
+        "generator_model": "openai/gpt-4o-mini",
+    }
+
+    update = client.put("/config", json=config)
+    assert update.status_code in {400, 422}
+    detail = update.json()["detail"]
+    if isinstance(detail, list):
+        detail = " ".join(str(item) for item in detail)
+    assert "local-only" in str(detail).lower()
+
+
 def test_document_ingest_query_and_evaluation(client: TestClient) -> None:
     payload = {
         "title": "Intro",
@@ -53,12 +72,13 @@ def test_document_ingest_query_and_evaluation(client: TestClient) -> None:
     assert len(docs.json()) == 1
     assert docs.json()[0]["metadata"]["langextract_status"] == "disabled"
 
-    question = {"question": "What is JR AutoRAG?"}
+    question = {"question": "What is JR AutoRAG?", "conversation_id": "smoke-session"}
     query_resp = client.post("/query", json=question)
     assert query_resp.status_code == 200
     query_data = query_resp.json()
     assert "answer" in query_data
     assert query_data["chunks"], "expected evidence chunks in response"
+    assert query_data["metrics"]["conversation_id"] == "smoke-session"
 
     eval_payload = {"name": "SmokeTest", "questions": ["What is JR AutoRAG?"]}
     eval_resp = client.post("/evaluation", json=eval_payload)
@@ -74,6 +94,7 @@ def test_upload_accepts_langextract_override_fields(client: TestClient) -> None:
         data={
             "title": "Upload Intro",
             "sync": "true",
+            "ocr_policy": "dedicated_ocr",
             "langextract_profile_override": "contract_terms_v1",
             "langextract_prompt_override": "Extract obligations and deadlines.",
         },
@@ -82,3 +103,7 @@ def test_upload_accepts_langextract_override_fields(client: TestClient) -> None:
     assert upload.status_code == 200
     body = upload.json()
     assert body["chunk_count"] >= 1
+
+    docs = client.get("/documents")
+    assert docs.status_code == 200
+    assert docs.json()[0]["metadata"]["ocr_policy"] == "dedicated_ocr"

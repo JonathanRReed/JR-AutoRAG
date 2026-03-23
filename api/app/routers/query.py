@@ -19,12 +19,18 @@ from ..services import ServiceContainer, get_container
 router = APIRouter(prefix="/query", tags=["query"])
 
 
-def _make_cache_scope(user_id: str | None, document_ids: list[str] | None) -> str | None:
-    if not user_id and not document_ids:
+def _make_cache_scope(
+    user_id: str | None,
+    document_ids: list[str] | None,
+    conversation_id: str | None = None,
+) -> str | None:
+    if not user_id and not document_ids and not conversation_id:
         return None
     parts = [user_id or "public"]
     if document_ids:
         parts.append(",".join(sorted(document_ids)))
+    if conversation_id:
+        parts.append(f"conversation:{conversation_id}")
     digest = hashlib.sha256("|".join(parts).encode()).hexdigest()
     return digest[:16]
 
@@ -46,13 +52,13 @@ def _resolve_query_access(
 
     if not auth_enabled:
         document_ids = payload.document_ids
-        return document_ids, _make_cache_scope(None, document_ids)
+        return document_ids, _make_cache_scope(None, document_ids, payload.conversation_id)
 
     default_public, _ = resolve_acl_defaults(auth_enabled)
     enforcer = get_acl_enforcer(default_public=default_public)
 
     if "admin" in scopes:
-        return payload.document_ids, _make_cache_scope(user_id, payload.document_ids)
+        return payload.document_ids, _make_cache_scope(user_id, payload.document_ids, payload.conversation_id)
 
     docs = container.document_store.list()
 
@@ -64,10 +70,10 @@ def _resolve_query_access(
         ]
         if not allowed:
             raise HTTPException(status_code=403, detail="No access to requested documents")
-        return allowed, _make_cache_scope(user_id, allowed)
+        return allowed, _make_cache_scope(user_id, allowed, payload.conversation_id)
 
     if not docs:
-        return None, _make_cache_scope(user_id, None)
+        return None, _make_cache_scope(user_id, None, payload.conversation_id)
 
     allowed_ids = [
         doc.id for doc in docs if enforcer.check_access(doc.id, user_id, "read")[0]
@@ -76,8 +82,8 @@ def _resolve_query_access(
         raise HTTPException(status_code=403, detail="No accessible documents")
 
     if len(allowed_ids) == len(docs):
-        return None, _make_cache_scope(user_id, None)
-    return allowed_ids, _make_cache_scope(user_id, allowed_ids)
+        return None, _make_cache_scope(user_id, None, payload.conversation_id)
+    return allowed_ids, _make_cache_scope(user_id, allowed_ids, payload.conversation_id)
 
 
 @router.post("", response_model=QueryResponse)
@@ -98,6 +104,7 @@ async def ask(
         payload.question,
         document_ids=document_ids,
         history=payload.history,
+        conversation_id=payload.conversation_id,
         cache_scope=cache_scope,
     )
     return QueryResponse(**result)
@@ -153,6 +160,7 @@ async def ask_stream(
                 on_stage=on_stage,
                 on_progress=on_progress,
                 history=payload.history,
+                conversation_id=payload.conversation_id,
                 cache_scope=cache_scope,
             )
             await queue.put({"type": "result", "data": result})
