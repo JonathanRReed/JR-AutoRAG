@@ -16,7 +16,7 @@ import os
 import re
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -199,6 +199,9 @@ class HybridConfig:
     use_colbert: bool = False
     colbert_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     colbert_top_k: int = 12
+    deployment_profile: str = "local_only"
+    backend_map: dict[str, str] = field(default_factory=dict)
+    fallback_map: dict[str, list[str]] = field(default_factory=dict)
 
     def __post_init__(self):
         """Apply model preset if specified."""
@@ -1841,18 +1844,32 @@ class HybridRetrievalEngine:
     def get_model_status(self) -> dict[str, Any]:
         """Get loading status of internal models (G1)."""
         status = {
+            "deployment_profile": self._config.deployment_profile,
+            "backend_map": dict(self._config.backend_map),
             "embedding_model": {
                 "name": self._config.embedding_model,
                 "status": "ready" if self._embedder else ("failed" if self._embedder_failed else "pending"),
                 "is_local": os.path.isdir(self._config.embedding_model) if self._config.embedding_model else False,
+                "backend_id": self._config.backend_map.get("embedding", ""),
             },
             "reranker_model": {
                 "name": self._config.reranker_model,
                 "status": "ready" if self._reranker else ("failed" if self._reranker_failed else "pending"),
                 "is_local": os.path.isdir(self._config.reranker_model) if self._config.reranker_model else False,
+                "backend_id": self._config.backend_map.get("reranker", ""),
             }
         }
         return status
+
+    def get_runtime_profile(self) -> dict[str, Any]:
+        return {
+            "deployment_profile": self._config.deployment_profile,
+            "backends": dict(self._config.backend_map),
+            "fallbacks": dict(self._config.fallback_map),
+            "embedding_model": self._config.embedding_model,
+            "reranker_model": self._config.reranker_model,
+            "chunking_strategy": self._config.chunking_strategy.value,
+        }
 
 
 # Backward compatibility: alias for the old class name

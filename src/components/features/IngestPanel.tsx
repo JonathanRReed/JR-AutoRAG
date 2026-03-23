@@ -19,7 +19,7 @@ import {
     ShieldCheck,
     Info,
 } from "lucide-react";
-import type { DocumentOut, IngestResponse } from "@/types";
+import type { DocumentOut, IngestResponse, OCRPolicy } from "@/types";
 
 interface UploadProgress {
     filename: string;
@@ -49,6 +49,8 @@ interface IngestPanelProps {
     langextractPromptOverride: string;
     setLangextractPromptOverride: (value: string) => void;
     langextractDefaultProfile?: string;
+    ocrPolicy: OCRPolicy;
+    setOcrPolicy: (value: OCRPolicy) => void;
 }
 
 function InlineHint({ label, detail }: { label: string; detail: string }) {
@@ -85,6 +87,8 @@ export function IngestPanel({
     langextractPromptOverride,
     setLangextractPromptOverride,
     langextractDefaultProfile,
+    ocrPolicy,
+    setOcrPolicy,
 }: IngestPanelProps) {
     const [uploadQueue, setUploadQueue] = useState<UploadProgress[]>([]);
     const [isDragOver, setIsDragOver] = useState(false);
@@ -204,6 +208,27 @@ export function IngestPanel({
                         onChange={event => setIngestSync(event.target.checked)}
                         className="h-4 w-4 accent-primary"
                     />
+                </div>
+
+                <div className="rounded-lg border border-border/60 bg-muted/20 p-4 space-y-4">
+                    <div className="space-y-1">
+                        <Label htmlFor="ocrPolicy" className="text-sm font-medium text-foreground">OCR Policy</Label>
+                        <p className="text-xs text-muted-foreground">
+                            Choose when scanned PDFs should stay text-first or route through local OCR.
+                        </p>
+                    </div>
+                    <Select value={ocrPolicy} onValueChange={(value) => setOcrPolicy(value as OCRPolicy)}>
+                        <SelectTrigger id="ocrPolicy" className="max-w-sm h-9">
+                            <SelectValue placeholder="Select OCR policy" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="off">Off</SelectItem>
+                            <SelectItem value="auto">Auto</SelectItem>
+                            <SelectItem value="vision_model">Vision Model</SelectItem>
+                            <SelectItem value="dedicated_ocr">Dedicated OCR</SelectItem>
+                            <SelectItem value="hybrid">Hybrid</SelectItem>
+                        </SelectContent>
+                    </Select>
                 </div>
 
                 <div className="rounded-lg border border-border/60 bg-muted/20 p-4 space-y-4">

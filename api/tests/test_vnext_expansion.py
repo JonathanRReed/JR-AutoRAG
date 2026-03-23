@@ -7,6 +7,7 @@ Tests for:
 """
 
 from dataclasses import dataclass
+from unittest.mock import Mock
 
 import pytest
 
@@ -281,6 +282,135 @@ class TestIncrementalIngestion:
         assert len(contextualized) == 2
         assert "[Document: Test Doc]" in contextualized[0]
         assert "[Author: John Doe]" in contextualized[0]
+
+    def test_pdf_extraction_prefers_native_text_when_confident(self):
+        from app.core.ingest import IngestPipeline
+
+        pipeline = IngestPipeline(Mock(), Mock())
+        pipeline._extract_pdf_text = lambda content: "This is a complete PDF export with extractable text." * 5  # type: ignore[method-assign]
+        pipeline._extract_pdf_text_pdftotext = lambda content: ""  # type: ignore[method-assign]
+
+        text, metadata = pipeline._extract_text_with_metadata(b"%PDF-1.4", {"filename": "report.pdf"})
+
+        assert "extractable text" in text
+        assert metadata["extraction_method"] == "native_text"
+        assert metadata["ocr_used"] == "false"
+
+    def test_pdf_extraction_routes_to_ocr_when_native_text_is_weak(self, monkeypatch):
+        from app.core.ingest import IngestPipeline
+        from app.core.ocr import OCRResult
+
+        pipeline = IngestPipeline(Mock(), Mock())
+        pipeline._extract_pdf_text = lambda content: "x"  # type: ignore[method-assign]
+        pipeline._extract_pdf_text_pdftotext = lambda content: ""  # type: ignore[method-assign]
+
+        def fake_route(self, extracted_text: str, content: bytes) -> OCRResult:
+            return OCRResult(
+                text="Recovered from OCR",
+                method="dedicated_ocr",
+                engine="tesseract",
+                confidence=0.91,
+                used_ocr=True,
+                attempted=["native_text", "ocr.local.tesseract"],
+            )
+
+        monkeypatch.setattr("app.core.ingest.OCRRouter.route", fake_route)
+
+        text, metadata = pipeline._extract_text_with_metadata(b"%PDF-1.4", {"filename": "scan.pdf"})
+
+        assert text == "Recovered from OCR"
+        assert metadata["extraction_method"] == "dedicated_ocr"
+        assert metadata["ocr_used"] == "true"
+        assert "ocr.local.tesseract" in metadata["ocr_attempted"]
+
+
+class TestLocalFirstConfig:
+    def test_local_only_rejects_network_backend(self):
+        from app.schemas.config import AppConfig
+
+        with pytest.raises(ValueError, match="local-only mode"):
+            AppConfig(
+                deployment_profile="local_only",
+                backends={
+                    "llm": {
+                        "subsystem": "llm",
+                        "backend_id": "llm.cloud.openrouter",
+                        "label": "Cloud LLM",
+                        "capabilities": {
+                            "mode": "cloud",
+                            "requires_network": True,
+                        },
+                    }
+                },
+            )
+
+
+class TestConversationMemory:
+    def test_record_exchange_writes_episodic_memory_for_substantive_turns(self):
+        from app.core.memory import ConversationMemory
+
+        memory = ConversationMemory()
+        result = memory.record_exchange(
+            conversation_id="session-1",
+            user_query="Remember that our default deployment profile should stay local only for regulated documents.",
+            answer="I will keep the default deployment profile set to local only for regulated documents and use hybrid only when you explicitly allow it.",
+            metadata={"chunks_used": ["doc-1-0", "doc-2-1"], "sources_count": 2, "query_type": "policy"},
+        )
+
+        assert result["memory_written"] is True
+        prompt = memory.build_context_prompt("session-1", "What did I ask you to keep by default?")
+        assert "local only" in prompt.lower()
+
+
+class TestVisionOCR:
+    def test_vision_ocr_provider_uses_local_openai_compatible_chat(self, monkeypatch):
+        from app.core.ocr import VisionModelOCRProvider
+        from app.schemas.config import ProviderConfig
+
+        class FakeImage:
+            def save(self, buffer, format="PNG"):
+                buffer.write(b"fake-image-bytes")
+
+            def close(self):
+                return None
+
+        class FakeResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"choices": [{"message": {"content": "Recovered from local vision model"}}]}
+
+        captured = {}
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                return None
+
+            def post(self, endpoint, json):
+                captured["endpoint"] = endpoint
+                captured["payload"] = json
+                return FakeResponse()
+
+            def close(self):
+                return None
+
+        monkeypatch.setattr("app.core.ocr.convert_from_bytes", lambda content, poppler_path=None: [FakeImage()])
+        monkeypatch.setattr("app.core.ocr.httpx.Client", FakeClient)
+
+        provider = VisionModelOCRProvider(
+            ProviderConfig(name="Ollama", base_url="http://localhost:11434", generator_model="qwen3-vl:8b"),
+        )
+        result = provider.extract(b"%PDF-1.4")
+
+        assert result.used_ocr is True
+        assert result.method == "vision_model"
+        assert "qwen3-vl:8b" in result.engine
+        assert captured["endpoint"] == "http://localhost:11434/v1/chat/completions"
+        assert captured["payload"]["model"] == "qwen3-vl:8b"
+        content = captured["payload"]["messages"][0]["content"]
+        assert content[1]["type"] == "image_url"
+        assert str(content[1]["image_url"]).startswith("data:image/png;base64,")
 
 
 if __name__ == "__main__":

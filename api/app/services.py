@@ -13,10 +13,12 @@ from .core import (
     BQRetrievalConfig,
     ChunkingStrategy,
     ConfigStore,
+    ConversationMemory,
     DocumentStore,
     Gatherer,
     HybridConfig,
     IngestPipeline,
+    LocalFirstRegistry,
     MilvusConfig,
     Orchestrator,
     Planner,
@@ -50,6 +52,9 @@ def _build_retrieval_config(cfg: AppConfig) -> HybridConfig:
         heading_boost=getattr(cfg.retrieval, "heading_boost", 0.4),
         proximity_weight=getattr(cfg.retrieval, "proximity_weight", 0.5),
         diversity=getattr(cfg.retrieval, "diversity", 0.0),
+        deployment_profile=cfg.deployment_profile.value,
+        backend_map={key: backend.backend_id for key, backend in cfg.backends.items()},
+        fallback_map={key: fallback.order for key, fallback in cfg.fallbacks.items()},
     )
 
 
@@ -70,6 +75,9 @@ class ServiceContainer:
         if sanitized.model_dump() != cfg.model_dump():
             self.config_store.write(sanitized)
             cfg = sanitized
+        self.local_first = LocalFirstRegistry(cfg)
+        self.memory = ConversationMemory()
+        self._enforce_runtime_policy(cfg)
 
         from .core.auth import get_auth
         from .core.document_acl import get_acl_enforcer, resolve_acl_defaults
@@ -101,6 +109,7 @@ class ServiceContainer:
             self.retrieval_engine,
             config_getter=self.config_store.read,
             data_dir=data_dir,
+            policy_registry=self.local_first,
         )
         self.gatherer = Gatherer(self.retrieval_engine)
         self.simple_planner = Planner(cfg)
@@ -112,6 +121,8 @@ class ServiceContainer:
             gatherer=self.gatherer,
             provider_factory=self.provider_factory,
             telemetry=self.telemetry,
+            memory_store=self.memory,
+            policy_registry=self.local_first,
         )
         self.orchestrator.rebuild(cfg)
 
@@ -221,7 +232,25 @@ class ServiceContainer:
         )
         return bq_retrieval_config, bq_enabled
 
+    def _enforce_runtime_policy(self, cfg: AppConfig) -> None:
+        subsystems = [
+            "document_parser",
+            "ocr",
+            "embedding",
+            "reranker",
+            "vector_store",
+            "sparse_index",
+            "graph_store",
+            "memory",
+            "eval",
+            "telemetry",
+        ]
+        for subsystem in subsystems:
+            self.local_first.ensure_runtime_allowed(subsystem)
+
     def apply_config(self, cfg: AppConfig) -> None:
+        self.local_first.refresh(cfg)
+        self._enforce_runtime_policy(cfg)
         self.simple_planner.rebuild(cfg)
         self.smart_planner.rebuild(cfg)
         self.planner = self.smart_planner if cfg.retrieval.planner_mode != "simple" else self.simple_planner

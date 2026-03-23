@@ -97,6 +97,7 @@ from .graph_rag import Community, Entity, EntityType, GraphRAG, Relationship
 from .hierarchy import DocumentTree, HierarchicalRetriever, HierarchyBuilder, HierarchyNode
 from .hybrid_retrieval import HybridConfig, HybridRetrievalEngine, RetrievalResult
 from .ingest import IngestPipeline
+from .local_first import BackendResolution, LocalFirstPolicyError, LocalFirstRegistry
 from .memory import ConversationContext, ConversationMemory, ConversationTurn
 from .metadata_enricher import DocumentMetadata, MetadataEnricher
 from .metrics import EvaluationResult, LatencyMetrics, MetricsCalculator, MetricsStore, RetrievalMetrics
@@ -183,6 +184,9 @@ __all__ = [
     "ConversationMemory",
     "ConversationTurn",
     "ConversationContext",
+    "LocalFirstRegistry",
+    "LocalFirstPolicyError",
+    "BackendResolution",
     # Phase 4: Document processing
     "DocumentProcessor",
     "TableExtractor",

@@ -18,7 +18,24 @@ const TraceLog = lazy(() => import("@/components/features/TraceLog").then(m => (
 const PresetSelector = lazy(() => import("@/components/features/PresetSelector").then(m => ({ default: m.PresetSelector })));
 
 import "./index.css";
-import type { AppConfig, CacheStats, DocumentOut, IngestResponse, LocalProviderInfo, ModelStatus, ProviderConfig as ProviderConfigType, ProviderProfile, QueryResponse, RetrievalDefaults, RoleSelection, TraceOut, ChatSession, PresetLevel } from "@/types";
+import type {
+  AppConfig,
+  CacheStats,
+  DocumentOut,
+  IngestResponse,
+  LocalProviderInfo,
+  ModelStatus,
+  ProviderConfig as ProviderConfigType,
+  ProviderProfile,
+  QueryResponse,
+  RetrievalDefaults,
+  RoleSelection,
+  TraceOut,
+  ChatSession,
+  PresetLevel,
+  SubsystemBackendConfig,
+  OCRPolicy,
+} from "@/types";
 
 const resolveDefaultBaseUrl = () => {
   const envBase =
@@ -611,6 +628,7 @@ export function App() {
         title: ingestTitle,
         text: ingestText,
         sync: ingestSync,
+        ocr_policy: config?.ingest?.ocr?.policy,
       };
       if (langextractProfileOverride !== "__global__") {
         payload.langextract_profile_override = langextractProfileOverride;
@@ -693,8 +711,8 @@ export function App() {
       }
 
       const payload = useFilter
-        ? { question: currentQuestion, document_ids: selectedDocumentIds, history: historyToSend }
-        : { question: currentQuestion, history: historyToSend };
+        ? { question: currentQuestion, document_ids: selectedDocumentIds, history: historyToSend, conversation_id: localSessionId }
+        : { question: currentQuestion, history: historyToSend, conversation_id: localSessionId };
       const response = await fetch(buildUrl("/query/stream"), {
         method: "POST",
         headers,
@@ -1020,6 +1038,9 @@ export function App() {
       formData.append("title", title || file.name);
       formData.append("file", file);
       formData.append("sync", String(ingestSync));
+      if (config?.ingest?.ocr?.policy) {
+        formData.append("ocr_policy", config.ingest.ocr.policy);
+      }
       if (langextractProfileOverride !== "__global__") {
         formData.append("langextract_profile_override", langextractProfileOverride);
       }
@@ -1055,6 +1076,59 @@ export function App() {
 
   const updateRetrieval = (field: keyof RetrievalDefaults, value: string | number | boolean) => {
     setConfig(cfg => (cfg ? { ...cfg, retrieval: { ...cfg.retrieval, [field]: value } } : cfg));
+  };
+
+  const updateDeploymentProfile = (value: AppConfig["deployment_profile"]) => {
+    setConfig(cfg => (cfg ? { ...cfg, deployment_profile: value } : cfg));
+  };
+
+  const updateIngestOcrPolicy = (value: OCRPolicy) => {
+    setConfig(cfg =>
+      cfg
+        ? {
+            ...cfg,
+            ingest: {
+              ...cfg.ingest,
+              ocr: {
+                ...cfg.ingest.ocr,
+                policy: value,
+              },
+            },
+          }
+        : cfg,
+    );
+  };
+
+  const updateBackend = (subsystem: string, patch: Partial<SubsystemBackendConfig>) => {
+    setConfig(cfg =>
+      cfg
+        ? (() => {
+            const current = cfg.backends[subsystem];
+            if (!current) {
+              return cfg;
+            }
+            return {
+              ...cfg,
+              backends: {
+                ...cfg.backends,
+                [subsystem]: {
+                  ...current,
+                  ...patch,
+                  subsystem: patch.subsystem ?? current.subsystem,
+                  label: patch.label ?? current.label,
+                  backend_id: patch.backend_id ?? current.backend_id,
+                  enabled: patch.enabled ?? current.enabled,
+                  settings: patch.settings ?? current.settings,
+                  capabilities: {
+                    ...current.capabilities,
+                    ...patch.capabilities,
+                  },
+                },
+              },
+            };
+          })()
+        : cfg,
+    );
   };
 
   const docsReady = documents.length > 0;
@@ -1191,6 +1265,8 @@ export function App() {
                     <ProviderConfig
                       config={config}
                       setConfig={setConfig}
+                      updateDeploymentProfile={updateDeploymentProfile}
+                      updateBackend={updateBackend}
                       handleSaveConfig={handleSaveConfig}
                       modelOptions={modelOptions}
                       handleDiscoverModels={handleDiscoverModels}
@@ -1235,6 +1311,9 @@ export function App() {
                   <Suspense fallback={<LoadingSpinner message="Loading RAG settings..." />}>
                     <AdvancedRAGSettings
                       retrieval={config?.retrieval}
+                      backends={config?.backends}
+                      fallbacks={config?.fallbacks}
+                      updateBackend={updateBackend}
                       updateRetrieval={updateRetrieval}
                       onSave={handleSaveConfig}
                       isSaving={isSavingConfig}
@@ -1318,6 +1397,8 @@ export function App() {
                       langextractPromptOverride={langextractPromptOverride}
                       setLangextractPromptOverride={setLangextractPromptOverride}
                       langextractDefaultProfile={config?.retrieval?.langextract_profile_default}
+                      ocrPolicy={config?.ingest?.ocr?.policy ?? "auto"}
+                      setOcrPolicy={updateIngestOcrPolicy}
                     />
                   </Suspense>
 

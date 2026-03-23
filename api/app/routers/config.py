@@ -93,11 +93,12 @@ async def list_models(payload: ProviderConfig):
 
 
 @router.post("/models/status", response_model=ModelStatusResponse)
-def model_status(payload: ModelStatusRequest):
+def model_status(payload: ModelStatusRequest, container: ServiceContainer = Depends(get_container)):
     embedding_status = "unknown"
     reranker_status = "unknown"
     embedding_message = None
     reranker_message = None
+    cfg = container.config_store.read()
 
     if payload.embedding_model:
         embedding_status, embedding_message = _check_model_cached(payload.embedding_model)
@@ -109,7 +110,18 @@ def model_status(payload: ModelStatusRequest):
         reranker=reranker_status,
         embedding_message=embedding_message,
         reranker_message=reranker_message,
+        deployment_profile=cfg.deployment_profile,
+        local_only_ready=cfg.deployment_profile != "local_only"
+        or (
+            cfg.provider is None
+            or str(cfg.provider.base_url).startswith(("http://localhost", "http://127.0.0.1", "http://0.0.0.0"))
+        ),
     )
+
+
+@router.get("/policy")
+def local_first_policy(container: ServiceContainer = Depends(get_container)):
+    return container.local_first.describe()
 
 
 @router.post("/models/download")

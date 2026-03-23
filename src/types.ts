@@ -17,6 +17,64 @@ export type ProviderProfile = {
     provider: ProviderConfig;
 };
 
+export type DeploymentProfile = "local_only" | "hybrid" | "cloud_accelerated";
+export type BackendMode = "local" | "hybrid" | "cloud";
+export type CapabilityClass = "low" | "medium" | "high";
+export type SubsystemType =
+    | "document_parser"
+    | "ocr"
+    | "embedding"
+    | "reranker"
+    | "vector_store"
+    | "sparse_index"
+    | "graph_store"
+    | "llm"
+    | "memory"
+    | "eval"
+    | "telemetry";
+
+export type BackendCapabilities = {
+    mode: BackendMode;
+    requires_network: boolean;
+    supports_batching: boolean;
+    supports_streaming: boolean;
+    supports_multimodal: boolean;
+    estimated_latency_class: CapabilityClass;
+    estimated_memory_class: CapabilityClass;
+};
+
+export type SubsystemBackendConfig = {
+    subsystem: SubsystemType;
+    backend_id: string;
+    label: string;
+    enabled: boolean;
+    capabilities: BackendCapabilities;
+    settings: Record<string, string | number | boolean>;
+};
+
+export type FallbackConfig = {
+    enabled: boolean;
+    order: string[];
+    on_failure: "error" | "fallback";
+};
+
+export type OCRPolicy = "off" | "auto" | "vision_model" | "dedicated_ocr" | "hybrid";
+
+export type OCRSettings = {
+    policy: OCRPolicy;
+    extractable_text_threshold: number;
+    min_characters: number;
+    allow_cloud_fallback: boolean;
+    preferred_backends: string[];
+    dual_merge_strategy: "highest_confidence" | "prefer_text_parser";
+};
+
+export type IngestSettings = {
+    ocr: OCRSettings;
+    parsing_stack: string[];
+    attach_processing_trace: boolean;
+};
+
 export type RetrievalDefaults = {
     hybrid: boolean;
     dense_k: number;
@@ -98,9 +156,13 @@ export type QueryMode = "grounded" | "open_domain";
 
 export type AppConfig = {
     profile: string;
+    deployment_profile: DeploymentProfile;
     provider?: ProviderConfig;
     provider_profiles: ProviderProfile[];
     retrieval: RetrievalDefaults;
+    ingest: IngestSettings;
+    backends: Record<string, SubsystemBackendConfig>;
+    fallbacks: Record<string, FallbackConfig>;
     // 3.0: Query mode and stage budgets
     query_mode?: QueryMode;
     stage_budgets?: StageBudgets;
@@ -111,6 +173,8 @@ export type ModelStatus = {
     reranker: "installed" | "missing" | "unknown" | "error";
     embedding_message?: string;
     reranker_message?: string;
+    deployment_profile?: DeploymentProfile;
+    local_only_ready?: boolean;
 };
 
 export type DocumentOut = {

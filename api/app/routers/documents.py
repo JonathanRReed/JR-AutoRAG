@@ -59,7 +59,10 @@ def ingest_text(
         result = container.ingest.ingest_text(
             title=payload.title,
             text=payload.text,
-            metadata=payload.metadata,
+            metadata={
+                **(payload.metadata or {}),
+                **({"ocr_policy": payload.ocr_policy} if payload.ocr_policy else {}),
+            },
             sync=payload.sync,
             langextract_profile_override=payload.langextract_profile_override,
             langextract_prompt_override=payload.langextract_prompt_override,
@@ -119,6 +122,7 @@ async def ingest_file(
     file: UploadFile = File(...),
     title: str = Form(...),
     sync: bool = Form(False),
+    ocr_policy: str | None = Form(None),
     langextract_profile_override: str | None = Form(None),
     langextract_prompt_override: str | None = Form(None),
     container: ServiceContainer = Depends(get_container),
@@ -144,6 +148,7 @@ async def ingest_file(
             metadata={
                 "filename": filename,
                 "content_type": file.content_type or "application/octet-stream",
+                **({"ocr_policy": ocr_policy} if ocr_policy else {}),
             },
             sync=sync,
             langextract_profile_override=langextract_profile_override,

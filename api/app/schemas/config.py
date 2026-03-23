@@ -3,7 +3,117 @@ from __future__ import annotations
 from enum import Enum
 from typing import Literal
 
-from pydantic import AnyHttpUrl, BaseModel, field_validator
+from pydantic import AnyHttpUrl, BaseModel, Field, field_validator, model_validator
+
+
+class DeploymentProfile(str, Enum):
+    LOCAL_ONLY = "local_only"
+    HYBRID = "hybrid"
+    CLOUD_ACCELERATED = "cloud_accelerated"
+
+
+class BackendMode(str, Enum):
+    LOCAL = "local"
+    HYBRID = "hybrid"
+    CLOUD = "cloud"
+
+
+class CapabilityClass(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+class SubsystemType(str, Enum):
+    DOCUMENT_PARSER = "document_parser"
+    OCR = "ocr"
+    EMBEDDING = "embedding"
+    RERANKER = "reranker"
+    VECTOR_STORE = "vector_store"
+    SPARSE_INDEX = "sparse_index"
+    GRAPH_STORE = "graph_store"
+    LLM = "llm"
+    MEMORY = "memory"
+    EVAL = "eval"
+    TELEMETRY = "telemetry"
+
+
+class OCRPolicy(str, Enum):
+    OFF = "off"
+    AUTO = "auto"
+    VISION_MODEL = "vision_model"
+    DEDICATED_OCR = "dedicated_ocr"
+    HYBRID = "hybrid"
+
+
+def _is_local_url(value: str) -> bool:
+    lowered = value.strip().lower()
+    return (
+        lowered.startswith("http://localhost")
+        or lowered.startswith("http://127.0.0.1")
+        or lowered.startswith("http://0.0.0.0")
+        or lowered.startswith("http://[::1]")
+        or lowered.startswith("https://localhost")
+        or lowered.startswith("https://127.0.0.1")
+        or lowered.startswith("https://[::1]")
+    )
+
+
+class BackendCapabilities(BaseModel):
+    mode: BackendMode = BackendMode.LOCAL
+    requires_network: bool = False
+    supports_batching: bool = False
+    supports_streaming: bool = False
+    supports_multimodal: bool = False
+    estimated_latency_class: CapabilityClass = CapabilityClass.MEDIUM
+    estimated_memory_class: CapabilityClass = CapabilityClass.MEDIUM
+
+
+class BackendConfig(BaseModel):
+    subsystem: SubsystemType
+    backend_id: str
+    label: str
+    enabled: bool = True
+    capabilities: BackendCapabilities = Field(default_factory=BackendCapabilities)
+    settings: dict[str, str | int | float | bool] = Field(default_factory=dict)
+
+
+class FallbackConfig(BaseModel):
+    enabled: bool = True
+    order: list[str] = Field(default_factory=list)
+    on_failure: Literal["error", "fallback"] = "fallback"
+
+
+class OCRSettings(BaseModel):
+    policy: OCRPolicy = OCRPolicy.AUTO
+    extractable_text_threshold: float = 0.65
+    min_characters: int = 80
+    allow_cloud_fallback: bool = False
+    preferred_backends: list[str] = Field(
+        default_factory=lambda: [
+            "ocr.local.tesseract",
+            "ocr.local.vision",
+        ]
+    )
+    dual_merge_strategy: Literal["highest_confidence", "prefer_text_parser"] = "highest_confidence"
+
+    @field_validator("extractable_text_threshold")
+    @classmethod
+    def _validate_threshold(cls, value: float) -> float:
+        return min(max(value, 0.0), 1.0)
+
+
+class IngestSettings(BaseModel):
+    ocr: OCRSettings = Field(default_factory=OCRSettings)
+    parsing_stack: list[str] = Field(
+        default_factory=lambda: [
+            "native_text",
+            "layout_parser",
+            "ocr",
+            "vision_rescue",
+        ]
+    )
+    attach_processing_trace: bool = True
 
 
 class ProviderConfig(BaseModel):
@@ -20,72 +130,215 @@ class ProviderProfile(BaseModel):
     provider: ProviderConfig
 
 
+def build_default_backends() -> dict[str, BackendConfig]:
+    return {
+        "document_parser": BackendConfig(
+            subsystem=SubsystemType.DOCUMENT_PARSER,
+            backend_id="document_parser.local.native",
+            label="Native Parser Stack",
+            capabilities=BackendCapabilities(
+                mode=BackendMode.LOCAL,
+                supports_batching=True,
+                estimated_latency_class=CapabilityClass.LOW,
+                estimated_memory_class=CapabilityClass.LOW,
+            ),
+        ),
+        "ocr": BackendConfig(
+            subsystem=SubsystemType.OCR,
+            backend_id="ocr.local.tesseract",
+            label="Tesseract OCR",
+            capabilities=BackendCapabilities(
+                mode=BackendMode.LOCAL,
+                supports_batching=True,
+                supports_multimodal=True,
+                estimated_latency_class=CapabilityClass.MEDIUM,
+                estimated_memory_class=CapabilityClass.LOW,
+            ),
+            settings={
+                "vision_model": "",
+                "max_pages": 8,
+            },
+        ),
+        "embedding": BackendConfig(
+            subsystem=SubsystemType.EMBEDDING,
+            backend_id="embedding.local.sentence_transformer",
+            label="Local Sentence Transformer",
+            capabilities=BackendCapabilities(
+                mode=BackendMode.LOCAL,
+                supports_batching=True,
+                estimated_latency_class=CapabilityClass.MEDIUM,
+                estimated_memory_class=CapabilityClass.MEDIUM,
+            ),
+        ),
+        "reranker": BackendConfig(
+            subsystem=SubsystemType.RERANKER,
+            backend_id="reranker.local.cross_encoder",
+            label="Local Cross Encoder",
+            capabilities=BackendCapabilities(
+                mode=BackendMode.LOCAL,
+                supports_batching=True,
+                estimated_latency_class=CapabilityClass.MEDIUM,
+                estimated_memory_class=CapabilityClass.MEDIUM,
+            ),
+        ),
+        "vector_store": BackendConfig(
+            subsystem=SubsystemType.VECTOR_STORE,
+            backend_id="vector_store.local.hybrid",
+            label="Local Hybrid Vector Store",
+            capabilities=BackendCapabilities(
+                mode=BackendMode.LOCAL,
+                supports_batching=True,
+                estimated_latency_class=CapabilityClass.MEDIUM,
+                estimated_memory_class=CapabilityClass.HIGH,
+            ),
+        ),
+        "sparse_index": BackendConfig(
+            subsystem=SubsystemType.SPARSE_INDEX,
+            backend_id="sparse_index.local.bm25",
+            label="Local BM25",
+            capabilities=BackendCapabilities(
+                mode=BackendMode.LOCAL,
+                supports_batching=True,
+                estimated_latency_class=CapabilityClass.LOW,
+                estimated_memory_class=CapabilityClass.LOW,
+            ),
+        ),
+        "graph_store": BackendConfig(
+            subsystem=SubsystemType.GRAPH_STORE,
+            backend_id="graph_store.local.in_process",
+            label="In-Process GraphRAG",
+            capabilities=BackendCapabilities(
+                mode=BackendMode.LOCAL,
+                estimated_latency_class=CapabilityClass.MEDIUM,
+                estimated_memory_class=CapabilityClass.MEDIUM,
+            ),
+        ),
+        "llm": BackendConfig(
+            subsystem=SubsystemType.LLM,
+            backend_id="llm.local.provider",
+            label="Configured Local Provider",
+            capabilities=BackendCapabilities(
+                mode=BackendMode.LOCAL,
+                supports_batching=True,
+                supports_streaming=True,
+                supports_multimodal=True,
+                estimated_latency_class=CapabilityClass.MEDIUM,
+                estimated_memory_class=CapabilityClass.HIGH,
+            ),
+        ),
+        "memory": BackendConfig(
+            subsystem=SubsystemType.MEMORY,
+            backend_id="memory.local.session",
+            label="Local Memory Store",
+            capabilities=BackendCapabilities(
+                mode=BackendMode.LOCAL,
+                estimated_latency_class=CapabilityClass.LOW,
+                estimated_memory_class=CapabilityClass.LOW,
+            ),
+        ),
+        "eval": BackendConfig(
+            subsystem=SubsystemType.EVAL,
+            backend_id="eval.local.harness",
+            label="Local Evaluation Harness",
+            capabilities=BackendCapabilities(
+                mode=BackendMode.LOCAL,
+                supports_batching=True,
+                estimated_latency_class=CapabilityClass.MEDIUM,
+                estimated_memory_class=CapabilityClass.MEDIUM,
+            ),
+        ),
+        "telemetry": BackendConfig(
+            subsystem=SubsystemType.TELEMETRY,
+            backend_id="telemetry.local.json",
+            label="Local JSON Telemetry",
+            capabilities=BackendCapabilities(
+                mode=BackendMode.LOCAL,
+                estimated_latency_class=CapabilityClass.LOW,
+                estimated_memory_class=CapabilityClass.LOW,
+            ),
+        ),
+    }
+
+
+def build_default_fallbacks() -> dict[str, FallbackConfig]:
+    return {
+        "document_parser": FallbackConfig(order=["document_parser.local.native"]),
+        "ocr": FallbackConfig(order=["ocr.local.tesseract", "ocr.local.vision"]),
+        "embedding": FallbackConfig(order=["embedding.local.sentence_transformer"]),
+        "reranker": FallbackConfig(order=["reranker.local.cross_encoder"]),
+        "vector_store": FallbackConfig(order=["vector_store.local.hybrid"]),
+        "sparse_index": FallbackConfig(order=["sparse_index.local.bm25"]),
+        "graph_store": FallbackConfig(order=["graph_store.local.in_process"]),
+        "llm": FallbackConfig(order=["llm.local.provider"]),
+        "memory": FallbackConfig(order=["memory.local.session"]),
+        "eval": FallbackConfig(order=["eval.local.harness"]),
+        "telemetry": FallbackConfig(order=["telemetry.local.json"]),
+    }
+
+
+def build_known_backend_ids() -> set[str]:
+    known = {backend.backend_id for backend in build_default_backends().values()}
+    known.update(
+        {
+            "ocr.local.vision",
+        }
+    )
+    return known
+
+
 class RetrievalDefaults(BaseModel):
-    """Retrieval configuration optimized for hybrid retrieval.
+    """Retrieval configuration optimized for hybrid retrieval."""
 
-    Presets:
-    - Fast: dense_k=3, target_tokens=800, coverage_target=0.5
-    - Balanced (default): dense_k=5, target_tokens=1600, coverage_target=0.7
-    - Thorough: dense_k=10, target_tokens=3000, coverage_target=0.9
-    """
-    hybrid: bool = True  # Enable hybrid search (dense + BM25)
-    dense_k: int = 5  # Top chunks from dense retrieval
-    sparse_k: int = 10  # Top chunks from BM25 retrieval
-    dense_weight: float = 0.6  # RRF weight for dense results
-    sparse_weight: float = 0.4  # RRF weight for sparse results
-    rerank_pool: int = 20  # Candidates for reranking
-    top_n: int = 5  # Final chunks to use in context
-    compression: bool = False  # Context compression (requires LLM)
-    target_tokens: int = 1600  # Reasonable for local LLMs
-    raptor: bool = False  # Hierarchical indexing (future)
-    graph: bool = False  # Graph retrieval (future)
-    coverage_target: float = 0.7  # Target 70% coverage
-    max_context_tokens: int = 4096  # Safe default for most local models
-
-    # New hybrid retrieval options
-    chunking_strategy: str = "semantic"  # "fixed", "semantic", or "recursive"
-    embedding_model: str = "BAAI/bge-base-en-v1.5"  # Sentence transformer model
-    reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"  # Cross-encoder
-    use_reranking: bool = True  # Enable cross-encoder reranking
-    use_colbert: bool = False  # Enable ColBERT late-interaction reranking
+    hybrid: bool = True
+    dense_k: int = 5
+    sparse_k: int = 10
+    dense_weight: float = 0.6
+    sparse_weight: float = 0.4
+    rerank_pool: int = 20
+    top_n: int = 5
+    compression: bool = False
+    target_tokens: int = 1600
+    raptor: bool = False
+    graph: bool = False
+    coverage_target: float = 0.7
+    max_context_tokens: int = 4096
+    chunking_strategy: str = "semantic"
+    embedding_model: str = "BAAI/bge-base-en-v1.5"
+    reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    use_reranking: bool = True
+    use_colbert: bool = False
     colbert_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     colbert_top_k: int = 12
-    chunk_size: int = 400  # Target chunk size in characters
-    chunk_overlap: int = 50  # Overlap between chunks
-    planner_mode: str = "smart"  # "simple" or "smart"
-    flare_generation: bool = True  # Enable FLARE mid-generation retrieval
-    enforce_evidence_contract: bool = True  # Require evidence-first self-checks
-    multi_resolution: bool = True  # Enable parent-child context expansion
-    recency_weight: float = 0.1  # Recency prior boost for newer docs
-    recency_half_life_days: float = 90.0  # Days for recency score to halve
-    title_boost: float = 0.6  # Field-aware boost for title matches
-    heading_boost: float = 0.4  # Field-aware boost for heading matches
-    proximity_weight: float = 0.5  # Term-proximity boost for BM25
-    diversity: float = 0.0  # 0-1: prefer diverse chunks when >0
-    use_hyde: bool = False  # Enable HyDE (Hypothetical Document Embeddings)
-    abstain_when_unverified: bool = False  # Abstain when evidence is insufficient
-    self_rag_critic: bool = False  # Enable Self-RAG LLM-based critic (v2.0)
-
-    # v2 Binary Quantization settings
-    retrieval_mode: str = "float32"  # "float32" or "binary" (BQ with Milvus HAMMING)
-    bq_enabled: bool = False  # Enable binary quantization retrieval
-    bq_normalize: bool = False  # L2-normalize before thresholding
-    bq_rule: str = "sign_threshold_0"  # Quantization rule
-    bq_two_stage: bool = False  # Enable two-stage retrieval (binary + rerank)
-    bq_stage1_candidates: int = 50  # Candidates for stage 1 binary search
-    bq_fallback_enabled: bool = True  # Fallback to float32 on low confidence
-    bq_fallback_threshold: float = 500.0  # Hamming distance threshold for fallback
-
-    # Milvus settings (for binary mode)
+    chunk_size: int = 400
+    chunk_overlap: int = 50
+    planner_mode: str = "smart"
+    flare_generation: bool = True
+    enforce_evidence_contract: bool = True
+    multi_resolution: bool = True
+    recency_weight: float = 0.1
+    recency_half_life_days: float = 90.0
+    title_boost: float = 0.6
+    heading_boost: float = 0.4
+    proximity_weight: float = 0.5
+    diversity: float = 0.0
+    use_hyde: bool = False
+    abstain_when_unverified: bool = False
+    self_rag_critic: bool = False
+    retrieval_mode: str = "float32"
+    bq_enabled: bool = False
+    bq_normalize: bool = False
+    bq_rule: str = "sign_threshold_0"
+    bq_two_stage: bool = False
+    bq_stage1_candidates: int = 50
+    bq_fallback_enabled: bool = True
+    bq_fallback_threshold: float = 500.0
     milvus_host: str = "localhost"
     milvus_port: int = 19530
     milvus_collection: str = "jr_autorag_chunks_bq"
-    milvus_index_type: str = "BIN_FLAT"  # "BIN_FLAT" or "BIN_IVF_FLAT"
+    milvus_index_type: str = "BIN_FLAT"
     milvus_metric: str = "HAMMING"
-    milvus_nlist: int = 128  # For BIN_IVF_FLAT
-    milvus_nprobe: int = 16  # For BIN_IVF_FLAT search
-
-    # LangExtract enrichment (disabled by default)
+    milvus_nlist: int = 128
+    milvus_nprobe: int = 16
     langextract_enabled: bool = False
     langextract_profile_default: str = "generic_entities_v1"
     langextract_model_source: Literal["planner", "gatherer", "generator"] = "gatherer"
@@ -107,8 +360,6 @@ class RetrievalDefaults(BaseModel):
         return bool(value)
 
 
-# Retrieval presets for different use cases (5-tier system)
-# Speed ←→ Accuracy spectrum: turbo → fast → balanced → thorough → ultra_accurate
 RETRIEVAL_PRESETS = {
     "turbo": RetrievalDefaults(
         hybrid=True,
@@ -119,7 +370,7 @@ RETRIEVAL_PRESETS = {
         target_tokens=400,
         coverage_target=0.3,
         max_context_tokens=2048,
-        use_reranking=False,  # Skip reranking for max speed
+        use_reranking=False,
         chunking_strategy="fixed",
         chunk_size=800,
         flare_generation=False,
@@ -186,7 +437,7 @@ RETRIEVAL_PRESETS = {
         multi_resolution=True,
         raptor=False,
         graph=False,
-        abstain_when_unverified=False,  # v2.0: DISABLED - coverage calc bug
+        abstain_when_unverified=False,
         retrieval_mode="binary",
         bq_enabled=True,
         bq_normalize=True,
@@ -219,8 +470,8 @@ RETRIEVAL_PRESETS = {
         raptor=True,
         graph=False,
         use_hyde=True,
-        abstain_when_unverified=False,  # v2.0: DISABLED - coverage calc bug
-        self_rag_critic=False,  # v2.0: DISABLED - causes late failures
+        abstain_when_unverified=False,
+        self_rag_critic=False,
         retrieval_mode="binary",
         bq_enabled=True,
         bq_normalize=True,
@@ -254,8 +505,8 @@ RETRIEVAL_PRESETS = {
         graph=True,
         diversity=0.3,
         use_hyde=True,
-        abstain_when_unverified=False,  # v2.0: DISABLED - coverage calc bug
-        self_rag_critic=False,  # v2.0: DISABLED - causes late failures
+        abstain_when_unverified=False,
+        self_rag_critic=False,
         retrieval_mode="float32",
         bq_enabled=False,
         bq_normalize=True,
@@ -273,9 +524,6 @@ RETRIEVAL_PRESETS = {
 
 
 class StageBudgetDefaults(BaseModel):
-    """Per-stage timeout and token budget configuration (P0.2)."""
-
-    # Timeouts (milliseconds)
     planner_timeout_ms: int = 3000
     gatherer_timeout_ms: int = 12000
     rerank_timeout_ms: int = 5000
@@ -283,8 +531,6 @@ class StageBudgetDefaults(BaseModel):
     generation_timeout_ms: int = 20000
     verification_timeout_ms: int = 5000
     total_timeout_ms: int = 60000
-
-    # Token budgets
     retrieval_token_budget: int = 8000
     rerank_pool_budget: int = 50
     compression_token_budget: int = 4000
@@ -293,15 +539,106 @@ class StageBudgetDefaults(BaseModel):
 
 class AppConfig(BaseModel):
     profile: str = "Default"
+    deployment_profile: DeploymentProfile = DeploymentProfile.LOCAL_ONLY
     provider: ProviderConfig | None = None
-    provider_profiles: list[ProviderProfile] = []
-    retrieval: RetrievalDefaults = RetrievalDefaults()
-
-    # P0.1: Query mode switch (grounded = docs only, open_domain = LLM can use knowledge)
+    provider_profiles: list[ProviderProfile] = Field(default_factory=list)
+    retrieval: RetrievalDefaults = Field(default_factory=RetrievalDefaults)
+    ingest: IngestSettings = Field(default_factory=IngestSettings)
+    backends: dict[str, BackendConfig] = Field(default_factory=build_default_backends)
+    fallbacks: dict[str, FallbackConfig] = Field(default_factory=build_default_fallbacks)
     query_mode: str = "grounded"
+    stage_budgets: StageBudgetDefaults = Field(default_factory=StageBudgetDefaults)
 
-    # P0.2: Stage budgets for timeouts and token limits
-    stage_budgets: StageBudgetDefaults = StageBudgetDefaults()
+    @field_validator("backends", mode="before")
+    @classmethod
+    def _merge_backend_defaults(cls, value):
+        defaults = build_default_backends()
+        if value is None:
+            return defaults
+        if not isinstance(value, dict):
+            return value
+
+        merged: dict[str, BackendConfig | dict] = {}
+        for key, default in defaults.items():
+            raw = value.get(key)
+            if raw is None:
+                merged[key] = default
+            elif isinstance(raw, BackendConfig):
+                merged[key] = raw
+            elif isinstance(raw, dict):
+                merged[key] = {
+                    "subsystem": raw.get("subsystem", default.subsystem.value),
+                    "backend_id": raw.get("backend_id", default.backend_id),
+                    "label": raw.get("label", default.label),
+                    "enabled": raw.get("enabled", default.enabled),
+                    "capabilities": raw.get("capabilities", default.capabilities.model_dump()),
+                    "settings": raw.get("settings", default.settings),
+                }
+            else:
+                merged[key] = default
+
+        for key, raw in value.items():
+            if key not in merged:
+                merged[key] = raw
+        return merged
+
+    @field_validator("fallbacks", mode="before")
+    @classmethod
+    def _merge_fallback_defaults(cls, value):
+        defaults = build_default_fallbacks()
+        if value is None:
+            return defaults
+        if not isinstance(value, dict):
+            return value
+
+        merged: dict[str, FallbackConfig | dict] = {}
+        for key, default in defaults.items():
+            raw = value.get(key)
+            if raw is None:
+                merged[key] = default
+            elif isinstance(raw, FallbackConfig):
+                merged[key] = raw
+            elif isinstance(raw, dict):
+                merged[key] = {
+                    "enabled": raw.get("enabled", default.enabled),
+                    "order": raw.get("order", default.order),
+                    "on_failure": raw.get("on_failure", default.on_failure),
+                }
+            else:
+                merged[key] = default
+
+        for key, raw in value.items():
+            if key not in merged:
+                merged[key] = raw
+        return merged
+
+    @model_validator(mode="after")
+    def _validate_local_first_policy(self):
+        known_backend_ids = build_known_backend_ids()
+        known_backend_ids.update(backend.backend_id for backend in self.backends.values())
+        for subsystem, fallback in self.fallbacks.items():
+            unknown = [item for item in fallback.order if item not in known_backend_ids]
+            if unknown:
+                raise ValueError(
+                    f"Fallback chain for '{subsystem}' references unknown backends: {', '.join(unknown)}"
+                )
+
+        if self.deployment_profile == DeploymentProfile.LOCAL_ONLY:
+            if self.provider and not _is_local_url(str(self.provider.base_url)):
+                raise ValueError("Local-only mode requires a localhost or loopback provider URL.")
+
+            for name, backend in self.backends.items():
+                if not backend.enabled:
+                    continue
+                if backend.capabilities.requires_network or backend.capabilities.mode != BackendMode.LOCAL:
+                    raise ValueError(
+                        f"Backend '{name}' is not compatible with local-only mode: {backend.backend_id}"
+                    )
+
+            if self.ingest.ocr.allow_cloud_fallback:
+                raise ValueError("Local-only mode cannot enable cloud OCR fallback.")
+
+        return self
 
 
 class ProviderKind(str, Enum):
@@ -316,8 +653,8 @@ class LocalProviderInfo(BaseModel):
     kind: ProviderKind
     name: str
     base_url: str
-    models: list[str] = []
-    running: list[str] = []
+    models: list[str] = Field(default_factory=list)
+    running: list[str] = Field(default_factory=list)
     version: str | None = None
     status: str = "ok"
     error_message: str | None = None
@@ -333,6 +670,8 @@ class ModelStatusResponse(BaseModel):
     reranker: str
     embedding_message: str | None = None
     reranker_message: str | None = None
+    deployment_profile: DeploymentProfile = DeploymentProfile.LOCAL_ONLY
+    local_only_ready: bool = True
 
 
 class ModelDownloadRequest(BaseModel):

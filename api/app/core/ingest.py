@@ -11,8 +11,6 @@ from __future__ import annotations
 import hashlib
 import io
 import mimetypes
-import shutil
-import subprocess
 import tempfile
 import xml.etree.ElementTree as ET
 import zipfile
@@ -22,6 +20,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
+import re
+import shutil
+import subprocess
 
 try:  # pragma: no cover - optional dependency
     from pypdf import PdfReader  # type: ignore
@@ -37,20 +38,12 @@ except ImportError:  # pragma: no cover
     docx = None  # type: ignore
     print("WARNING: docx library failed to load")
 
-try:  # pragma: no cover
-    from pdf2image import convert_from_bytes  # type: ignore
-except ImportError:  # pragma: no cover
-    convert_from_bytes = None  # type: ignore
-
-try:  # pragma: no cover
-    import pytesseract  # type: ignore
-except ImportError:  # pragma: no cover
-    pytesseract = None  # type: ignore
-
-from ..schemas.config import AppConfig
+from ..schemas.config import AppConfig, OCRPolicy, ProviderConfig
 from .audit import AuditAction, AuditEntry, get_audit_log
 from .documents import DocumentStore
 from .langextract_enricher import LangExtractEnricher
+from .local_first import LocalFirstRegistry
+from .ocr import OCRRouter
 from .retrieval import RetrievalEngine
 
 _INDEX_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="autorag-index")
@@ -84,11 +77,13 @@ class IngestPipeline:
         retrieval: RetrievalEngine,
         config_getter: Callable[[], AppConfig] | None = None,
         data_dir: Path | None = None,
+        policy_registry: LocalFirstRegistry | None = None,
     ) -> None:
         self._store = store
         self._retrieval = retrieval
         self._config_getter = config_getter
         self._langextract = LangExtractEnricher(data_dir=data_dir)
+        self._policy_registry = policy_registry
 
     def ingest_text(
         self,
@@ -170,7 +165,8 @@ class IngestPipeline:
         meta.setdefault("original_filename", meta["filename"])
         meta.setdefault("content_type", mimetypes.guess_type(meta["filename"])[0] or "text/plain")
         meta["filesize"] = str(len(content))
-        text = self._extract_text(content, meta)
+        text, extraction_metadata = self._extract_text_with_metadata(content, meta)
+        meta.update(extraction_metadata)
         return self.ingest_text(
             title=title,
             text=text,
@@ -429,39 +425,119 @@ class IngestPipeline:
         return ""
 
     def _extract_text(self, content: bytes, metadata: dict[str, str] | None = None) -> str:
+        text, _ = self._extract_text_with_metadata(content, metadata)
+        return text
+
+    def _extract_text_with_metadata(
+        self,
+        content: bytes,
+        metadata: dict[str, str] | None = None,
+    ) -> tuple[str, dict[str, str]]:
+        if self._policy_registry is not None:
+            self._policy_registry.ensure_runtime_allowed("document_parser")
         ext = self._infer_extension(metadata)
         if not ext:
             ext = self._detect_magic_extension(content)
         if ext in {".md", ".markdown"}:
-            return self._extract_markdown(content)
+            text = self._extract_markdown(content)
+            return text, self._build_extraction_metadata(
+                extraction_method="markdown_decode",
+                extraction_engine="markdown",
+                extraction_confidence=1.0 if text.strip() else 0.0,
+                ocr_policy=self._resolve_ocr_policy(metadata).value,
+            )
         if ext == ".pdf":
-            text = self._extract_pdf_text(content)
+            return self._extract_pdf_with_routing(content, metadata)
+        if ext in {".doc", ".docx"}:
+            text = ""
+            method = "docx_native" if ext == ".docx" else "doc_legacy"
+            if ext == ".docx":
+                text = self._extract_docx_text(content)
+            if ext == ".doc":
+                print("Tip: .doc files are legacy. Convert to .docx for better extraction.")
             if text.strip():
-                return text
-            text = self._extract_pdf_text_pdftotext(content)
-            if text.strip():
-                return text
-            ocr_text = self._ocr_pdf(content)
-            if ocr_text.strip():
-                return ocr_text
-            return (
+                return text, self._build_extraction_metadata(
+                    extraction_method=method,
+                    extraction_engine="python_docx",
+                    extraction_confidence=0.95,
+                    ocr_policy=self._resolve_ocr_policy(metadata).value,
+                )
+
+        try:
+            text = content.decode("utf-8")
+            return text, self._build_extraction_metadata(
+                extraction_method="plain_text_decode",
+                extraction_engine="utf8",
+                extraction_confidence=1.0 if text.strip() else 0.0,
+                ocr_policy=self._resolve_ocr_policy(metadata).value,
+            )
+        except UnicodeDecodeError:
+            text = f"(Binary content: {ext or 'unknown'})"
+            return text, self._build_extraction_metadata(
+                extraction_method="binary_placeholder",
+                extraction_engine="binary",
+                extraction_confidence=0.0,
+                ocr_policy=self._resolve_ocr_policy(metadata).value,
+            )
+
+    def _extract_pdf_with_routing(
+        self,
+        content: bytes,
+        metadata: dict[str, str] | None = None,
+    ) -> tuple[str, dict[str, str]]:
+        native_text = self._extract_pdf_text(content)
+        native_confidence = self._estimate_text_confidence(native_text)
+
+        pdftotext_text = self._extract_pdf_text_pdftotext(content)
+        pdftotext_confidence = self._estimate_text_confidence(pdftotext_text)
+
+        extracted_text = native_text
+        extraction_engine = "pypdf"
+        extraction_method = "native_text"
+        extraction_confidence = native_confidence
+
+        if pdftotext_confidence > extraction_confidence:
+            extracted_text = pdftotext_text
+            extraction_engine = "pdftotext"
+            extraction_method = "layout_text"
+            extraction_confidence = pdftotext_confidence
+
+        ocr_policy = self._resolve_ocr_policy(metadata)
+        if ocr_policy != OCRPolicy.OFF and self._policy_registry is not None:
+            self._policy_registry.ensure_runtime_allowed("ocr")
+
+        router = OCRRouter(
+            self._read_ocr_settings(metadata),
+            provider_config=self._read_provider_config(),
+            vision_model=self._read_vision_model(),
+            vision_max_pages=self._read_vision_max_pages(),
+        )
+        routed = router.route(extracted_text, content)
+
+        final_text = routed.text.strip() or extracted_text.strip()
+        final_method = routed.method or extraction_method
+        final_engine = routed.engine or extraction_engine
+        final_confidence = max(routed.confidence, extraction_confidence if final_text == extracted_text.strip() else 0.0)
+
+        if not final_text:
+            final_text = (
                 "(PDF extraction failed: no text found. "
                 "If this is a scanned PDF, install poppler + tesseract for OCR. "
                 "If it is text-based, try re-exporting the PDF.)"
             )
-        if ext in {".doc", ".docx"}:
-            if ext == ".docx":
-                text = self._extract_docx_text(content)
-                if text.strip():
-                    return text
-            if ext == ".doc":
-                print("Tip: .doc files are legacy. Convert to .docx for better extraction.")
+            final_method = "pdf_failed"
+            final_engine = "none"
+            final_confidence = 0.0
 
-        # Fallback to plain text if not binary
-        try:
-            return content.decode("utf-8")
-        except UnicodeDecodeError:
-            return f"(Binary content: {ext or 'unknown'})"
+        return final_text, self._build_extraction_metadata(
+            extraction_method=final_method,
+            extraction_engine=final_engine,
+            extraction_confidence=final_confidence,
+            ocr_policy=ocr_policy.value,
+            text_extraction_confidence=extraction_confidence,
+            ocr_used=routed.used_ocr,
+            ocr_attempted=",".join(routed.attempted),
+        )
 
     def _extract_markdown(self, content: bytes) -> str:
         text = content.decode("utf-8", errors="ignore")
@@ -548,44 +624,142 @@ class IngestPipeline:
             print(f"Error parsing DOCX fallback: {exc}")
             return ""
 
-    def _ocr_pdf(self, content: bytes) -> str:
-        if not convert_from_bytes or not pytesseract:
-            return ""
-        poppler_bin = shutil.which("pdftoppm") or shutil.which("pdftocairo")
-        poppler_path = str(Path(poppler_bin).parent) if poppler_bin else None
-        tesseract_bin = shutil.which("tesseract")
-        if tesseract_bin:
-            pytesseract.pytesseract.tesseract_cmd = tesseract_bin  # type: ignore[attr-defined]
-        try:
-            images = convert_from_bytes(content, poppler_path=poppler_path)  # type: ignore[name-defined]
-        except Exception as exc:
-            print(f"Error converting PDF to images for OCR: {exc}")
-            return ""
-        text_chunks: list[str] = []
-        for image in images:
-            try:
-                text = pytesseract.image_to_string(image)  # type: ignore[attr-defined]
-                if text:
-                    text_chunks.append(text)
-            except Exception as exc:
-                print(f"Error OCRing image page: {exc}")
-            finally:
-                image.close()
-        return "\n".join(text_chunks)
-
     def _chunk(self, text: str, target: int = 800) -> list[str]:
-        clean = text.replace("\r", "")
-        paragraphs = [p.strip() for p in clean.split("\n\n") if p.strip()]
+        cfg = self._read_config()
+        if cfg is not None:
+            target = max(200, int(getattr(cfg.retrieval, "chunk_size", target)))
+        clean = text.replace("\r", "").replace("\f", "\n\n[PAGE_BREAK]\n\n")
+        raw_blocks = [block.strip() for block in re.split(r"\n{2,}", clean) if block.strip()]
+
+        sections: list[str] = []
+        pending: list[str] = []
+        for block in raw_blocks:
+            is_header = bool(re.match(r"^(#{1,6}\s+.+|[A-Z][A-Z0-9\s:/-]{4,}|Section\s+\d+[:.]?.*)$", block))
+            if is_header and pending:
+                sections.append("\n\n".join(pending))
+                pending = [block]
+                continue
+            pending.append(block)
+        if pending:
+            sections.append("\n\n".join(pending))
+
         chunks: list[str] = []
-        current: list[str] = []
-        current_len = 0
-        for para in paragraphs:
-            if current_len + len(para) > target and current:
-                chunks.append("\n".join(current))
-                current = []
-                current_len = 0
-            current.append(para)
-            current_len += len(para)
-        if current:
-            chunks.append("\n".join(current))
+        current = ""
+        overlap = max(0, min(150, target // 8))
+        for section in sections:
+            candidate = f"{current}\n\n{section}".strip() if current else section
+            if current and len(candidate) > target:
+                chunks.append(current.strip())
+                current = current[-overlap:].strip()
+                candidate = f"{current}\n\n{section}".strip() if current else section
+            if len(section) > target * 1.25:
+                paragraphs = [p.strip() for p in section.split("\n\n") if p.strip()]
+                for para in paragraphs:
+                    candidate = f"{current}\n\n{para}".strip() if current else para
+                    if current and len(candidate) > target:
+                        chunks.append(current.strip())
+                        current = current[-overlap:].strip()
+                    current = f"{current}\n\n{para}".strip() if current else para
+            else:
+                current = candidate
+        if current.strip():
+            chunks.append(current.strip())
         return chunks or [text.strip()]
+
+    def _estimate_text_confidence(self, text: str) -> float:
+        stripped = text.strip()
+        if not stripped:
+            return 0.0
+        alpha = sum(1 for ch in stripped if ch.isalpha())
+        printable = sum(1 for ch in stripped if ch.isprintable() and not ch.isspace())
+        density = min(len(stripped) / 600.0, 1.0)
+        alpha_ratio = alpha / max(printable, 1)
+        return max(0.0, min((density * 0.55) + (alpha_ratio * 0.45), 1.0))
+
+    def _resolve_ocr_policy(self, metadata: dict[str, str] | None = None) -> OCRPolicy:
+        override = (metadata or {}).get("ocr_policy", "").strip().lower()
+        if override:
+            try:
+                return OCRPolicy(override)
+            except ValueError:
+                pass
+        cfg = self._read_config()
+        if cfg is None:
+            return OCRPolicy.AUTO
+        return getattr(cfg.ingest.ocr, "policy", OCRPolicy.AUTO)
+
+    def _read_ocr_settings(self, metadata: dict[str, str] | None = None):
+        cfg = self._read_config()
+        if cfg is None:
+            return type("FallbackOCRSettings", (), {
+                "policy": self._resolve_ocr_policy(metadata),
+                "extractable_text_threshold": 0.65,
+                "min_characters": 80,
+                "allow_cloud_fallback": False,
+                "preferred_backends": ["ocr.local.tesseract", "ocr.local.vision"],
+                "dual_merge_strategy": "highest_confidence",
+            })()
+        settings = cfg.ingest.ocr.model_copy()
+        policy = self._resolve_ocr_policy(metadata)
+        if policy != settings.policy:
+            settings.policy = policy
+        return settings
+
+    def _read_provider_config(self) -> ProviderConfig | None:
+        cfg = self._read_config()
+        if cfg is None:
+            return None
+        return cfg.provider
+
+    def _read_vision_model(self) -> str | None:
+        cfg = self._read_config()
+        if cfg is None:
+            return None
+        ocr_backend = cfg.backends.get("ocr")
+        if ocr_backend is not None:
+            explicit_model = ocr_backend.settings.get("vision_model")
+            if isinstance(explicit_model, str) and explicit_model.strip():
+                return explicit_model.strip()
+        provider = cfg.provider
+        if provider is None:
+            return None
+        return provider.generator_model or provider.gatherer_model or provider.planner_model
+
+    def _read_vision_max_pages(self) -> int:
+        cfg = self._read_config()
+        if cfg is None:
+            return 8
+        ocr_backend = cfg.backends.get("ocr")
+        if ocr_backend is None:
+            return 8
+        raw = ocr_backend.settings.get("max_pages")
+        if isinstance(raw, int) and raw > 0:
+            return raw
+        if isinstance(raw, str) and raw.isdigit():
+            return max(1, int(raw))
+        return 8
+
+    def _build_extraction_metadata(
+        self,
+        *,
+        extraction_method: str,
+        extraction_engine: str,
+        extraction_confidence: float,
+        ocr_policy: str,
+        text_extraction_confidence: float | None = None,
+        ocr_used: bool = False,
+        ocr_attempted: str = "",
+    ) -> dict[str, str]:
+        details = {
+            "extraction_method": extraction_method,
+            "extraction_engine": extraction_engine,
+            "extraction_confidence": f"{extraction_confidence:.3f}",
+            "ocr_policy": ocr_policy,
+            "ocr_used": "true" if ocr_used else "false",
+            "last_indexed_at": datetime.now(UTC).isoformat(),
+        }
+        if text_extraction_confidence is not None:
+            details["text_extraction_confidence"] = f"{text_extraction_confidence:.3f}"
+        if ocr_attempted:
+            details["ocr_attempted"] = ocr_attempted
+        return details
