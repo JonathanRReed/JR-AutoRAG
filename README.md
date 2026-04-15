@@ -228,3 +228,9 @@ See the checklist in [`Public/onboarding.txt`](./Public/onboarding.txt) for a 5-
 
 - [SECURITY.md](./Public/SECURITY.md) - Security configuration and production deployment
 - [Product.md](./Product.md) - Product overview and architecture details
+
+## License
+
+Licensed under the Functional Source License, Version 1.1, MIT Future License.
+This repository is source-available today and converts to MIT two years after
+each version is made available. See [`LICENSE`](./LICENSE).
