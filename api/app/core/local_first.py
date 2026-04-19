@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ..schemas.config import AppConfig, BackendConfig, DeploymentProfile, FallbackConfig
+from ..schemas.config import AppConfig, BackendConfig, BackendMode, DeploymentProfile, FallbackConfig
 
 
 class LocalFirstPolicyError(ValueError):
@@ -62,11 +62,27 @@ class LocalFirstRegistry:
                 raise LocalFirstPolicyError(
                     f"Subsystem '{subsystem}' cannot use backend '{backend.backend_id}' in local-only mode."
                 )
+        if self._config.deployment_profile == DeploymentProfile.CLIENT_SAFE:
+            if backend.capabilities.mode == BackendMode.CLOUD:
+                raise LocalFirstPolicyError(
+                    f"Subsystem '{subsystem}' cannot use backend '{backend.backend_id}' in client-safe mode."
+                )
         return backend
 
     def describe(self) -> dict[str, object]:
+        data_policy = self._config.data_policy.model_dump(mode="json")
+        guardrails = {
+            "cloud_backends_allowed": self._config.deployment_profile
+            not in {DeploymentProfile.LOCAL_ONLY, DeploymentProfile.CLIENT_SAFE},
+            "external_model_calls_allowed": data_policy["external_model_calls_allowed"],
+            "managed_cloud_hosting_allowed": data_policy["managed_cloud_hosting_allowed"],
+            "pii_redaction_required": data_policy["pii_redaction_required"],
+            "report_export_mode": data_policy["report_export_mode"],
+        }
         return {
             "deployment_profile": self._config.deployment_profile.value,
+            "data_policy": data_policy,
+            "guardrails": guardrails,
             "backends": {
                 key: backend.model_dump()
                 for key, backend in self._backends.items()
