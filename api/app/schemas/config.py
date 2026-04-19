@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from enum import Enum
+from ipaddress import ip_address
 from typing import Literal
+from urllib.parse import urlparse
 
 from pydantic import AnyHttpUrl, BaseModel, Field, field_validator, model_validator
 
 
 class DeploymentProfile(str, Enum):
     LOCAL_ONLY = "local_only"
+    CLIENT_SAFE = "client_safe"
     HYBRID = "hybrid"
     CLOUD_ACCELERATED = "cloud_accelerated"
 
@@ -57,6 +60,20 @@ def _is_local_url(value: str) -> bool:
         or lowered.startswith("https://127.0.0.1")
         or lowered.startswith("https://[::1]")
     )
+
+
+def _is_client_owned_url(value: str) -> bool:
+    parsed = urlparse(value)
+    host = (parsed.hostname or "").strip().lower()
+    if not host:
+        return False
+    if host in {"localhost"} or host.endswith((".localhost", ".local", ".lan", ".internal")):
+        return True
+    try:
+        parsed_ip = ip_address(host)
+    except ValueError:
+        return False
+    return parsed_ip.is_loopback or parsed_ip.is_private or parsed_ip.is_link_local
 
 
 class BackendCapabilities(BaseModel):
@@ -537,9 +554,32 @@ class StageBudgetDefaults(BaseModel):
     answer_token_budget: int = 2000
 
 
+class ClientDataPolicy(BaseModel):
+    classification: Literal["internal", "client_confidential", "regulated"] = "client_confidential"
+    storage_boundary: Literal["local_only", "client_owned"] = "client_owned"
+    managed_cloud_hosting_allowed: bool = False
+    external_model_calls_allowed: bool = False
+    pii_redaction_required: bool = True
+    document_retention_days: int = 30
+    trace_retention_days: int = 14
+    report_export_mode: Literal["redacted_by_default", "full_with_client_approval"] = "redacted_by_default"
+    client_handoff_required: bool = True
+    operator_review_required: bool = True
+
+    @field_validator("document_retention_days", "trace_retention_days")
+    @classmethod
+    def _validate_retention(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("Retention days must be zero or greater.")
+        if value > 90:
+            raise ValueError("Client-safe retention may not exceed 90 days without an exception.")
+        return value
+
+
 class AppConfig(BaseModel):
     profile: str = "Default"
     deployment_profile: DeploymentProfile = DeploymentProfile.LOCAL_ONLY
+    data_policy: ClientDataPolicy = Field(default_factory=ClientDataPolicy)
     provider: ProviderConfig | None = None
     provider_profiles: list[ProviderProfile] = Field(default_factory=list)
     retrieval: RetrievalDefaults = Field(default_factory=RetrievalDefaults)
@@ -637,6 +677,27 @@ class AppConfig(BaseModel):
 
             if self.ingest.ocr.allow_cloud_fallback:
                 raise ValueError("Local-only mode cannot enable cloud OCR fallback.")
+
+        if self.deployment_profile == DeploymentProfile.CLIENT_SAFE:
+            if self.data_policy.managed_cloud_hosting_allowed:
+                raise ValueError("Client-safe mode cannot allow managed cloud hosting.")
+            if self.data_policy.external_model_calls_allowed:
+                raise ValueError("Client-safe mode cannot allow external model calls.")
+            if self.data_policy.storage_boundary not in {"local_only", "client_owned"}:
+                raise ValueError("Client-safe mode requires local or client-owned storage.")
+            if self.provider and not _is_client_owned_url(str(self.provider.base_url)):
+                raise ValueError(
+                    "Client-safe mode requires a localhost, private-network, or client-owned provider URL."
+                )
+            for name, backend in self.backends.items():
+                if not backend.enabled:
+                    continue
+                if backend.capabilities.mode == BackendMode.CLOUD:
+                    raise ValueError(
+                        f"Backend '{name}' is not compatible with client-safe mode: {backend.backend_id}"
+                    )
+            if self.ingest.ocr.allow_cloud_fallback:
+                raise ValueError("Client-safe mode cannot enable cloud OCR fallback.")
 
         return self
 

@@ -1,0 +1,15 @@
+$ /tmp/jr-autorag-test-venv/bin/python -m pytest tests/test_pipeline_stages.py tests/test_vnext_expansion.py tests/api/test_endpoints.py
+============================= test session starts ==============================
+platform darwin -- Python 3.11.15, pytest-9.0.3, pluggy-1.6.0
+rootdir: /Users/jonathan/.paperclip/instances/default/companies/c595500a-757a-40cf-bcbd-1af50ba5bdf6/audit-work/repos/JR-AutoRAG/api
+plugins: cov-5.0.0, respx-0.21.1, asyncio-1.3.0, timeout-2.3.1, anyio-4.13.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 72 items
+
+tests/test_pipeline_stages.py .......................................... [ 58%]
+                                                                         [ 58%]
+tests/test_vnext_expansion.py ......................                     [ 88%]
+tests/api/test_endpoints.py ........                                     [100%]
+
+======================== 72 passed in 67.01s (0:01:07) =========================
+exit_code=0

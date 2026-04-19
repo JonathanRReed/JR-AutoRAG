@@ -672,7 +672,7 @@ class Orchestrator:
         cache_scope: str | None = None,
     ) -> dict:
         if trace_id is None:
-            trace_id = hashlib.md5(f"{query}{time.time()}".encode()).hexdigest()[:12]
+            trace_id = hashlib.sha256(f"{query}{time.time()}".encode()).hexdigest()[:12]
 
         # Immediate cleanup check
         if trace_id in self._cancelled_traces:
