@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from enum import Enum
 from ipaddress import ip_address
+import socket
 from typing import Literal
 from urllib.parse import urlparse
 
@@ -67,12 +68,23 @@ def _is_client_owned_url(value: str) -> bool:
     host = (parsed.hostname or "").strip().lower()
     if not host:
         return False
-    if host in {"localhost"} or host.endswith((".localhost", ".local", ".lan", ".internal")):
+    if host in {"localhost"} or host.endswith(".localhost"):
         return True
     try:
         parsed_ip = ip_address(host)
     except ValueError:
-        return False
+        if not host.endswith((".local", ".lan", ".internal")):
+            return False
+        try:
+            resolved = {
+                ip_address(result[4][0])
+                for result in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+            }
+        except OSError:
+            return False
+        return bool(resolved) and all(
+            item.is_loopback or item.is_private or item.is_link_local for item in resolved
+        )
     return parsed_ip.is_loopback or parsed_ip.is_private or parsed_ip.is_link_local
 
 
@@ -571,8 +583,6 @@ class ClientDataPolicy(BaseModel):
     def _validate_retention(cls, value: int) -> int:
         if value < 0:
             raise ValueError("Retention days must be zero or greater.")
-        if value > 90:
-            raise ValueError("Client-safe retention may not exceed 90 days without an exception.")
         return value
 
 
@@ -679,6 +689,8 @@ class AppConfig(BaseModel):
                 raise ValueError("Local-only mode cannot enable cloud OCR fallback.")
 
         if self.deployment_profile == DeploymentProfile.CLIENT_SAFE:
+            if self.data_policy.document_retention_days > 90 or self.data_policy.trace_retention_days > 90:
+                raise ValueError("Client-safe retention may not exceed 90 days without an exception.")
             if self.data_policy.managed_cloud_hosting_allowed:
                 raise ValueError("Client-safe mode cannot allow managed cloud hosting.")
             if self.data_policy.external_model_calls_allowed:

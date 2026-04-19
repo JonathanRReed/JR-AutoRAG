@@ -83,6 +83,36 @@ def test_client_safe_profile_accepts_private_provider(client: TestClient) -> Non
     assert body["data_policy"]["storage_boundary"] == "client_owned"
 
 
+def test_hybrid_profile_allows_longer_retention(client: TestClient) -> None:
+    resp = client.get("/config")
+    assert resp.status_code == 200
+    config = resp.json()
+    config["deployment_profile"] = "hybrid"
+    config["data_policy"]["document_retention_days"] = 365
+    config["data_policy"]["trace_retention_days"] = 180
+
+    update = client.put("/config", json=config)
+    assert update.status_code == 200
+    body = update.json()
+    assert body["deployment_profile"] == "hybrid"
+    assert body["data_policy"]["document_retention_days"] == 365
+
+
+def test_client_safe_profile_rejects_long_retention(client: TestClient) -> None:
+    resp = client.get("/config")
+    assert resp.status_code == 200
+    config = resp.json()
+    config["deployment_profile"] = "client_safe"
+    config["data_policy"]["document_retention_days"] = 365
+
+    update = client.put("/config", json=config)
+    assert update.status_code in {400, 422}
+    detail = update.json()["detail"]
+    if isinstance(detail, list):
+        detail = " ".join(str(item) for item in detail)
+    assert "client-safe retention" in str(detail).lower()
+
+
 def test_client_safe_profile_rejects_public_cloud_provider(client: TestClient) -> None:
     resp = client.get("/config")
     assert resp.status_code == 200

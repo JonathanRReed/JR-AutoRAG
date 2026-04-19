@@ -154,7 +154,7 @@ Set the application config:
 Before any client run, verify the live policy:
 
 ```bash
-curl -H "X-API-Key: $AUTORAG_API_KEY" http://localhost:8000/config/policy
+curl -H "X-API-Key: ${AUTORAG_API_KEYS%%,*}" http://localhost:8000/config/policy
 ```
 
 The response includes `deployment_profile`, `data_policy`, and `guardrails`; save it with the engagement evidence.
