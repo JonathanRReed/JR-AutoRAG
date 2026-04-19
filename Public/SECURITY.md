@@ -100,6 +100,88 @@ By default, JR AutoRAG:
 - Binds to `127.0.0.1` (localhost only)
 - Allows CORS only from `http://localhost:3000` and `http://localhost:5173`
 
+## Client-Safe Deployment Profile
+
+Use `deployment_profile=client_safe` for consulting engagements, regulated document reviews, or any client-adjacent assessment where JR AutoRAG must run in a local or client-owned boundary.
+
+Client-safe mode is intentionally narrower than general production hosting:
+
+- Runtime providers must use localhost, loopback, private-network IPs, or client-owned internal hostnames such as `.local`, `.lan`, or `.internal`.
+- Public cloud model endpoints are rejected by config validation.
+- Cloud backends are rejected.
+- Managed cloud hosting is not allowed by the default data policy.
+- External model calls are not allowed by the default data policy.
+- Cloud OCR fallback is rejected.
+- Reports should be exported redacted by default.
+
+Recommended environment and config defaults:
+
+```bash
+export AUTORAG_AUTH_ENABLED=true
+export AUTORAG_API_KEYS="generated-client-engagement-key"
+export AUTORAG_ALLOWED_ORIGINS="https://autorag.client.internal"
+export AUTORAG_EXPOSE=true
+export AUTORAG_RATE_LIMIT_ENABLED=true
+export AUTORAG_RAGFUZZ_ENABLED=false
+export AUTORAG_PII_REDACT=true
+```
+
+Set the application config:
+
+```json
+{
+  "deployment_profile": "client_safe",
+  "provider": {
+    "name": "Client Ollama",
+    "base_url": "http://10.0.0.5:11434",
+    "generator_model": "llama3.1"
+  },
+  "data_policy": {
+    "classification": "client_confidential",
+    "storage_boundary": "client_owned",
+    "managed_cloud_hosting_allowed": false,
+    "external_model_calls_allowed": false,
+    "pii_redaction_required": true,
+    "document_retention_days": 30,
+    "trace_retention_days": 14,
+    "report_export_mode": "redacted_by_default",
+    "client_handoff_required": true,
+    "operator_review_required": true
+  }
+}
+```
+
+Before any client run, verify the live policy:
+
+```bash
+curl -H "X-API-Key: ${AUTORAG_API_KEYS%%,*}" http://localhost:8000/config/policy
+```
+
+The response includes `deployment_profile`, `data_policy`, and `guardrails`; save it with the engagement evidence.
+
+## Client Data Policy
+
+For client-safe use, treat all ingested documents, prompts, retrieved chunks, traces, exports, and generated reports as `client_confidential` unless the client classifies them lower in writing.
+
+Default handling rules:
+
+- Store documents, indexes, traces, config, and audit logs only under the local or client-owned `data/` volume.
+- Do not copy `data/`, traces, vector indexes, prompt logs, or exports into Hello.World managed cloud storage without written approval for the engagement.
+- Keep document artifacts for no more than 30 days by default.
+- Keep query traces for no more than 14 days by default.
+- Export reports with redaction enabled by default; full exports require client approval and operator review.
+- Redact PII before durable report handoff whenever the report does not require exact sensitive values.
+- Rotate API keys at engagement close and remove any provider credentials from the secrets vault when handoff is complete.
+- Delete or hand off `data/` at closeout according to the statement of work.
+
+Minimum closeout checklist:
+
+- [ ] Export final redacted report and remediation backlog.
+- [ ] Confirm whether the client wants the local `data/` volume handed off or deleted.
+- [ ] Delete local temporary upload files and unneeded trace bundles.
+- [ ] Rotate or remove `AUTORAG_API_KEYS`, provider keys, and `AUTORAG_VAULT_KEY`.
+- [ ] Save `/config/policy` output and dependency/test evidence with the engagement record.
+
 ### Exposing to Network
 
 To expose the API beyond localhost:
@@ -275,6 +357,7 @@ Before deploying to production:
 - [ ] Configure request size limits appropriately
 - [ ] Enable PII detection if handling sensitive data
 - [ ] Test with security scanning tools
+- [ ] For client work, use `deployment_profile=client_safe` and save `/config/policy` evidence
 
 ## Environment Variable Reference
 

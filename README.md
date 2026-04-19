@@ -72,12 +72,14 @@ bun run dev:all
 JR AutoRAG ships with **secure defaults**:
 
 - **Localhost-only binding** by default (use `--expose` flag for network access)
+- **Client-safe deployment profile** for local or client-owned consulting runs
 - **API key authentication** (enable via `AUTORAG_AUTH_ENABLED=true`)
 - **Rate limiting** (100 requests/minute default)
 - **Request size limits** (50MB default)
 - **Security headers** (XSS, clickjacking, content-type sniffing protection)
 
 See [SECURITY.md](./Public/SECURITY.md) for production deployment guidance including:
+- Client-safe deployment and data policy
 - TLS configuration with Nginx/Caddy
 - Secrets management best practices
 - Reverse proxy recipes
@@ -219,6 +221,29 @@ python -c "from app.core.eval_gates import run_eval_gates_cli; exit(run_eval_gat
 3. **Enable security**: Set `AUTORAG_AUTH_ENABLED=true` and configure API keys.
 4. **Use TLS**: Put behind Nginx/Caddy with HTTPS (see [SECURITY.md](./Public/SECURITY.md)).
 5. Persist `data/` (config, documents, traces) on shared storage/volume for stateful runs.
+
+### Client-safe consulting deployment
+
+For client-adjacent or regulated document work, set `deployment_profile` to `client_safe`. This profile rejects public cloud provider URLs, cloud backends, managed cloud hosting, external model calls, and cloud OCR fallback. It is intended for localhost, private-network, or client-owned infrastructure only.
+
+Default client data policy:
+
+| Policy | Default |
+|--------|---------|
+| Classification | `client_confidential` |
+| Storage boundary | `client_owned` |
+| Managed cloud hosting | `false` |
+| External model calls | `false` |
+| PII redaction | Required |
+| Document retention | 30 days |
+| Trace retention | 14 days |
+| Report export | `redacted_by_default` |
+
+Verify the active policy before each client run:
+
+```bash
+curl http://localhost:8000/config/policy
+```
 
 ## Onboarding
 

@@ -154,7 +154,7 @@ Summary:"""
         Uses LLM if available, otherwise falls back to heuristics.
         """
         # Check cache first
-        content_hash = hashlib.md5(chunk_text.encode()).hexdigest()
+        content_hash = hashlib.sha256(chunk_text.encode()).hexdigest()
         if content_hash in self._cache:
             return self._cache[content_hash]
 
@@ -303,7 +303,7 @@ Summary:"""
         enriched_text = self.format_enriched_text(chunk.text, context)
 
         # Compute content hash
-        content_hash = hashlib.md5(chunk.text.encode()).hexdigest()
+        content_hash = hashlib.sha256(chunk.text.encode()).hexdigest()
 
         return EnrichedChunk(
             original_text=chunk.text,

@@ -129,7 +129,7 @@ def compute_corpus_hash(documents: list) -> str:
     for doc in documents:
         doc_id = getattr(doc, 'id', None) or doc.get('id', str(id(doc)))
         text = getattr(doc, 'text', None) or doc.get('text', '')
-        text_hash = hashlib.md5(text[:1000].encode()).hexdigest()[:8]
+        text_hash = hashlib.sha256(text[:1000].encode()).hexdigest()[:8]
         parts.append(f"{doc_id}:{text_hash}")
 
     combined = "|".join(sorted(parts))
