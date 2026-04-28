@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from ..core.auth import get_auth
+from ..core.document_acl import get_acl_enforcer, resolve_acl_defaults
 from ..core.providers import ProviderError, discover_models
 from ..schemas.config import (
     RETRIEVAL_PRESETS,
@@ -122,6 +124,107 @@ def model_status(payload: ModelStatusRequest, container: ServiceContainer = Depe
 @router.get("/policy")
 def local_first_policy(container: ServiceContainer = Depends(get_container)):
     return container.local_first.describe()
+
+
+@router.get("/recommendations")
+def quality_recommendations(
+    request: Request,
+    container: ServiceContainer = Depends(get_container),
+):
+    cfg = container.config_store.read()
+    docs = container.document_store.list()
+    auth_enabled = get_auth().require_auth()
+    scopes = getattr(request.state, "scopes", [])
+    if auth_enabled and "admin" not in scopes:
+        default_public, _ = resolve_acl_defaults(auth_enabled)
+        enforcer = get_acl_enforcer(default_public=default_public)
+        user_id = getattr(request.state, "user_id", None)
+        docs = [
+            doc
+            for doc in docs
+            if enforcer.check_access(doc.id, user_id, "read")[0]
+        ]
+    parser_counts: dict[str, int] = {}
+    low_confidence = 0
+    processing_errors = 0
+    for doc in docs:
+        parser = doc.metadata.get("parser_provider", "native")
+        parser_counts[parser] = parser_counts.get(parser, 0) + 1
+        try:
+            confidence = float(doc.metadata.get("parser_confidence", "1") or 1)
+        except ValueError:
+            confidence = 1.0
+        if confidence < 0.7:
+            low_confidence += 1
+        if doc.metadata.get("processing_status") == "error":
+            processing_errors += 1
+
+    retrieval = cfg.retrieval
+    recommendations: list[dict[str, object]] = []
+    if not docs:
+        recommendations.append({
+            "id": "ingest-corpus",
+            "title": "Ingest a mixed benchmark corpus",
+            "priority": "high",
+            "detail": "Add PDFs, DOCX files, Markdown, and scanned material before promoting retrieval presets.",
+            "action": "documents",
+        })
+    if parser_counts.get("docling", 0) == 0:
+        recommendations.append({
+            "id": "enable-docling",
+            "title": "Install Docling for structured parsing",
+            "priority": "high",
+            "detail": "The parser adapter is ready and will prefer Docling when the package is installed locally.",
+            "action": "parser",
+        })
+    if low_confidence:
+        recommendations.append({
+            "id": "review-low-confidence",
+            "title": "Review low-confidence extractions",
+            "priority": "medium",
+            "detail": f"{low_confidence} document(s) have parser confidence below 0.70.",
+            "action": "preview",
+        })
+    if not getattr(retrieval, "use_reranking", False):
+        recommendations.append({
+            "id": "enable-reranker",
+            "title": "Enable reranking for expert answers",
+            "priority": "medium",
+            "detail": "Reranking usually improves context precision when enough local compute is available.",
+            "action": "config",
+        })
+    if not getattr(retrieval, "enforce_evidence_contract", False):
+        recommendations.append({
+            "id": "evidence-contract",
+            "title": "Turn on evidence contract checks",
+            "priority": "medium",
+            "detail": "Evidence contracts make answer generation stricter and easier to audit.",
+            "action": "config",
+        })
+    if processing_errors:
+        recommendations.append({
+            "id": "processing-errors",
+            "title": "Fix ingestion errors",
+            "priority": "high",
+            "detail": f"{processing_errors} document(s) failed background indexing.",
+            "action": "documents",
+        })
+
+    return {
+        "deployment_profile": cfg.deployment_profile,
+        "document_count": len(docs),
+        "parser_counts": parser_counts,
+        "low_confidence_documents": low_confidence,
+        "processing_errors": processing_errors,
+        "active_features": {
+            "reranking": getattr(retrieval, "use_reranking", False),
+            "graph": getattr(retrieval, "graph", False),
+            "raptor": getattr(retrieval, "raptor", False),
+            "evidence_contract": getattr(retrieval, "enforce_evidence_contract", False),
+            "local_only": cfg.deployment_profile.value == "local_only",
+        },
+        "recommendations": recommendations,
+    }
 
 
 @router.post("/models/download")

@@ -41,6 +41,7 @@ except ImportError:  # pragma: no cover
 from ..schemas.config import AppConfig, OCRPolicy, ProviderConfig
 from .audit import AuditAction, AuditEntry, get_audit_log
 from .documents import DocumentStore
+from .document_parser import DocumentParserRouter, parser_result_from_text, parser_result_to_metadata
 from .langextract_enricher import LangExtractEnricher
 from .local_first import LocalFirstRegistry
 from .ocr import OCRRouter
@@ -84,6 +85,7 @@ class IngestPipeline:
         self._config_getter = config_getter
         self._langextract = LangExtractEnricher(data_dir=data_dir)
         self._policy_registry = policy_registry
+        self._parser_router = DocumentParserRouter()
 
     def ingest_text(
         self,
@@ -167,6 +169,41 @@ class IngestPipeline:
         meta["filesize"] = str(len(content))
         text, extraction_metadata = self._extract_text_with_metadata(content, meta)
         meta.update(extraction_metadata)
+        if "parser_preview_json" not in meta:
+            extraction_confidence = self._metadata_float(extraction_metadata, "extraction_confidence")
+            if extraction_confidence <= 0:
+                extraction_confidence = self._metadata_float(extraction_metadata, "text_extraction_confidence")
+            try:
+                parser_result = self._parser_router.parse(content, meta)
+                if (
+                    parser_result.provider == "docling"
+                    and parser_result.text.strip()
+                    and parser_result.confidence >= extraction_confidence
+                ):
+                    text = parser_result.text
+                    preview_result = parser_result
+                else:
+                    preview_result = parser_result_from_text(
+                        text=text,
+                        provider=parser_result.provider,
+                        engine=extraction_metadata.get("extraction_engine", parser_result.engine),
+                        confidence=max(extraction_confidence, parser_result.confidence),
+                        used_ocr=str(extraction_metadata.get("ocr_used", "")).lower() == "true",
+                        raw_metadata={"parser_warning": ",".join(parser_result.warnings)},
+                    )
+                meta.update(parser_result_to_metadata(preview_result, extraction_metadata))
+            except Exception as exc:
+                meta["parser_provider"] = meta.get("parser_provider", "native")
+                meta["parser_warning"] = str(exc)
+                preview_result = parser_result_from_text(
+                    text=text,
+                    provider="native",
+                    engine=extraction_metadata.get("extraction_engine", "stored-text"),
+                    confidence=max(extraction_confidence, 0.0),
+                    used_ocr=str(extraction_metadata.get("ocr_used", "")).lower() == "true",
+                    raw_metadata={"parser_warning": str(exc)},
+                )
+                meta.update(parser_result_to_metadata(preview_result, extraction_metadata))
         return self.ingest_text(
             title=title,
             text=text,
@@ -370,6 +407,12 @@ class IngestPipeline:
     def _compute_content_hash(self, text: str) -> str:
         """Compute SHA-256 hash of document content for change detection."""
         return hashlib.sha256(text.encode('utf-8')).hexdigest()
+
+    def _metadata_float(self, metadata: dict[str, str], key: str) -> float:
+        try:
+            return float(metadata.get(key, "0") or 0)
+        except ValueError:
+            return 0.0
 
     def _contextualize_chunks(
         self,

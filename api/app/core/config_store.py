@@ -23,6 +23,10 @@ class ConfigStore:
         if not self._path.exists():
             self.write(AppConfig())
 
+    @property
+    def path(self) -> Path:
+        return self._path
+
     def read(self) -> AppConfig:
         with self._lock:
             data = json.loads(self._path.read_text(encoding="utf-8"))

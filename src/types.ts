@@ -188,6 +188,110 @@ export type DocumentOut = {
     processing_error?: string;
 };
 
+export type ParsedBlock = {
+    type: string;
+    text: string;
+    page?: number | null;
+    heading_level?: number | null;
+    confidence: number;
+    metadata: Record<string, unknown>;
+};
+
+export type ParsedPage = {
+    number: number;
+    text: string;
+    confidence: number;
+    metadata: Record<string, unknown>;
+    blocks: ParsedBlock[];
+};
+
+export type DocumentPreview = {
+    document_id: string;
+    title: string;
+    parser_provider: string;
+    parser_engine: string;
+    confidence: number;
+    used_ocr: boolean;
+    page_count: number;
+    block_count: number;
+    warnings: string[];
+    blocks: ParsedBlock[];
+    pages: ParsedPage[];
+};
+
+export type EvalMetricResult = {
+    name: string;
+    value: number;
+    provider: string;
+    direction: string;
+    details: Record<string, unknown>;
+};
+
+export type ExperimentConfig = {
+    name: string;
+    description?: string;
+    parser?: string[];
+    chunker?: string[];
+    embedding?: string[];
+    dense_weight?: number[];
+    sparse_weight?: number[];
+    reranker?: boolean[];
+    graph?: boolean[];
+    raptor?: boolean[];
+    ocr_policy?: string[];
+    questions?: string[];
+};
+
+export type ExperimentRun = {
+    id: string;
+    config: ExperimentConfig;
+    status: string;
+    created_at: string;
+    completed_at?: string | null;
+    metrics: EvalMetricResult[];
+    winning_preset?: string | null;
+    config_snapshot: Record<string, unknown>;
+    traces: string[];
+    promoted_at?: string | null;
+};
+
+export type EvalRunSummary = {
+    run_id: string;
+    golden_set_name: string;
+    timestamp: string;
+    retrieval_metrics: {
+        recall_at_k: number;
+        mrr: number;
+        ndcg: number;
+        citation_coverage: number;
+    };
+    answer_metrics: {
+        faithfulness: number;
+        completeness: number;
+        refusal_accuracy: number;
+        coherence: number;
+    };
+    duration_ms: number;
+};
+
+export type QualityRecommendation = {
+    id: string;
+    title: string;
+    priority: "high" | "medium" | "low" | string;
+    detail: string;
+    action: string;
+};
+
+export type QualityRecommendations = {
+    deployment_profile: DeploymentProfile;
+    document_count: number;
+    parser_counts: Record<string, number>;
+    low_confidence_documents: number;
+    processing_errors: number;
+    active_features: Record<string, boolean>;
+    recommendations: QualityRecommendation[];
+};
+
 export type IngestResponse = {
     document_id: string;
     title: string;
