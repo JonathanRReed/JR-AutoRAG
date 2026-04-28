@@ -36,6 +36,7 @@ from .routers import (
     config,
     documents,
     evaluation,
+    experiments,
     health,
     metrics_routes,
     monitoring,
@@ -153,6 +154,10 @@ app.include_router(
 )
 app.include_router(
     evaluation.router,
+    dependencies=[Depends(verify_api_key)],
+)
+app.include_router(
+    experiments.router,
     dependencies=[Depends(verify_api_key)],
 )
 app.include_router(

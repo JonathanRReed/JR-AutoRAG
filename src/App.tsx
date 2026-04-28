@@ -1,5 +1,5 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BarChart3, FileText, MessageSquare, Moon, Settings, Sun } from "lucide-react";
+import { BarChart3, FileText, MessageSquare, Moon, Settings, Sun, Trophy } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,6 +14,7 @@ const IngestPanel = lazy(() => import("@/components/features/IngestPanel").then(
 const MetricsDashboard = lazy(() => import("@/components/features/MetricsDashboard").then(m => ({ default: m.MetricsDashboard })));
 const ProviderConfig = lazy(() => import("@/components/features/ProviderConfig").then(m => ({ default: m.ProviderConfig })));
 const ProviderCarousel = lazy(() => import("@/components/features/ProviderCarousel").then(m => ({ default: m.ProviderCarousel })));
+const QualityCockpit = lazy(() => import("@/components/features/QualityCockpit").then(m => ({ default: m.QualityCockpit })));
 const TraceLog = lazy(() => import("@/components/features/TraceLog").then(m => ({ default: m.TraceLog })));
 const PresetSelector = lazy(() => import("@/components/features/PresetSelector").then(m => ({ default: m.PresetSelector })));
 
@@ -70,6 +71,22 @@ const toMessage = (error: unknown) => {
   return String(error);
 };
 
+const readStoredJson = <T,>(key: string, fallback: T): T => {
+  if (typeof window === "undefined") {
+    return fallback;
+  }
+  const saved = localStorage.getItem(key);
+  if (!saved) {
+    return fallback;
+  }
+  try {
+    return JSON.parse(saved) as T;
+  } catch {
+    localStorage.removeItem(key);
+    return fallback;
+  }
+};
+
 const formatDateTime = (value?: string) => {
   if (!value) return "Unknown";
   const date = new Date(value);
@@ -79,12 +96,13 @@ const formatDateTime = (value?: string) => {
   return date.toLocaleString();
 };
 
-type TabId = "config" | "documents" | "query" | "metrics";
+type TabId = "config" | "documents" | "query" | "quality" | "metrics";
 
 const tabs: { id: TabId; label: string; icon: typeof Settings }[] = [
   { id: "config", label: "Configuration", icon: Settings },
   { id: "documents", label: "Documents", icon: FileText },
   { id: "query", label: "Query", icon: MessageSquare },
+  { id: "quality", label: "Quality", icon: Trophy },
   { id: "metrics", label: "Metrics", icon: BarChart3 },
 ];
 
@@ -106,12 +124,10 @@ export function App() {
   const [question, setQuestion] = useState("");
   const [queryResult, setQueryResult] = useState<QueryResponse | null>(null);
   const [chatHistory, setChatHistory] = useState<{ role: string; content: string }[]>(() => {
-    const saved = localStorage.getItem("chatHistory");
-    return saved ? JSON.parse(saved) : [];
+    return readStoredJson("chatHistory", []);
   });
   const [savedSessions, setSavedSessions] = useState<ChatSession[]>(() => {
-    const saved = localStorage.getItem("savedSessions");
-    return saved ? JSON.parse(saved) : [];
+    return readStoredJson("savedSessions", []);
   });
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const currentSessionIdRef = useRef(currentSessionId);
@@ -150,7 +166,7 @@ export function App() {
   const [activeTab, setActiveTab] = useState<TabId>(() => {
     if (typeof window === "undefined") return "config";
     const saved = localStorage.getItem("activeTab");
-    if (saved && ["config", "documents", "query", "metrics"].includes(saved)) {
+    if (saved && ["config", "documents", "query", "quality", "metrics"].includes(saved)) {
       return saved as TabId;
     }
     return "config";
@@ -747,7 +763,12 @@ export function App() {
             continue;
           }
           const payloadText = chunk.replace(/^data:\s*/, "");
-          const event = JSON.parse(payloadText);
+          let event: { type?: string; data?: any };
+          try {
+            event = JSON.parse(payloadText);
+          } catch {
+            continue;
+          }
           if (event.type === "step") {
             if (localSessionId === currentSessionIdRef.current) {
               setQueryResult(prev => {
@@ -1506,6 +1527,19 @@ export function App() {
               </Suspense>
             </div>
 
+            <div className={`h-full animate-in fade-in slide-in-from-bottom-2 duration-300 ${activeTab !== "quality" ? "hidden" : ""}`}>
+              <div className="mx-auto max-w-[1400px]">
+                <Suspense fallback={<LoadingSpinner message="Loading quality cockpit..." />}>
+                  <QualityCockpit
+                    documents={documents}
+                    buildUrl={buildUrl}
+                    buildHeaders={buildHeaders}
+                    onPresetPromoted={refreshAll}
+                  />
+                </Suspense>
+              </div>
+            </div>
+
             <div className={`h-full animate-in fade-in slide-in-from-bottom-2 duration-300 ${activeTab !== "metrics" ? "hidden" : ""}`}>
               {/* Metrics & Traces */}
               <div className="space-y-6 max-w-5xl mx-auto">
@@ -1525,22 +1559,6 @@ export function App() {
                     formatNumber={formatNumber}
                   />
                 </Suspense>
-              </div>
-            </div>
-
-            <div className={`h-full animate-in fade-in slide-in-from-bottom-2 duration-300 ${activeTab !== "metrics" ? "hidden" : ""}`}>
-              {/* Metrics & Traces */}
-              <div className="space-y-6 max-w-5xl mx-auto">
-                <EnterpriseStatusPanel baseUrl={baseUrl} apiKey={apiKey} />
-
-                <MetricsDashboard traces={traces} />
-                <TraceLog
-                  isEvaluating={isEvaluating}
-                  handleEvaluation={handleEvaluation}
-                  evaluationSummary={evaluationSummary}
-                  traces={traces}
-                  formatNumber={formatNumber}
-                />
               </div>
             </div>
           </div>

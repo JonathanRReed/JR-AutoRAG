@@ -6,10 +6,26 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 
 from ..core.auth import get_auth
 from ..core.document_acl import get_acl_enforcer, get_acl_store, resolve_acl_defaults
-from ..schemas.documents import DocumentOut, IngestResponse, IngestTextRequest
+from ..core.document_parser import build_preview_from_document_metadata
+from ..schemas.documents import DocumentOut, DocumentPreviewResponse, IngestResponse, IngestTextRequest
 from ..services import ServiceContainer, get_container
 
 router = APIRouter(prefix="/documents", tags=["documents"])
+
+
+def _ensure_document_read_access(document_id: str, request: Request) -> None:
+    auth_enabled = get_auth().require_auth()
+    if not auth_enabled:
+        return
+    scopes = getattr(request.state, "scopes", [])
+    if "admin" in scopes:
+        return
+    default_public, _ = resolve_acl_defaults(auth_enabled)
+    enforcer = get_acl_enforcer(default_public=default_public)
+    user_id = getattr(request.state, "user_id", None)
+    allowed, _ = enforcer.check_access(document_id, user_id, "read")
+    if not allowed:
+        raise HTTPException(status_code=403, detail="Insufficient permissions to read this document")
 
 
 @router.get("", response_model=list[DocumentOut])
@@ -36,6 +52,32 @@ def list_documents(
         DocumentOut(id=doc.id, title=doc.title, text=doc.text, metadata=doc.metadata)
         for doc in allowed_docs
     ]
+
+
+@router.get("/{document_id}/preview", response_model=DocumentPreviewResponse)
+def get_document_preview(
+    document_id: str,
+    request: Request,
+    container: ServiceContainer = Depends(get_container),
+):
+    doc = container.document_store.get(document_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    _ensure_document_read_access(document_id, request)
+    payload = build_preview_from_document_metadata(doc.metadata, doc.text)
+    return DocumentPreviewResponse(
+        document_id=doc.id,
+        title=doc.title,
+        parser_provider=str(payload.get("parser_provider", "native")),
+        parser_engine=str(payload.get("parser_engine", "stored-text")),
+        confidence=float(payload.get("confidence", 0.0) or 0.0),
+        used_ocr=bool(payload.get("used_ocr", False)),
+        page_count=int(payload.get("page_count", 0) or 0),
+        block_count=int(payload.get("block_count", 0) or 0),
+        warnings=list(payload.get("warnings", []) or []),
+        blocks=list(payload.get("blocks", []) or []),
+        pages=list(payload.get("pages", []) or []),
+    )
 
 
 @router.post("/text", response_model=IngestResponse)
