@@ -30,7 +30,7 @@ function InlineHint({ label, detail }: { label: string; detail: string }) {
       className="inline-flex items-center gap-2 rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium text-muted-foreground"
       title={detail}
     >
-      <Info className="h-3.5 w-3.5 text-secondary-foreground" />
+      <Info className="h-3.5 w-3.5 text-muted-foreground" />
       <span className="truncate">{label}</span>
     </span>
   );
@@ -267,7 +267,7 @@ export function ProviderConfig({
                         className="font-mono text-xs"
                       />
                       <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                        {backend?.capabilities?.mode ?? "local"} · {backend?.capabilities?.requires_network ? "networked" : "offline-capable"}
+                        {backend?.capabilities?.mode ?? "local"} / {backend?.capabilities?.requires_network ? "networked" : "offline-capable"}
                       </p>
                     </div>
                   );

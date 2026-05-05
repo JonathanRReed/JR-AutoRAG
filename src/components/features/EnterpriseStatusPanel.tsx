@@ -54,8 +54,8 @@ interface EnterpriseStatusProps {
 function StatusBadge({ status }: { status: string }) {
     const defaultConfig = { bg: "bg-muted", text: "text-muted-foreground", icon: Clock };
     const configs: Record<string, { bg: string; text: string; icon: typeof CheckCircle2 }> = {
-        ready: { bg: "bg-emerald-500/10", text: "text-emerald-500", icon: CheckCircle2 },
-        building: { bg: "bg-amber-500/10", text: "text-amber-500", icon: Loader2 },
+        ready: { bg: "bg-primary/10", text: "text-primary", icon: CheckCircle2 },
+        building: { bg: "bg-secondary/15", text: "text-foreground", icon: Loader2 },
         not_built: defaultConfig,
         failed: { bg: "bg-destructive/10", text: "text-destructive", icon: AlertCircle },
     };
@@ -80,7 +80,7 @@ export function EnterpriseStatusPanel({ baseUrl, apiKey = "" }: EnterpriseStatus
     const [isDownloading, setIsDownloading] = useState(false);
     const [isPolling, setIsPolling] = useState(false);
     const [lastTraceTime, setLastTraceTime] = useState<string | null>(null);
-    const [corpusVersion, setCorpusVersion] = useState<string>("—");
+    const [corpusVersion, setCorpusVersion] = useState<string>("n/a");
 
     const isBuilding = artifactStatus.graph_rag.status === "building" || artifactStatus.raptor.status === "building";
     const activeProgresses = [
@@ -134,7 +134,7 @@ export function EnterpriseStatusPanel({ baseUrl, apiKey = "" }: EnterpriseStatus
                     data.raptor_version,
                 );
                 setArtifactStatus({ graph_rag: graph, raptor });
-                setCorpusVersion(data.corpus_version || graph.corpus_version || raptor.corpus_version || "—");
+                setCorpusVersion(data.corpus_version || graph.corpus_version || raptor.corpus_version || "n/a");
 
                 // Start polling if building
                 if (graph.status === "building" || raptor.status === "building") {
@@ -267,9 +267,9 @@ export function EnterpriseStatusPanel({ baseUrl, apiKey = "" }: EnterpriseStatus
                         <div className="px-3 py-1 rounded-full bg-muted/50 border border-border/40 text-[10px] font-mono font-medium text-muted-foreground">
                             v{corpusVersion}
                         </div>
-                        <div className="flex items-center gap-2 px-2 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20">
-                            <div className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                            <span className="text-[10px] font-semibold text-emerald-600">LIVE</span>
+                        <div className="flex items-center gap-2 px-2 py-1 rounded-full bg-primary/10 border border-primary/20">
+                            <div className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />
+                            <span className="text-[10px] font-semibold text-primary">LIVE</span>
                         </div>
                     </div>
                 </div>
@@ -289,7 +289,7 @@ export function EnterpriseStatusPanel({ baseUrl, apiKey = "" }: EnterpriseStatus
                         <div className="space-y-3">
                             <div className="flex items-center justify-between p-2 rounded-lg bg-background/50 border border-border/30">
                                 <div className="flex items-center gap-2">
-                                    <GitGraph className="h-4 w-4 text-secondary/80" />
+                                    <GitGraph className="h-4 w-4 text-muted-foreground" />
                                     <span className="text-xs font-medium">GraphRAG</span>
                                 </div>
                                 <div className="flex items-center gap-2">
@@ -359,7 +359,7 @@ export function EnterpriseStatusPanel({ baseUrl, apiKey = "" }: EnterpriseStatus
                     <div className="group relative overflow-hidden rounded-xl border border-border/50 bg-gradient-to-br from-card/50 to-muted/20 p-5 transition-all hover:bg-muted/30 hover:border-border/80">
                         <div className="flex items-center justify-between mb-4">
                             <div className="flex items-center gap-2">
-                                <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                                <CheckCircle2 className="h-4 w-4 text-primary" />
                                 <span className="text-sm font-semibold">Citation Fidelity</span>
                             </div>
                             <span className="text-[10px] font-mono text-muted-foreground opacity-70">G1</span>
@@ -371,7 +371,7 @@ export function EnterpriseStatusPanel({ baseUrl, apiKey = "" }: EnterpriseStatus
                                 <div className="text-[10px] text-muted-foreground">Verified</div>
                             </div>
                             <div className="text-center p-2 rounded-lg bg-background/50 border border-border/30">
-                                <div className="text-xl font-bold text-emerald-600">0</div>
+                                <div className="text-xl font-bold text-primary">0</div>
                                 <div className="text-[10px] text-muted-foreground">Repairs</div>
                             </div>
                         </div>
@@ -433,7 +433,7 @@ export function EnterpriseStatusPanel({ baseUrl, apiKey = "" }: EnterpriseStatus
                     <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1">
                             <span className="text-sm font-semibold text-foreground">Cache Never Stale (G3)</span>
-                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-500/10 text-emerald-600 tracking-wide uppercase">Active</span>
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold bg-primary/10 text-primary tracking-wide uppercase">Active</span>
                         </div>
                         <p className="text-xs text-muted-foreground leading-relaxed">
                             Cache keys include corpus version and retrieval mode. Stale cache hits are prevented automatically.

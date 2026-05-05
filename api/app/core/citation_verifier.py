@@ -270,7 +270,7 @@ Output ONLY the corrected answer text, nothing else."""
             return answer
 
         warning = (
-            f"[⚠️ Note: Some citations could not be verified against source documents. "
+            f"[Note: Some citations could not be verified against source documents. "
             f"Unverified citation IDs: {', '.join(invalid_ids)}]\n\n"
         )
         return warning + answer

@@ -435,6 +435,47 @@ export type ChatSession = {
     createdAt: string;
 };
 
+export type OnboardingSampleDocument = {
+    title: string;
+    tags: string[];
+    demo_question: string;
+};
+
+export type OnboardingExampleQuery = {
+    query: string;
+    category: string;
+    expected_docs: string[];
+};
+
+export type OnboardingState = {
+    flow: {
+        steps: Array<{
+            id: string;
+            title: string;
+            description: string;
+            action: string;
+            completed: boolean;
+        }>;
+        current_step: number;
+        progress: number;
+        is_complete: boolean;
+    };
+    demo_mode: boolean;
+    demo_seeded: boolean;
+    document_count: number;
+    demo_document_count: number;
+    sample_documents: OnboardingSampleDocument[];
+    example_queries: OnboardingExampleQuery[];
+};
+
+export type DemoSeedResponse = {
+    seeded: Array<{ id: string; title: string }>;
+    skipped: Array<{ id: string; title: string }>;
+    document_count: number;
+    example_queries: OnboardingExampleQuery[];
+    demo_mode: boolean;
+};
+
 // Preset system types
 export type PresetLevel = "turbo" | "fast" | "balanced" | "thorough" | "ultra_accurate";
 
@@ -442,7 +483,6 @@ export type PresetInfo = {
     level: PresetLevel;
     name: string;
     description: string;
-    icon: string;
     features: string[];
 };
 
@@ -451,35 +491,30 @@ export const PRESET_DEFINITIONS: PresetInfo[] = [
         level: "turbo",
         name: "Turbo",
         description: "Fastest responses",
-        icon: "⚡",
         features: ["Basic retrieval", "No reranking"],
     },
     {
         level: "fast",
         name: "Fast",
         description: "Quick & good",
-        icon: "🚀",
         features: ["Reranking"],
     },
     {
         level: "balanced",
         name: "Balanced",
         description: "Speed & accuracy",
-        icon: "⚖️",
         features: ["Reranking", "Multi-resolution"],
     },
     {
         level: "thorough",
         name: "Thorough",
         description: "Deep research",
-        icon: "🔍",
         features: ["FLARE", "RAPTOR", "Iterative"],
     },
     {
         level: "ultra_accurate",
         name: "Ultra Accurate",
         description: "Maximum accuracy",
-        icon: "🎯",
         features: ["All SOTA features", "Evidence contract", "GraphRAG"],
     },
 ];

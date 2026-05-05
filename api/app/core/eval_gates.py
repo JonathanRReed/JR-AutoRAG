@@ -170,9 +170,9 @@ class EvalGateResult:
     def summary(self) -> str:
         """Generate human-readable summary."""
         if self.all_passed:
-            return f"✅ All {len(self.gate_checks)} gates passed"
+            return f"PASS: All {len(self.gate_checks)} gates passed"
         else:
-            return f"❌ {len(self.failed_gates)}/{len(self.gate_checks)} gates failed: {', '.join(self.failed_gates)}"
+            return f"FAIL: {len(self.failed_gates)}/{len(self.gate_checks)} gates failed: {', '.join(self.failed_gates)}"
 
 
 class EvalGateFailure(Exception):
@@ -488,14 +488,14 @@ def run_eval_gates_cli(
     print("=" * 60)
 
     for check in result.gate_checks:
-        status = "✅" if check.passed else "❌"
+        status = "PASS" if check.passed else "FAIL"
         print(f"  {status} {check.name}: {check.actual:.3f} (threshold: {check.threshold:.3f})")
 
     if not result.all_passed:
-        print(f"\n❌ Build FAILED - {len(result.failed_gates)} gate(s) did not pass")
+        print(f"\nBuild FAILED: {len(result.failed_gates)} gate(s) did not pass")
         return 1
 
-    print("\n✅ Build PASSED - all gates met")
+    print("\nBuild PASSED: all gates met")
     return 0
 
 

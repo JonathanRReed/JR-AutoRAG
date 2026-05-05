@@ -6,9 +6,9 @@ import path from "path";
 
 if (process.argv.includes("--help") || process.argv.includes("-h")) {
   console.log(`
-🏗️  Bun Build Script
+Bun Build Script
 
-Usage: bun run build.ts [options]
+Usage: bun ./build.ts [options]
 
 Common Options:
   --outdir <path>          Output directory (default: "dist")
@@ -28,7 +28,7 @@ Common Options:
   --help, -h               Show this help message
 
 Example:
-  bun run build.ts --outdir=dist --minify --sourcemap=linked --external=react,react-dom
+  bun ./build.ts --outdir=dist --minify --sourcemap=linked --external=react,react-dom
 `);
   process.exit(0);
 }
@@ -109,13 +109,13 @@ const formatFileSize = (bytes: number): string => {
   return `${size.toFixed(2)} ${units[unitIndex]}`;
 };
 
-console.log("\n🚀 Starting build process...\n");
+console.log("\nStarting build process...\n");
 
 const cliConfig = parseArgs();
 const outdir = typeof cliConfig.outdir === "string" ? cliConfig.outdir : path.join(process.cwd(), "dist");
 
 if (existsSync(outdir)) {
-  console.log(`🗑️ Cleaning previous build at ${outdir}`);
+  console.log(`Cleaning previous build at ${outdir}`);
   await rm(outdir, { recursive: true, force: true });
 }
 
@@ -124,7 +124,7 @@ const start = performance.now();
 const entrypoints = [...new Bun.Glob("**.html").scanSync("src")]
   .map(a => path.resolve("src", a))
   .filter(dir => !dir.includes("node_modules"));
-console.log(`📄 Found ${entrypoints.length} HTML ${entrypoints.length === 1 ? "file" : "files"} to process\n`);
+console.log(`Found ${entrypoints.length} HTML ${entrypoints.length === 1 ? "file" : "files"} to process\n`);
 
 const result = await Bun.build({
   entrypoints,
@@ -150,4 +150,4 @@ const outputTable = result.outputs.map(output => ({
 console.table(outputTable);
 const buildTime = (end - start).toFixed(2);
 
-console.log(`\n✅ Build completed in ${buildTime}ms\n`);
+console.log(`\nBuild completed in ${buildTime}ms\n`);

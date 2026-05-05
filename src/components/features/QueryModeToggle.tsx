@@ -1,6 +1,6 @@
 import React from "react";
 import { Shield, Globe } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
     Tooltip,
     TooltipContent,
@@ -15,33 +15,22 @@ interface QueryModeToggleProps {
     disabled?: boolean;
 }
 
-/**
- * Toggle between Grounded and Open Domain query modes.
- * 
- * Grounded: Only answer from corpus documents
- * Open Domain: LLM can use general knowledge
- */
 export function QueryModeToggle({ mode, onChange, disabled }: QueryModeToggleProps) {
     const isGrounded = mode === "grounded";
 
     return (
         <TooltipProvider>
-            <div className="flex items-center gap-1 p-0.5 rounded-lg bg-muted/50 border border-border/50">
+            <ToggleGroup aria-label="Query mode">
                 <Tooltip>
                     <TooltipTrigger asChild>
-                        <Button
-                            variant={isGrounded ? "default" : "ghost"}
-                            size="sm"
-                            className={`h-7 px-2.5 gap-1.5 text-xs font-medium transition-all ${isGrounded
-                                    ? "bg-primary text-primary-foreground shadow-sm"
-                                    : "text-muted-foreground hover:text-foreground"
-                                }`}
+                        <ToggleGroupItem
+                            pressed={isGrounded}
                             onClick={() => onChange("grounded")}
                             disabled={disabled}
                         >
-                            <Shield className="h-3.5 w-3.5" />
+                            <Shield data-icon="inline-start" />
                             <span>Grounded</span>
-                        </Button>
+                        </ToggleGroupItem>
                     </TooltipTrigger>
                     <TooltipContent side="bottom" className="max-w-[200px]">
                         <p className="text-xs">
@@ -53,19 +42,14 @@ export function QueryModeToggle({ mode, onChange, disabled }: QueryModeTogglePro
 
                 <Tooltip>
                     <TooltipTrigger asChild>
-                        <Button
-                            variant={!isGrounded ? "default" : "ghost"}
-                            size="sm"
-                            className={`h-7 px-2.5 gap-1.5 text-xs font-medium transition-all ${!isGrounded
-                                    ? "bg-primary text-primary-foreground shadow-sm"
-                                    : "text-muted-foreground hover:text-foreground"
-                                }`}
+                        <ToggleGroupItem
+                            pressed={!isGrounded}
                             onClick={() => onChange("open_domain")}
                             disabled={disabled}
                         >
-                            <Globe className="h-3.5 w-3.5" />
+                            <Globe data-icon="inline-start" />
                             <span>Open</span>
-                        </Button>
+                        </ToggleGroupItem>
                     </TooltipTrigger>
                     <TooltipContent side="bottom" className="max-w-[200px]">
                         <p className="text-xs">
@@ -74,7 +58,7 @@ export function QueryModeToggle({ mode, onChange, disabled }: QueryModeTogglePro
                         </p>
                     </TooltipContent>
                 </Tooltip>
-            </div>
+            </ToggleGroup>
         </TooltipProvider>
     );
 }

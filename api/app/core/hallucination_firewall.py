@@ -155,7 +155,7 @@ class HallucinationFirewall:
                 # Add warning markers
                 cleaned = cleaned.replace(
                     claim,
-                    f"[⚠️ UNVERIFIED] {claim}"
+                    f"[UNVERIFIED] {claim}"
                 )
 
         pass_rate = verified_count / max(claim_count, 1)

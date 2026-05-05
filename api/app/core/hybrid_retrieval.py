@@ -279,7 +279,7 @@ class HybridRetrievalEngine:
                 api_key = vault.get("OPENAI_API_KEY") or ""
                 base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
                 if not api_key:
-                    print("❌ Error: OPENAI_API_KEY not set for API-backed embedding model.")
+                    print("Error: OPENAI_API_KEY not set for API-backed embedding model.")
                     self._embedder_failed = True
                 else:
                     self._embedder = RemoteEmbeddingClient(
@@ -310,11 +310,11 @@ class HybridRetrievalEngine:
                             )
                         print(f"Embedding model loaded successfully from {location}.")
                     except Exception as e:
-                        print(f"❌ Error: Could not load embedding model: {e}")
+                        print(f"Error: Could not load embedding model: {e}")
                         self._embedder = None
                         self._embedder_failed = True
                 else:
-                    print("⚠️ Warning: sentence-transformers not installed. Dense retrieval disabled.")
+                    print("Warning: sentence-transformers not installed. Dense retrieval disabled.")
 
         if self._config.use_reranking and self._config.reranker_model and not self._reranker_failed and self._reranker is None:
             CrossEncoder = _get_cross_encoder()
@@ -339,7 +339,7 @@ class HybridRetrievalEngine:
                         )
                     print(f"Reranker model loaded successfully from {location}.")
                 except Exception as e:
-                    print(f"⚠️ Warning: Could not load reranker model: {e}")
+                    print(f"Warning: Could not load reranker model: {e}")
                     self._reranker = None
                     self._reranker_failed = True
 

@@ -27,25 +27,25 @@ export function GroundingBadge({ grounding, chunks = [] }: GroundingBadgeProps) 
         if (grounded && docs_used > 0 && citations_kept > 0) {
             return {
                 icon: CheckCircle2,
-                color: "text-emerald-600 dark:text-emerald-400",
-                bgColor: "bg-emerald-500/10",
-                borderColor: "border-emerald-500/20",
+                color: "text-primary",
+                bgColor: "bg-primary/10",
+                borderColor: "border-primary/20",
                 label: "Grounded",
             };
         } else if (docs_used > 0) {
             return {
                 icon: AlertTriangle,
-                color: "text-amber-600 dark:text-amber-400",
-                bgColor: "bg-amber-500/10",
-                borderColor: "border-amber-500/20",
+                color: "text-foreground",
+                bgColor: "bg-secondary/10",
+                borderColor: "border-secondary/20",
                 label: "Partially Grounded",
             };
         } else {
             return {
                 icon: XCircle,
-                color: "text-red-600 dark:text-red-400",
-                bgColor: "bg-red-500/10",
-                borderColor: "border-red-500/20",
+                color: "text-destructive",
+                bgColor: "bg-destructive/10",
+                borderColor: "border-destructive/20",
                 label: "Not Grounded",
             };
         }
@@ -68,12 +68,12 @@ export function GroundingBadge({ grounding, chunks = [] }: GroundingBadgeProps) 
                 {/* Stats */}
                 <div className="flex items-center gap-2 ml-2 pl-2 border-l border-border/50 text-xs text-muted-foreground">
                     <span>{docs_used} docs</span>
-                    <span>•</span>
+                    <span>/</span>
                     <span>{citations_kept} citations</span>
                     {chunks_dropped > 0 && (
                         <>
-                            <span>•</span>
-                            <span className="text-amber-600 dark:text-amber-400">
+                            <span>/</span>
+                            <span className="text-foreground">
                                 {chunks_dropped} dropped
                             </span>
                         </>
@@ -134,8 +134,8 @@ export function GroundingBadge({ grounding, chunks = [] }: GroundingBadgeProps) 
 
             {/* No evidence response */}
             {grounding.no_evidence_response && (
-                <div className="p-3 rounded-lg border border-amber-500/30 bg-amber-500/5 text-sm">
-                    <p className="text-amber-700 dark:text-amber-300 mb-2">
+                <div className="p-3 rounded-lg border border-secondary/30 bg-secondary/5 text-sm">
+                    <p className="text-foreground mb-2">
                         {grounding.no_evidence_response.message}
                     </p>
                     {grounding.no_evidence_response.suggested_actions?.length > 0 && (
@@ -144,7 +144,7 @@ export function GroundingBadge({ grounding, chunks = [] }: GroundingBadgeProps) 
                             <ul className="text-xs text-muted-foreground space-y-0.5">
                                 {grounding.no_evidence_response.suggested_actions.map((action, i) => (
                                     <li key={i} className="flex items-start gap-1.5">
-                                        <span>•</span>
+                                        <span>-</span>
                                         <span>{action.label}: {action.description}</span>
                                     </li>
                                 ))}

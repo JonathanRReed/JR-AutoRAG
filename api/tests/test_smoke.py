@@ -18,7 +18,7 @@ def test_context_metrics_logic():
 def test_grounding_info_logic():
     """Verify P1.8: Grounding info logic works."""
     gi = GroundingInfo(is_grounded=True, docs_used=3, citations_kept=5, chunks_total=10, chunks_dropped=2)
-    assert gi.grounding_label == "✓ Grounded (3 docs, 5 citations)"
+    assert gi.grounding_label == "Grounded (3 docs, 5 citations)"
 
 def test_retrieval_quality_gates():
     """Verify P2.14: Retrieval quality gates work."""

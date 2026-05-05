@@ -85,10 +85,10 @@ export function ProviderCarousel({
   };
 
   const tabs: { id: ProviderTab; label: string; icon: React.ReactNode; color: string }[] = [
-    { id: "ollama", label: "Ollama", icon: <Server className="h-4 w-4" />, color: "text-green-500" },
-    { id: "ollama_cloud", label: "Ollama Cloud", icon: <Cloud className="h-4 w-4" />, color: "text-green-400" },
-    { id: "lmstudio", label: "LM Studio", icon: <Server className="h-4 w-4" />, color: "text-blue-500" },
-    { id: "openrouter", label: "OpenRouter", icon: <Cloud className="h-4 w-4" />, color: "text-purple-500" },
+    { id: "ollama", label: "Ollama", icon: <Server className="h-4 w-4" />, color: "text-primary" },
+    { id: "ollama_cloud", label: "Ollama Cloud", icon: <Cloud className="h-4 w-4" />, color: "text-primary" },
+    { id: "lmstudio", label: "LM Studio", icon: <Server className="h-4 w-4" />, color: "text-muted-foreground" },
+    { id: "openrouter", label: "OpenRouter", icon: <Cloud className="h-4 w-4" />, color: "text-muted-foreground" },
   ];
 
   const currentIndex = tabs.findIndex(t => t.id === activeTab);
@@ -301,7 +301,7 @@ export function ProviderCarousel({
                 <div className="flex items-center gap-2">
                   {model}
                   {provider.running.includes(model) && (
-                    <span className="flex h-1.5 w-1.5 rounded-full bg-green-500" title="Running" />
+                    <span className="flex h-1.5 w-1.5 rounded-full bg-primary" title="Running" />
                   )}
                 </div>
               </SelectItem>
@@ -358,7 +358,7 @@ export function ProviderCarousel({
             <p className="text-xs text-muted-foreground font-mono">{provider.base_url}</p>
           </div>
           <div className="flex items-center gap-2">
-            <span className="flex h-2 w-2 rounded-full bg-green-500" />
+            <span className="flex h-2 w-2 rounded-full bg-primary" />
             <span className="text-xs text-muted-foreground">{provider.models.length} models</span>
           </div>
         </div>
@@ -405,10 +405,10 @@ export function ProviderCarousel({
 
     return (
       <div className="space-y-4">
-        <div className="flex items-start gap-3 p-3 rounded-lg bg-green-500/10 border border-green-500/20">
-          <Cloud className="h-5 w-5 text-green-500 mt-0.5" />
+        <div className="flex items-start gap-3 p-3 rounded-lg bg-primary/10 border border-primary/20">
+          <Cloud className="h-5 w-5 text-primary mt-0.5" />
           <div className="text-sm">
-            <p className="font-medium text-green-600 dark:text-green-400">Ollama Cloud</p>
+            <p className="font-medium text-primary">Ollama Cloud</p>
             <p className="text-muted-foreground text-xs mt-1">
               Run large models without local GPU. Free tier available with no data retention.
             </p>
@@ -434,7 +434,7 @@ export function ProviderCarousel({
         </div>
 
         {ollamaCloudError && (
-          <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-sm text-red-600 dark:text-red-400">
+          <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-sm text-destructive">
             {ollamaCloudError}
           </div>
         )}
@@ -758,8 +758,8 @@ export function ProviderCarousel({
         <CardContent className="py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-orange-500/10">
-                <Shield className="h-4 w-4 text-orange-500" />
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
+                <Shield className="h-4 w-4 text-primary" />
               </div>
               <div>
                 <p className="font-medium text-sm">RAGFuzz Integration</p>
@@ -772,7 +772,7 @@ export function ProviderCarousel({
             </div>
             <div className="flex items-center gap-2">
               {ragfuzzStatus?.ragfuzz_enabled && (
-                <span className="flex h-2 w-2 rounded-full bg-green-500" />
+                <span className="flex h-2 w-2 rounded-full bg-primary" />
               )}
               <code className="text-xs bg-muted px-2 py-1 rounded">
                 ragfuzz connect {typeof window !== "undefined" ? window.location.origin : "http://localhost:8000"}

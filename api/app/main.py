@@ -40,6 +40,7 @@ from .routers import (
     health,
     metrics_routes,
     monitoring,
+    onboarding,
     providers,
     query,
     ragfuzz_audit,
@@ -166,6 +167,10 @@ app.include_router(
 )
 app.include_router(
     providers.router,
+    dependencies=[Depends(verify_api_key)],
+)
+app.include_router(
+    onboarding.router,
     dependencies=[Depends(verify_api_key)],
 )
 app.include_router(

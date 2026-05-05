@@ -12,6 +12,7 @@ from fastapi.responses import StreamingResponse
 
 from ..core.auth import get_auth
 from ..core.document_acl import get_acl_enforcer, resolve_acl_defaults
+from ..core.query_mode import QueryMode
 from ..core.telemetry import PipelineStep
 from ..schemas.query import MAX_QUESTION_LENGTH, QueryRequest, QueryResponse, TraceOut, TraceStepOut
 from ..services import ServiceContainer, get_container
@@ -105,6 +106,7 @@ async def ask(
         document_ids=document_ids,
         history=payload.history,
         conversation_id=payload.conversation_id,
+        query_mode=QueryMode(payload.query_mode) if payload.query_mode else None,
         cache_scope=cache_scope,
     )
     return QueryResponse(**result)
@@ -161,6 +163,7 @@ async def ask_stream(
                 on_progress=on_progress,
                 history=payload.history,
                 conversation_id=payload.conversation_id,
+                query_mode=QueryMode(payload.query_mode) if payload.query_mode else None,
                 cache_scope=cache_scope,
             )
             await queue.put({"type": "result", "data": result})

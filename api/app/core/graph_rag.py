@@ -218,9 +218,9 @@ STRICT FORMATTING RULES:
                     # Provide more descriptive error details for debugging
                     error_msg = str(e) or "Empty error message"
                     if "Provider request failed" in error_msg:
-                        print(f"❌ GraphRAG Error: LLM Provider failed to process chunk {chunk_id} after 3 retries. Error: {error_msg}")
+                        print(f"GraphRAG Error: LLM Provider failed to process chunk {chunk_id} after 3 retries. Error: {error_msg}")
                     else:
-                        print(f"⚠️ GraphRAG Warning: Failed to parse extraction JSON for chunk {chunk_id}: {error_msg}")
+                        print(f"GraphRAG Warning: Failed to parse extraction JSON for chunk {chunk_id}: {error_msg}")
 
         return [], []
 
