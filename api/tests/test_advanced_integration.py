@@ -119,7 +119,6 @@ class TestFLAREIntegration:
     def test_max_retrievals_respected(self):
         """Test that FLARE respects max_retrievals limit."""
         config = FLAREConfig(max_retrievals=2)
-        generator = FLAREGenerator(config=config)
 
         # Simulate 3 low-confidence steps
         steps = [
@@ -268,7 +267,7 @@ class TestHallucinationFirewallIntegration:
 
         # Strict mode should mark unverified claims
         if result.flagged_claims:
-            assert "[⚠️ UNVERIFIED]" in result.cleaned_answer
+            assert "[UNVERIFIED]" in result.cleaned_answer
 
     def test_empty_chunks_handling(self):
         """Test firewall handles empty chunks gracefully."""

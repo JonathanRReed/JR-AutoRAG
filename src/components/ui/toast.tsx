@@ -47,7 +47,7 @@ export function useToast() {
 }
 
 function Tone({ variant }: { variant?: ToastVariant }) {
-  if (variant === "success") return <span className="h-2 w-2 rounded-full bg-emerald-500" />;
+  if (variant === "success") return <span className="h-2 w-2 rounded-full bg-primary" />;
   if (variant === "error") return <span className="h-2 w-2 rounded-full bg-destructive" />;
   if (variant === "info") return <span className="h-2 w-2 rounded-full bg-secondary" />;
   return <span className="h-2 w-2 rounded-full bg-primary" />;
@@ -70,8 +70,9 @@ function ToastViewport({ toasts, dismiss }: { toasts: ToastItem[]; dismiss: (id:
             type="button"
             onClick={() => dismiss(toast.id)}
             className="text-xs text-muted-foreground hover:text-foreground"
+            aria-label="Dismiss notification"
           >
-            ✕
+            x
           </button>
         </div>
       ))}

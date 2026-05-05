@@ -789,8 +789,6 @@ class TestReflectionStage:
 
     def test_reflector_quality_levels(self, sample_chunks):
         """Test all quality levels are accessible."""
-        reflector = SelfReflector()
-
         # Verify enum values
         assert AnswerQuality.HIGH.value == "high"
         assert AnswerQuality.MEDIUM.value == "medium"

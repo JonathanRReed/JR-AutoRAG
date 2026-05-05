@@ -22,7 +22,7 @@ function InlineHint({ label, detail }: { label: string; detail: string }) {
             className="inline-flex items-center gap-2 rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium text-muted-foreground"
             title={detail}
         >
-            <Info className="h-3.5 w-3.5 text-secondary-foreground" />
+            <Info className="h-3.5 w-3.5 text-muted-foreground" />
             <span className="truncate">{label}</span>
         </span>
     );
@@ -104,7 +104,7 @@ export function MetricsDashboard({ traces, cacheStats, onClearCache, isClearingC
                     <StatCard
                         title="Avg Latency"
                         value={`${avgLatency.toFixed(0)}ms`}
-                        subtitle={avgLatency < 500 ? "🚀 Excellent" : avgLatency < 1000 ? "✓ Good" : "⚠ Needs optimization"}
+                        subtitle={avgLatency < 500 ? "Excellent" : avgLatency < 1000 ? "Good" : "Needs optimization"}
                         icon={<Clock className="h-5 w-5" />}
                         sparklineData={latencySparkline}
                     />

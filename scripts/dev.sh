@@ -31,4 +31,6 @@ API_PID=$!
 
 echo "Starting web UI on http://localhost:3000..."
 cd "${ROOT_DIR}"
-bun dev
+BUN_PUBLIC_API_BASE_URL="${BUN_PUBLIC_API_BASE_URL:-http://${API_HOST}:${API_PORT}}" \
+  VITE_API_BASE_URL="${VITE_API_BASE_URL:-http://${API_HOST}:${API_PORT}}" \
+  bun dev

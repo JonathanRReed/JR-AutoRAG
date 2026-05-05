@@ -33,7 +33,7 @@ function InlineHint({ label, detail }: { label: string; detail: string }) {
             className="inline-flex items-center gap-2 rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium text-muted-foreground"
             title={detail}
         >
-            <Info className="h-3.5 w-3.5 text-secondary-foreground" />
+            <Info className="h-3.5 w-3.5 text-muted-foreground" />
             <span className="truncate">{label}</span>
         </span>
     );
@@ -74,10 +74,10 @@ function TraceCard({ trace, formatNumber }: { trace: TraceOut; formatNumber: (va
     const duration = typeof trace.metrics.duration_ms === "number" ? trace.metrics.duration_ms : 0;
 
     const coverageColor = coverage > 0.7
-        ? "text-green-500"
+        ? "text-primary"
         : coverage > 0.4
-            ? "text-yellow-500"
-            : "text-red-500";
+            ? "text-foreground"
+            : "text-destructive";
 
     const qualityLabel = coverage > 0.7 ? "High" : coverage > 0.4 ? "Medium" : "Low";
 
@@ -138,9 +138,9 @@ function TraceCard({ trace, formatNumber }: { trace: TraceOut; formatNumber: (va
                         {duration.toFixed(0)}ms
                     </span>
                 )}
-                <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${coverage > 0.7 ? "bg-green-500/10 text-green-500" :
-                    coverage > 0.4 ? "bg-yellow-500/10 text-yellow-500" :
-                        "bg-red-500/10 text-red-500"
+                <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${coverage > 0.7 ? "bg-primary/10 text-primary" :
+                    coverage > 0.4 ? "bg-secondary/10 text-foreground" :
+                        "bg-destructive/10 text-destructive"
                     }`}>
                     {qualityLabel} quality
                 </span>

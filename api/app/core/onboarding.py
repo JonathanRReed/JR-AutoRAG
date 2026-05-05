@@ -20,6 +20,75 @@ logger = logging.getLogger("autorag.onboarding")
 
 SAMPLE_DOCUMENTS = [
     {
+        "title": "JR AutoRAG Evaluation Brief",
+        "content": """JR AutoRAG is a local-first Retrieval-Augmented Generation workbench for document-grounded AI systems.
+
+The project is built to show several production concerns at once:
+1. Private document ingestion and parsing
+2. Hybrid retrieval with dense vectors, sparse matching, and reranking
+3. Answer generation with citations, traces, and quality signals
+4. Local provider support for Ollama and LM Studio
+5. Security controls for client-adjacent work
+
+Evaluator takeaway:
+JR AutoRAG should be judged as a working RAG product, not a notebook demo. The strongest demo path is upload or seed documents, ask a grounded question, inspect cited evidence, then inspect the trace and quality cockpit.
+""",
+        "tags": ["demo", "overview", "evaluation"],
+        "demo_question": "What should an evaluator notice first about JR AutoRAG?",
+    },
+    {
+        "title": "State of the Art RAG Playbook",
+        "content": """Modern RAG systems are moving beyond fixed top-k retrieval.
+
+Important research directions:
+1. Self-RAG adds retrieval and critique decisions so a model can reflect on evidence quality.
+2. Corrective RAG adds a retrieval evaluator and recovery actions when evidence quality is weak.
+3. Adaptive-RAG routes simple and complex questions through different retrieval strategies.
+4. DRAGIN retrieves dynamically when the model has new information needs.
+5. RAPTOR retrieves from hierarchical summaries to improve long-document reasoning.
+6. GraphRAG and LightRAG add graph structure for relationship and corpus-level questions.
+
+JR AutoRAG maps these ideas into product features through routing, HyDE, hybrid retrieval, reranking, self critique, evidence contracts, citation verification, RAPTOR, and GraphRAG hooks.
+""",
+        "tags": ["demo", "research", "rag"],
+        "demo_question": "Which current RAG research ideas does this project already surface?",
+    },
+    {
+        "title": "Peer Product Comparison",
+        "content": """Open-source RAG peers set clear expectations for product quality.
+
+Kotaemon is strong at citation preview, hybrid retrieval, reranking, and low-relevance warnings.
+RAGFlow is strong at deep document understanding, OCR, parsing, and agent templates.
+AnythingLLM is strong at local-first setup and fast onboarding.
+R2R is strong at REST APIs, multimodal ingestion, hybrid search, knowledge graphs, and production-facing retrieval.
+Haystack is strong at modular pipelines, branching, loops, and deployment patterns.
+AutoRAG is strong at evaluation-driven pipeline optimization.
+
+JR AutoRAG should compete by combining local-first operation, visible evidence, transparent traces, and a guided demo that reaches first answer quickly.
+""",
+        "tags": ["demo", "peers", "product"],
+        "demo_question": "How does JR AutoRAG compare with open-source RAG peers?",
+    },
+    {
+        "title": "Project Manager Demo Scenario",
+        "content": """A project manager evaluating JR AutoRAG should see a clear workflow.
+
+Demo script:
+1. Confirm the API is connected.
+2. Seed the demo corpus.
+3. Ask what the system is and why it matters.
+4. Inspect the answer citations.
+5. Open the pipeline trace and explain each retrieval stage.
+6. Open the quality cockpit and review extraction, recommendations, and advisory experiments.
+7. Explain that data can be disposable in demo mode and local-first in real client use.
+
+Success criteria:
+The product should make evidence, risk, readiness, and next actions obvious without requiring the evaluator to read source code.
+""",
+        "tags": ["demo", "project-management", "workflow"],
+        "demo_question": "Give me a project-manager style demo script for this app.",
+    },
+    {
         "title": "Introduction to RAG",
         "content": """Retrieval-Augmented Generation (RAG) combines retrieval with language models.
 
@@ -34,6 +103,7 @@ Benefits:
 - Provides citations and traceability
 """,
         "tags": ["tutorial", "rag", "basics"],
+        "demo_question": "What is RAG and what are its benefits?",
     },
     {
         "title": "Best Practices for Document Ingestion",
@@ -49,6 +119,7 @@ For technical documents, consider smaller chunks.
 For narrative content, larger chunks work better.
 """,
         "tags": ["tutorial", "ingestion", "best-practices"],
+        "demo_question": "What chunk size should I use for technical documents?",
     },
     {
         "title": "Advanced Retrieval Techniques",
@@ -67,11 +138,27 @@ Best for "how does X relate to Y" type questions.
 Improves precision at the cost of latency.
 """,
         "tags": ["advanced", "retrieval", "techniques"],
+        "demo_question": "Compare hybrid search and RAPTOR.",
     },
 ]
 
 
 EXAMPLE_QUERIES = [
+    {
+        "query": "What should an evaluator notice first about JR AutoRAG?",
+        "category": "demo",
+        "expected_docs": ["JR AutoRAG Evaluation Brief"],
+    },
+    {
+        "query": "Which current RAG research ideas does this project already surface?",
+        "category": "research",
+        "expected_docs": ["State of the Art RAG Playbook"],
+    },
+    {
+        "query": "Give me a project-manager style demo script for this app.",
+        "category": "workflow",
+        "expected_docs": ["Project Manager Demo Scenario"],
+    },
     {
         "query": "What is RAG and what are its benefits?",
         "category": "factual",

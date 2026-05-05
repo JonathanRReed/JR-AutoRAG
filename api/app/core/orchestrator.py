@@ -1981,7 +1981,7 @@ The retrieved evidence contains some conflicting information. When you encounter
         try:
             answer, firewall_details = run_firewall_step("verification", answer, chunks)
         except Exception as fw_err:
-            print(f"⚠️ Hallucination firewall error (non-blocking): {fw_err}")
+            print(f"Hallucination firewall error (non-blocking): {fw_err}")
             firewall_details = {"pass_rate": 1.0, "skipped": True, "error": str(fw_err)}
         else:
             firewall_passed = firewall_details.get("meets_threshold", True)

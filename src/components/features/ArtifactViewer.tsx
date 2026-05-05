@@ -46,7 +46,7 @@ export function ArtifactViewer({ type, onClose, baseUrl, apiKey = "" }: Artifact
                 {/* Header */}
                 <div className="flex items-center justify-between border-b border-border/40 bg-muted/20 px-6 py-4">
                     <div className="flex items-center gap-3">
-                        <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${type === 'graph_rag' ? 'bg-violet-500/10 text-violet-400' : 'bg-cyan-500/10 text-cyan-400'}`}>
+                        <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${type === 'graph_rag' ? 'bg-primary/10 text-primary' : 'bg-secondary/10 text-foreground'}`}>
                             {type === 'graph_rag' ? <Network size={24} /> : <Layers size={24} />}
                         </div>
                         <div>
@@ -92,7 +92,7 @@ export function ArtifactViewer({ type, onClose, baseUrl, apiKey = "" }: Artifact
 
                 {/* Footer info */}
                 <div className="border-t border-border/40 bg-muted/5 px-6 py-3 text-[10px] text-muted-foreground flex justify-between items-center">
-                    <span>G4 Engine • Deep Artifact Visibility</span>
+                    <span>G4 Engine - Deep Artifact Visibility</span>
                     {data && (
                         <div className="flex gap-4">
                             {type === 'graph_rag' ? (
@@ -133,9 +133,9 @@ function GraphVisualization({ data }: { data: any }) {
                 {activeTab === 'entities' && data.entities?.map((e: any, i: number) => (
                     <div key={i} className="group rounded-xl border border-border/50 bg-muted/10 p-4 hover:border-primary/30 transition-all">
                         <div className="flex items-center gap-2 mb-2">
-                            <span className="text-[10px] font-bold uppercase tracking-wider text-violet-400/80 px-2 py-0.5 rounded bg-violet-500/5">{e.type || 'Entity'}</span>
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-primary px-2 py-0.5 rounded bg-primary/5">{e.type || 'Entity'}</span>
                         </div>
-                        <h4 className="font-bold text-indigo-100 group-hover:text-primary transition-colors">{e.name}</h4>
+                        <h4 className="font-bold text-foreground group-hover:text-primary transition-colors">{e.name}</h4>
                         <p className="mt-2 text-xs text-muted-foreground leading-relaxed line-clamp-3">{e.description}</p>
                     </div>
                 ))}
@@ -143,13 +143,13 @@ function GraphVisualization({ data }: { data: any }) {
                 {activeTab === 'communities' && data.communities?.map((c: any, i: number) => (
                     <div key={i} className="rounded-xl border border-border/50 bg-muted/10 p-4 overflow-hidden">
                         <div className="flex items-center justify-between mb-3">
-                            <span className="text-xs font-bold text-indigo-300">Cluster #{c.id}</span>
+                            <span className="text-xs font-bold text-primary">Cluster #{c.id}</span>
                             <span className="text-[10px] text-muted-foreground">{c.entities?.length || 0} entities</span>
                         </div>
-                        <p className="text-xs text-slate-200 line-clamp-3 mb-4 italic">"{c.summary}"</p>
+                        <p className="text-xs text-foreground line-clamp-3 mb-4 italic">"{c.summary}"</p>
                         <div className="flex flex-wrap gap-1.5">
                             {c.entities?.slice(0, 5).map((ent: string, j: number) => (
-                                <span key={j} className="text-[9px] bg-indigo-500/10 text-indigo-300 px-1.5 py-0.5 rounded border border-indigo-500/20">{ent}</span>
+                                <span key={j} className="text-[9px] bg-muted text-foreground px-1.5 py-0.5 rounded border border-border">{ent}</span>
                             ))}
                             {c.entities?.length > 5 && <span className="text-[9px] text-muted-foreground px-1.5 py-0.5">+{c.entities.length - 5} more</span>}
                         </div>
@@ -169,9 +169,9 @@ function GraphVisualization({ data }: { data: any }) {
                             <tbody className="divide-y divide-border/30">
                                 {data.relationships?.map((r: any, i: number) => (
                                     <tr key={i} className="hover:bg-muted/20 transition-colors">
-                                        <td className="px-4 py-3 font-medium text-violet-300">{r.source}</td>
+                                        <td className="px-4 py-3 font-medium text-primary">{r.source}</td>
                                         <td className="px-4 py-3 text-muted-foreground max-w-xs truncate" title={r.description}>{r.description}</td>
-                                        <td className="px-4 py-3 font-medium text-cyan-300">{r.target}</td>
+                                        <td className="px-4 py-3 font-medium text-foreground">{r.target}</td>
                                     </tr>
                                 ))}
                             </tbody>
@@ -229,9 +229,9 @@ function RaptorVisualization({ data }: { data: any }) {
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {currentTree.nodes.filter((n: any) => n.level > 0).map((node: any) => (
-                            <div key={node.id} className="rounded-xl border border-border/40 bg-muted/10 p-4 hover:border-cyan-500/30 transition-all">
+                            <div key={node.id} className="rounded-xl border border-border/40 bg-muted/10 p-4 hover:border-primary/30 transition-all">
                                 <div className="flex items-center justify-between mb-2">
-                                    <span className="text-[10px] font-mono text-cyan-400">LEVEL {node.level} • {node.id}</span>
+                                    <span className="text-[10px] font-mono text-primary">LEVEL {node.level} - {node.id}</span>
                                 </div>
                                 <p className="text-xs text-muted-foreground line-clamp-4">{node.summary}</p>
                             </div>

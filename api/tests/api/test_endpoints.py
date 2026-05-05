@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import tempfile
 from pathlib import Path
 
@@ -9,6 +10,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.core.security_middleware import _resolve_route_timeout
+from app.schemas.query import QueryResponse
 from app.services import ServiceContainer, get_container
 
 
@@ -187,6 +190,101 @@ def test_document_ingest_query_and_evaluation(client: TestClient) -> None:
     eval_data = eval_resp.json()
     assert eval_data["responses"], "evaluation should include responses"
     assert eval_data["average_coverage"] >= 0
+
+
+def test_onboarding_demo_seed_query_and_clear(client: TestClient) -> None:
+    initial = client.get("/onboarding")
+    assert initial.status_code == 200
+    initial_body = initial.json()
+    assert initial_body["demo_seeded"] is False
+    assert initial_body["sample_documents"], "expected demo sample documents"
+    assert initial_body["example_queries"], "expected demo example queries"
+
+    seed = client.post("/onboarding/demo/seed")
+    assert seed.status_code == 200
+    seed_body = seed.json()
+    assert seed_body["seeded"], "expected at least one demo document to be seeded"
+    assert seed_body["document_count"] >= len(seed_body["seeded"])
+
+    docs = client.get("/documents")
+    assert docs.status_code == 200
+    demo_docs = [doc for doc in docs.json() if doc["metadata"].get("demo_corpus") == "true"]
+    assert demo_docs
+    assert {doc["metadata"].get("retention") for doc in demo_docs} == {"disposable"}
+
+    query_resp = client.post(
+        "/query",
+        json={
+            "question": "What should an evaluator notice first about JR AutoRAG?",
+            "query_mode": "grounded",
+            "conversation_id": "demo-test",
+        },
+    )
+    assert query_resp.status_code == 200
+    query_body = query_resp.json()
+    assert query_body["chunks"], "demo query should retrieve evidence"
+    assert query_body["metrics"]["conversation_id"] == "demo-test"
+
+    clear = client.delete("/onboarding/demo")
+    assert clear.status_code == 200
+    assert clear.json()["deleted"] == len(demo_docs)
+
+    after = client.get("/documents")
+    assert after.status_code == 200
+    assert not [doc for doc in after.json() if doc["metadata"].get("demo_corpus") == "true"]
+
+
+def test_streaming_query_accepts_grounded_mode(client: TestClient) -> None:
+    seed = client.post("/onboarding/demo/seed")
+    assert seed.status_code == 200
+
+    with client.stream(
+        "POST",
+        "/query/stream",
+        json={
+            "question": "Compare hybrid search and RAPTOR",
+            "query_mode": "grounded",
+            "conversation_id": "stream-test",
+        },
+    ) as response:
+        assert response.status_code == 200
+        body = "\n".join(response.iter_lines())
+
+    assert "data:" in body
+    assert '"type": "result"' in body
+    assert "stream-test" in body
+
+
+def test_query_mode_rejects_unknown_value(client: TestClient) -> None:
+    resp = client.post("/query", json={"question": "What is JR AutoRAG?", "query_mode": "offline_web"})
+    assert resp.status_code == 422
+
+
+def test_query_response_accepts_datetime_step_fields() -> None:
+    now = datetime.now(timezone.utc)
+    response = QueryResponse(
+        answer="ok",
+        chunks=[],
+        sources=[],
+        trace_id="trace-1",
+        metrics={},
+        steps=[
+            {
+                "name": "generate",
+                "duration_ms": 1.0,
+                "started_at": now,
+                "completed_at": now,
+            }
+        ],
+    )
+
+    dumped = response.model_dump(mode="json")
+    assert isinstance(dumped["steps"][0]["started_at"], str)
+
+
+def test_query_stream_uses_specific_timeout() -> None:
+    assert _resolve_route_timeout("/query/stream") == 300
+    assert _resolve_route_timeout("/query") == 300
 
 
 def test_upload_accepts_langextract_override_fields(client: TestClient) -> None:

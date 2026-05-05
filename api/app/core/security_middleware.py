@@ -28,8 +28,10 @@ from .rate_limiter import get_rate_limiter
 # Safe default origins (localhost only)
 DEFAULT_ALLOWED_ORIGINS = [
     "http://localhost:3000",
+    "http://localhost:3001",
     "http://localhost:5173",
     "http://127.0.0.1:3000",
+    "http://127.0.0.1:3001",
     "http://127.0.0.1:5173",
 ]
 
@@ -67,7 +69,7 @@ MAX_REQUEST_SIZE = int(os.environ.get("AUTORAG_MAX_REQUEST_SIZE", 50 * 1024 * 10
 
 # Per-route timeout configurations (seconds)
 ROUTE_TIMEOUTS = {
-    "/query": 120,
+    "/query": 300,
     "/query/stream": 300,
     "/documents/upload": 600,
     "/evaluation/run": 900,
@@ -103,6 +105,19 @@ def _resolve_required_scope(path: str, method: str) -> str | None:
         if path.startswith(prefix):
             return scope
     return None
+
+
+def _resolve_route_timeout(path: str) -> int:
+    """Resolve route timeout using the most specific prefix first."""
+    timeout = ROUTE_TIMEOUTS.get("default", 60)
+    for prefix, route_timeout in sorted(
+        ((key, value) for key, value in ROUTE_TIMEOUTS.items() if key != "default"),
+        key=lambda item: len(item[0]),
+        reverse=True,
+    ):
+        if path.startswith(prefix):
+            return route_timeout
+    return timeout
 
 
 # =============================================================================
@@ -276,11 +291,7 @@ class TimeoutMiddleware(BaseHTTPMiddleware):
         path = request.url.path
 
         # Determine timeout for this route
-        timeout = ROUTE_TIMEOUTS.get("default", 60)
-        for prefix, route_timeout in ROUTE_TIMEOUTS.items():
-            if prefix != "default" and path.startswith(prefix):
-                timeout = route_timeout
-                break
+        timeout = _resolve_route_timeout(path)
 
         # Store timeout in request state for handlers to use
         request.state.timeout = timeout
@@ -362,6 +373,7 @@ __all__ = [
     "configure_security",
     "get_allowed_origins",
     "is_exposed_mode",
+    "_resolve_route_timeout",
     "PUBLIC_PATHS",
     "ROUTE_SCOPES",
     "MAX_REQUEST_SIZE",

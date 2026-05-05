@@ -20,11 +20,11 @@ const PRESET_ICONS: Record<PresetLevel, typeof Zap> = {
 };
 
 const PRESET_COLORS: Record<PresetLevel, string> = {
-    turbo: "text-yellow-500",
-    fast: "text-orange-500",
-    balanced: "text-blue-500",
-    thorough: "text-purple-500",
-    ultra_accurate: "text-emerald-500",
+    turbo: "text-muted-foreground",
+    fast: "text-muted-foreground",
+    balanced: "text-primary",
+    thorough: "text-foreground",
+    ultra_accurate: "text-primary",
 };
 
 export function PresetSelector({ value, onChange, disabled, compact }: PresetSelectorProps) {
@@ -32,7 +32,7 @@ export function PresetSelector({ value, onChange, disabled, compact }: PresetSel
 
     if (compact) {
         return (
-            <div className="space-y-2">
+            <div className="flex flex-col gap-2">
                 <div className="flex items-center justify-between">
                     <div>
                         <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
@@ -68,10 +68,10 @@ export function PresetSelector({ value, onChange, disabled, compact }: PresetSel
     }
 
     return (
-        <div className="space-y-2">
+        <div className="flex flex-col gap-2">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Info className="h-4 w-4" />
-                <span>Speed ↔ Accuracy</span>
+                <span>Speed to accuracy</span>
             </div>
             <div className="grid grid-cols-5 gap-2">
                 {presets.map((preset) => {

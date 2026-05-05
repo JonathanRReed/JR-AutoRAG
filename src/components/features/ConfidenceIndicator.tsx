@@ -34,26 +34,26 @@ const CONFIDENCE_LEVELS: Record<ConfidenceLevel, {
 }> = {
     high: {
         label: "High Confidence",
-        color: "text-emerald-500",
-        bgColor: "bg-emerald-500/10",
+        color: "text-primary",
+        bgColor: "bg-primary/10",
         Icon: ShieldCheck,
     },
     medium: {
         label: "Medium Confidence",
-        color: "text-amber-500",
-        bgColor: "bg-amber-500/10",
+        color: "text-muted-foreground",
+        bgColor: "bg-muted",
         Icon: Shield,
     },
     low: {
         label: "Low Confidence",
-        color: "text-red-500",
-        bgColor: "bg-red-500/10",
+        color: "text-destructive",
+        bgColor: "bg-destructive/10",
         Icon: ShieldAlert,
     },
     abstained: {
         label: "Insufficient Evidence",
-        color: "text-purple-500",
-        bgColor: "bg-purple-500/10",
+        color: "text-primary",
+        bgColor: "bg-primary/10",
         Icon: ShieldX,
     },
     unknown: {
@@ -119,9 +119,9 @@ export function ConfidenceIndicator({
 
             {/* Abstention Banner */}
             {abstained && abstentionReason && (
-                <div className="flex items-start gap-2 p-3 mb-4 rounded-lg bg-purple-500/5 border border-purple-500/20">
-                    <AlertTriangle className="h-4 w-4 text-purple-500 mt-0.5 flex-shrink-0" />
-                    <p className="text-xs text-purple-700 dark:text-purple-300">
+                <div className="flex items-start gap-2 p-3 mb-4 rounded-lg bg-primary/5 border border-primary/20">
+                    <AlertTriangle className="h-4 w-4 text-primary mt-0.5 flex-shrink-0" />
+                    <p className="text-xs text-primary">
                         {abstentionReason}
                     </p>
                 </div>
@@ -142,8 +142,8 @@ export function ConfidenceIndicator({
                 {hallucinationPass !== undefined && (
                     <div
                         className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-medium border ${hallucinationPass
-                            ? "bg-emerald-500/5 text-emerald-600 border-emerald-500/20"
-                            : "bg-red-500/5 text-red-600 border-red-500/20"
+                            ? "bg-primary/5 text-primary border-primary/20"
+                            : "bg-destructive/5 text-destructive border-destructive/20"
                             }`}
                     >
                         {hallucinationPass ? <ShieldCheck className="h-3 w-3" /> : <ShieldAlert className="h-3 w-3" />}
@@ -153,8 +153,8 @@ export function ConfidenceIndicator({
                 {evidenceContractPass !== undefined && (
                     <div
                         className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-medium border ${evidenceContractPass
-                            ? "bg-emerald-500/5 text-emerald-600 border-emerald-500/20"
-                            : "bg-amber-500/5 text-amber-600 border-amber-500/20"
+                            ? "bg-primary/5 text-primary border-primary/20"
+                            : "bg-muted text-muted-foreground border-border"
                             }`}
                     >
                         {evidenceContractPass ? <ShieldCheck className="h-3 w-3" /> : <ShieldQuestion className="h-3 w-3" />}
@@ -162,7 +162,7 @@ export function ConfidenceIndicator({
                     </div>
                 )}
                 {abstained && (
-                    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-medium border bg-purple-500/5 text-purple-600 border-purple-500/20">
+                    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-medium border bg-primary/5 text-primary border-primary/20">
                         <ShieldX className="h-3 w-3" />
                         Abstained
                     </div>
@@ -193,7 +193,7 @@ export function ConfidenceIndicator({
                                         <div className="flex items-center gap-2">
                                             <div className="w-12 h-1 bg-muted/40 rounded-full overflow-hidden">
                                                 <div
-                                                    className={`h-full rounded-full transition-all duration-500 ${clampedValue > 0.7 ? 'bg-emerald-500/50' : clampedValue > 0.4 ? 'bg-amber-500/50' : 'bg-red-500/50'}`}
+                                                    className={`h-full rounded-full transition-all duration-500 ${clampedValue > 0.7 ? 'bg-primary/70' : clampedValue > 0.4 ? 'bg-secondary' : 'bg-destructive/70'}`}
                                                     style={{ width: `${clampedValue * 100}%` }}
                                                 />
                                             </div>

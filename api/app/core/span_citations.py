@@ -452,11 +452,11 @@ class SpanCitationValidator:
             claim = mapping.claim
 
             if claim.is_trivial:
-                status = "✓ Trivial"
+                status = "Trivial"
             elif mapping.unsupported:
-                status = "❌ Unsupported"
+                status = "Unsupported"
             else:
-                status = "✓ Supported"
+                status = "Supported"
 
             lines.append(f"### Claim {i}: {status}")
             lines.append(f"> {claim.text}")

@@ -12,6 +12,7 @@ const ChatInterface = lazy(() => import("@/components/features/ChatInterface").t
 const EnterpriseStatusPanel = lazy(() => import("@/components/features/EnterpriseStatusPanel").then(m => ({ default: m.EnterpriseStatusPanel })));
 const IngestPanel = lazy(() => import("@/components/features/IngestPanel").then(m => ({ default: m.IngestPanel })));
 const MetricsDashboard = lazy(() => import("@/components/features/MetricsDashboard").then(m => ({ default: m.MetricsDashboard })));
+const OnboardingFlow = lazy(() => import("@/components/features/OnboardingFlow").then(m => ({ default: m.OnboardingFlow })));
 const ProviderConfig = lazy(() => import("@/components/features/ProviderConfig").then(m => ({ default: m.ProviderConfig })));
 const ProviderCarousel = lazy(() => import("@/components/features/ProviderCarousel").then(m => ({ default: m.ProviderCarousel })));
 const QualityCockpit = lazy(() => import("@/components/features/QualityCockpit").then(m => ({ default: m.QualityCockpit })));
@@ -34,8 +35,11 @@ import type {
   TraceOut,
   ChatSession,
   PresetLevel,
+  QueryMode,
   SubsystemBackendConfig,
   OCRPolicy,
+  DemoSeedResponse,
+  OnboardingState,
 } from "@/types";
 
 const resolveDefaultBaseUrl = () => {
@@ -43,20 +47,21 @@ const resolveDefaultBaseUrl = () => {
     (import.meta.env?.BUN_PUBLIC_API_BASE_URL as string | undefined) ||
     (import.meta.env?.VITE_API_BASE_URL as string | undefined);
   if (envBase) {
-    return envBase;
+    return envBase.replace("http://localhost:8000", "http://127.0.0.1:8000");
   }
   if (typeof window !== "undefined") {
     try {
       const url = new URL(window.location.href);
-      if (url.port === "3000") {
-        url.port = "8000";
+      const isLocalHost = ["localhost", "127.0.0.1", "::1"].includes(url.hostname);
+      if (isLocalHost) {
+        return "http://127.0.0.1:8000";
       }
       return `${url.protocol}//${url.hostname}${url.port ? `:${url.port}` : ""}`;
     } catch {
-      return "http://localhost:8000";
+      return "http://127.0.0.1:8000";
     }
   }
-  return "http://localhost:8000";
+  return "http://127.0.0.1:8000";
 };
 
 const defaultBaseUrl = resolveDefaultBaseUrl();
@@ -160,6 +165,9 @@ export function App() {
   const [localSelections, setLocalSelections] = useState<Record<string, RoleSelection>>({});
   const [isUploadingFile, setIsUploadingFile] = useState(false);
   const [isClearingCache, setIsClearingCache] = useState(false);
+  const [onboarding, setOnboarding] = useState<OnboardingState | null>(null);
+  const [isSeedingDemo, setIsSeedingDemo] = useState(false);
+  const [onboardingMode, setOnboardingMode] = useState<"guided" | "advanced">("guided");
   const [ingestSync, setIngestSync] = useState(true);
   const [langextractProfileOverride, setLangextractProfileOverride] = useState("__global__");
   const [langextractPromptOverride, setLangextractPromptOverride] = useState("");
@@ -186,9 +194,9 @@ export function App() {
   const [modelActionMessage, setModelActionMessage] = useState("");
   const [isDarkMode, setIsDarkMode] = useState(() => {
     if (typeof window !== "undefined") {
-      return window.matchMedia("(prefers-color-scheme: dark)").matches;
+      return localStorage.getItem("jr-autorag-theme") !== "light";
     }
-    return false;
+    return true;
   });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const buildHeaders = useCallback(
@@ -212,6 +220,7 @@ export function App() {
     }
     return "balanced";
   });
+  const [queryMode, setQueryMode] = useState<QueryMode>("grounded");
 
   // Toggle dark mode
   useEffect(() => {
@@ -225,6 +234,12 @@ export function App() {
   useEffect(() => {
     localStorage.setItem("jr-autorag-preset", activePreset);
   }, [activePreset]);
+
+  useEffect(() => {
+    if (config?.query_mode) {
+      setQueryMode(config.query_mode);
+    }
+  }, [config?.query_mode]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -241,8 +256,10 @@ export function App() {
   useEffect(() => {
     if (isDarkMode) {
       document.documentElement.classList.add("dark");
+      localStorage.setItem("jr-autorag-theme", "dark");
     } else {
       document.documentElement.classList.remove("dark");
+      localStorage.setItem("jr-autorag-theme", "light");
     }
   }, [isDarkMode]);
 
@@ -406,6 +423,15 @@ export function App() {
     }
   };
 
+  const refreshOnboarding = async () => {
+    try {
+      const data = await fetchJson<OnboardingState>("/onboarding");
+      setOnboarding(data);
+    } catch (error) {
+      setStatus(`Onboarding failed to load: ${toMessage(error)}`);
+    }
+  };
+
   const refreshModelStatus = async (embeddingModel?: string, rerankerModel?: string) => {
     if (!embeddingModel && !rerankerModel) {
       return;
@@ -508,8 +534,8 @@ export function App() {
 
   useEffect(() => {
     refreshAll();
+    refreshOnboarding();
     refreshLocalProviders();
-    handleTestConnection(); // Check connection explicitly on mount/change
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [baseUrl]);
 
@@ -727,8 +753,8 @@ export function App() {
       }
 
       const payload = useFilter
-        ? { question: currentQuestion, document_ids: selectedDocumentIds, history: historyToSend, conversation_id: localSessionId }
-        : { question: currentQuestion, history: historyToSend, conversation_id: localSessionId };
+        ? { question: currentQuestion, document_ids: selectedDocumentIds, history: historyToSend, conversation_id: localSessionId, query_mode: queryMode }
+        : { question: currentQuestion, history: historyToSend, conversation_id: localSessionId, query_mode: queryMode };
       const response = await fetch(buildUrl("/query/stream"), {
         method: "POST",
         headers,
@@ -959,6 +985,38 @@ export function App() {
     }
   };
 
+  const handleSeedDemo = async () => {
+    setIsSeedingDemo(true);
+    setStatus("Loading demo corpus...");
+    try {
+      const result = await fetchJson<DemoSeedResponse>("/onboarding/demo/seed", {
+        method: "POST",
+        headers,
+      });
+      setStatus(`Demo corpus ready with ${result.document_count} document(s)`);
+      toast({
+        title: "Demo corpus ready",
+        description: `${result.seeded.length} added, ${result.skipped.length} already present`,
+        variant: "success",
+      });
+      await refreshAll();
+      await refreshOnboarding();
+    } catch (error) {
+      setStatus(`Demo setup failed: ${toMessage(error)}`);
+      toast({ title: "Demo setup failed", description: toMessage(error), variant: "error" });
+    } finally {
+      setIsSeedingDemo(false);
+    }
+  };
+
+  const handleAskExample = (query: string) => {
+    setActiveTab("query");
+    setQuestion(query);
+    if (documents.length > 0 && !isQuerying) {
+      void handleAsk(query);
+    }
+  };
+
   const handleClearCache = async () => {
     const confirmed = window.confirm(
       "Clear all cached indexes and query results? This will require a rebuild on next query."
@@ -1154,55 +1212,55 @@ export function App() {
 
   const docsReady = documents.length > 0;
   const modelsReady = Boolean(config?.provider?.planner_model && config?.provider?.generator_model);
-  const apiReady = isConnected;
+  const apiReady = isConnected || Boolean(config);
 
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-background transition-colors duration-300">
-      {/* Header */}
-      {/* Header */}
       <header className="flex-none relative z-50 border-b border-border/60 bg-background/95">
-        <div className="mx-auto flex max-w-[1600px] items-center justify-between px-4 py-3">
-          <div className="flex items-center gap-8">
-            <div className="flex items-center gap-3">
+        <div className="mx-auto grid max-w-[1600px] grid-cols-[minmax(0,148px)_minmax(0,1fr)_auto] items-center gap-2 px-3 py-2 sm:grid-cols-[minmax(0,176px)_minmax(0,1fr)_auto] sm:gap-3 sm:px-4">
+          <div className="flex min-w-0 items-center gap-2">
+            <div className="flex min-w-0 items-center gap-2.5">
               <img
                 src="/HWC-Icon.png"
                 alt="JR AutoRAG"
-                className="h-10 w-10 rounded-lg object-cover shadow-sm"
+                className="size-9 shrink-0 rounded-lg object-cover shadow-sm"
               />
-              <div>
-                <h1 className="text-xl font-bold text-foreground">JR AutoRAG</h1>
-                <p className="text-xs text-muted-foreground">Admin Console</p>
+              <div className="min-w-0">
+                <h1 className="truncate text-lg font-bold leading-tight text-foreground sm:text-xl">JR AutoRAG</h1>
+                <p className="hidden truncate text-xs text-muted-foreground sm:block">Admin Console</p>
               </div>
             </div>
-
-            {/* Top Navigation */}
-            <nav className="flex items-center gap-1 bg-muted/30 p-1 rounded-lg" role="tablist" aria-label="Main navigation">
-              {tabs.map(tab => {
-                const Icon = tab.icon;
-                const isActive = activeTab === tab.id;
-                return (
-                  <button
-                    key={tab.id}
-                    onClick={() => setActiveTab(tab.id)}
-                    role="tab"
-                    aria-selected={isActive}
-                    aria-controls={`tabpanel-${tab.id}`}
-                    className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-all ${isActive
-                      ? "bg-primary text-primary-foreground shadow-sm"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                      }`}
-                  >
-                    <Icon className="h-4 w-4" />
-                    {tab.label}
-                  </button>
-                );
-              })}
-            </nav>
           </div>
 
-          <div className="flex items-center gap-4">
+          {/* Top Navigation */}
+          <nav className="no-scrollbar flex min-w-0 items-center gap-1 overflow-x-auto rounded-lg bg-muted/30 p-1" role="tablist" aria-label="Main navigation">
+            {tabs.map(tab => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+	                  role="tab"
+	                  aria-selected={isActive}
+	                  aria-controls={`tabpanel-${tab.id}`}
+	                  aria-label={tab.label}
+	                  title={tab.label}
+                  className={`flex shrink-0 items-center gap-2 rounded-md px-2.5 py-1.5 text-sm font-medium transition-all ${isActive
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                    }`}
+                >
+                  <Icon className="size-4 shrink-0" />
+                  <span className="hidden sm:inline">{tab.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+
+          <div className="flex min-w-0 items-center justify-end gap-2">
             {/* API URL */}
-            <div className="hidden lg:flex items-center gap-2">
+            <div className="hidden 2xl:flex items-center gap-2">
               <Input
                 className="w-48 text-xs"
                 value={baseUrl}
@@ -1225,12 +1283,12 @@ export function App() {
             </div>
 
             {/* Checklist items indicator */}
-            <div className="flex items-center gap-1.5 text-xs text-muted-foreground/80 bg-muted/30 px-3 py-1.5 rounded-full">
-              <div className={`h-2 w-2 rounded-full ${apiReady ? "bg-green-500" : "bg-red-500"}`} />
+            <div className="hidden items-center gap-1.5 rounded-full bg-muted/30 px-2.5 py-1.5 text-xs text-muted-foreground/80 xl:flex">
+              <div className={`h-2 w-2 rounded-full ${apiReady ? "bg-primary" : "bg-muted-foreground"}`} />
               <span className="font-medium mr-2">API</span>
-              <div className={`h-2 w-2 rounded-full ${modelsReady ? "bg-green-500" : "bg-yellow-500"}`} />
+              <div className={`h-2 w-2 rounded-full ${modelsReady ? "bg-primary" : "bg-secondary"}`} />
               <span className="font-medium mr-2">Models</span>
-              <div className={`h-2 w-2 rounded-full ${docsReady ? "bg-green-500" : "bg-yellow-500"}`} />
+              <div className={`h-2 w-2 rounded-full ${docsReady ? "bg-primary" : "bg-secondary"}`} />
               <span className="font-medium">Knowledge</span>
             </div>
 
@@ -1261,6 +1319,21 @@ export function App() {
                 </div>
 
                 <div className="grid gap-6">
+                  <Suspense fallback={<LoadingSpinner message="Loading onboarding..." />}>
+                    <OnboardingFlow
+                      onboarding={onboarding}
+                      apiReady={apiReady}
+                      docsReady={docsReady}
+                      modelsReady={modelsReady}
+                      isSeedingDemo={isSeedingDemo}
+                      activeMode={onboardingMode}
+                      onModeChange={setOnboardingMode}
+                      onSeedDemo={handleSeedDemo}
+                      onOpenTab={setActiveTab}
+                      onAskExample={handleAskExample}
+                    />
+                  </Suspense>
+
                   {/* Provider Carousel - Ollama, LM Studio, OpenRouter */}
                   <Suspense fallback={<LoadingSpinner message="Loading providers..." />}>
                     <ProviderCarousel
@@ -1456,13 +1529,13 @@ export function App() {
                                 <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1">
                                   <span className="bg-muted px-1.5 py-0.5 rounded text-[10px] uppercase">{doc.metadata?.source || "text"}</span>
                                   <span>{formatDateTime(doc.created_at)}</span>
-                                  <span>• {doc.chunk_count} chunks</span>
+                                  <span>- {doc.chunk_count} chunks</span>
                                 </div>
                               </div>
                               <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <div className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${doc.metadata?.processing_status === 'ready' ? 'bg-green-500/10 text-green-600' :
-                                  doc.metadata?.processing_status === 'error' ? 'bg-red-500/10 text-red-600' :
-                                    'bg-yellow-500/10 text-yellow-600'
+                                <div className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${doc.metadata?.processing_status === 'ready' ? 'bg-primary/10 text-primary' :
+                                  doc.metadata?.processing_status === 'error' ? 'bg-destructive/10 text-destructive' :
+                                    'bg-muted text-muted-foreground'
                                   }`}>
                                   {doc.metadata?.processing_status || 'unknown'}
                                 </div>
@@ -1513,6 +1586,8 @@ export function App() {
                   scrollRef={chatEndRef}
                   currentSessionId={currentSessionId}
                   preset={activePreset}
+                  queryMode={queryMode}
+                  onQueryModeChange={setQueryMode}
                   onPresetChange={async (preset) => {
                     setActivePreset(preset);
                     try {

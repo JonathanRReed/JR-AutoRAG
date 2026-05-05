@@ -74,12 +74,12 @@ class ContextMetrics:
 
         if overflow_pct > 50:
             return (
-                f"⚠️ Severe context overflow: {self.overflow_tokens:,} tokens over limit "
+                f"Severe context overflow: {self.overflow_tokens:,} tokens over limit "
                 f"({self.tokens_dropped:,} tokens dropped from {self.chunks_dropped} chunks)"
             )
         elif overflow_pct > 20:
             return (
-                f"⚠️ Context overflow: {self.overflow_tokens:,} tokens exceeded max. "
+                f"Context overflow: {self.overflow_tokens:,} tokens exceeded max. "
                 f"Some evidence was truncated."
             )
         else:
@@ -123,8 +123,8 @@ class GroundingInfo:
     def grounding_label(self) -> str:
         """Human-readable grounding status."""
         if self.is_grounded:
-            return f"✓ Grounded ({self.docs_used} docs, {self.citations_kept} citations)"
-        return "⚠ Partially Grounded" if self.docs_used > 0 else "✗ Not Grounded"
+            return f"Grounded ({self.docs_used} docs, {self.citations_kept} citations)"
+        return "Partially Grounded" if self.docs_used > 0 else "Not Grounded"
 
     @property
     def dropout_warning(self) -> str | None:
