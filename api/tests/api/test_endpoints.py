@@ -13,6 +13,7 @@ from app.main import app
 from app.core.security_middleware import _resolve_route_timeout
 from app.schemas.query import QueryResponse
 from app.services import ServiceContainer, get_container
+from app.state import get_orchestrator, set_orchestrator
 
 
 @pytest.fixture()
@@ -66,6 +67,82 @@ def test_policy_endpoint_exposes_client_data_policy(client: TestClient) -> None:
     assert body["data_policy"]["managed_cloud_hosting_allowed"] is False
     assert body["data_policy"]["external_model_calls_allowed"] is False
     assert body["guardrails"]["pii_redaction_required"] is True
+
+
+def test_readyz_uses_runtime_status_contract(client: TestClient) -> None:
+    resp = client.get("/readyz")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ready"] is True
+    assert body["level"] in {"ready", "degraded"}
+    assert body["checks"]["orchestrator"]["status"] == "ok"
+    assert body["checks"]["document_store"]["details"]["document_count"] == 0
+    assert body["checks"]["retrieval_index"]["status"] == "ok"
+
+
+def test_readyz_returns_503_without_orchestrator(client: TestClient) -> None:
+    previous = get_orchestrator()
+    set_orchestrator(None)
+    try:
+        resp = client.get("/readyz")
+    finally:
+        if previous is not None:
+            set_orchestrator(previous)
+
+    assert resp.status_code == 503
+    body = resp.json()
+    assert body["ready"] is False
+    assert body["level"] == "not_ready"
+    assert body["checks"]["orchestrator"]["status"] == "fail"
+
+
+def test_security_posture_reports_local_install_defaults(client: TestClient) -> None:
+    resp = client.get("/security/posture")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["level"] in {"local_only", "needs_attention", "client_ready"}
+    checks = {item["id"]: item for item in body["checks"]}
+    assert checks["auth"]["status"] in {"pass", "warn"}
+    assert checks["exposure"]["status"] == "pass"
+    assert checks["cors"]["status"] == "pass"
+    assert body["settings"]["exposed_mode"] is False
+    assert body["settings"]["auth_enabled"] is False
+    assert "recommendations" in body
+
+
+def test_install_report_collects_redacted_handoff_evidence(client: TestClient) -> None:
+    resp = client.get("/install/report")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["schema_version"] == "install_report_v1"
+    assert body["status"] in {"ready", "warn", "blocked"}
+    assert body["readiness"]["level"] in {"ready", "degraded", "not_ready"}
+    assert body["security"]["settings"]["api_keys_configured"] is False
+    assert body["corpus"]["document_count"] == 0
+    assert body["redaction"]["secrets"]
+    evidence = {item["id"]: item for item in body["evidence"]}
+    assert evidence["security_posture"]["endpoint"] == "/security/posture"
+    assert evidence["readiness"]["endpoint"] == "/readyz"
+    assert evidence["quality_receipt"]["status"] == "missing"
+    actions = {item["id"] for item in body["actions"]}
+    assert "ingest-corpus" in actions
+    assert "run-golden-eval" in actions
+
+
+def test_install_report_fails_closed_when_exposed_without_auth(monkeypatch: pytest.MonkeyPatch, client: TestClient) -> None:
+    monkeypatch.setenv("AUTORAG_EXPOSE", "true")
+    monkeypatch.setenv("AUTORAG_AUTH_ENABLED", "false")
+
+    resp = client.get("/install/report")
+    assert resp.status_code == 503
+    assert "Refusing unauthenticated access" in resp.json()["detail"]
+
+
+def test_exposed_mode_blocks_public_docs(monkeypatch: pytest.MonkeyPatch, client: TestClient) -> None:
+    monkeypatch.setenv("AUTORAG_EXPOSE", "true")
+    resp = client.get("/docs")
+    assert resp.status_code == 404
+    assert "disabled" in resp.json()["detail"].lower()
 
 
 def test_client_safe_profile_accepts_private_provider(client: TestClient) -> None:

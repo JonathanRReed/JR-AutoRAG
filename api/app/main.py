@@ -38,12 +38,14 @@ from .routers import (
     evaluation,
     experiments,
     health,
+    install,
     metrics_routes,
     monitoring,
     onboarding,
     providers,
     query,
     ragfuzz_audit,
+    security,
     traces,
 )
 from .services import get_container
@@ -167,6 +169,14 @@ app.include_router(
 )
 app.include_router(
     providers.router,
+    dependencies=[Depends(verify_api_key)],
+)
+app.include_router(
+    security.router,
+    dependencies=[Depends(verify_api_key)],
+)
+app.include_router(
+    install.router,
     dependencies=[Depends(verify_api_key)],
 )
 app.include_router(

@@ -1,5 +1,21 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BarChart3, FileText, MessageSquare, Moon, Settings, Sun, Trophy } from "lucide-react";
+import {
+  Activity,
+  ArrowRight,
+  BarChart3,
+  Database,
+  FileCheck2,
+  FileText,
+  Home,
+  MessageSquare,
+  Moon,
+  PackageCheck,
+  Settings,
+  ShieldCheck,
+  Sun,
+  TerminalSquare,
+  Trophy,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,6 +41,7 @@ import type {
   CacheStats,
   DocumentOut,
   IngestResponse,
+  InstallReportResponse,
   LocalProviderInfo,
   ModelStatus,
   ProviderConfig as ProviderConfigType,
@@ -32,6 +49,7 @@ import type {
   QueryResponse,
   RetrievalDefaults,
   RoleSelection,
+  SecurityPostureResponse,
   TraceOut,
   ChatSession,
   PresetLevel,
@@ -101,15 +119,18 @@ const formatDateTime = (value?: string) => {
   return date.toLocaleString();
 };
 
-type TabId = "config" | "documents" | "query" | "quality" | "metrics";
+type TabId = "home" | "config" | "documents" | "query" | "quality" | "metrics";
 
 const tabs: { id: TabId; label: string; icon: typeof Settings }[] = [
+  { id: "home", label: "Home", icon: Home },
   { id: "config", label: "Configuration", icon: Settings },
   { id: "documents", label: "Documents", icon: FileText },
   { id: "query", label: "Query", icon: MessageSquare },
   { id: "quality", label: "Quality", icon: Trophy },
   { id: "metrics", label: "Metrics", icon: BarChart3 },
 ];
+
+const validTabs = tabs.map(tab => tab.id);
 
 export function App() {
   const { toast } = useToast();
@@ -126,6 +147,7 @@ export function App() {
   const [documents, setDocuments] = useState<DocumentOut[]>([]);
   const [traces, setTraces] = useState<TraceOut[]>([]);
   const [cacheStats, setCacheStats] = useState<CacheStats | null>(null);
+  const [securityPosture, setSecurityPosture] = useState<SecurityPostureResponse | null>(null);
   const [question, setQuestion] = useState("");
   const [queryResult, setQueryResult] = useState<QueryResponse | null>(null);
   const [chatHistory, setChatHistory] = useState<{ role: string; content: string }[]>(() => {
@@ -172,12 +194,12 @@ export function App() {
   const [langextractProfileOverride, setLangextractProfileOverride] = useState("__global__");
   const [langextractPromptOverride, setLangextractPromptOverride] = useState("");
   const [activeTab, setActiveTab] = useState<TabId>(() => {
-    if (typeof window === "undefined") return "config";
+    if (typeof window === "undefined") return "home";
     const saved = localStorage.getItem("activeTab");
-    if (saved && ["config", "documents", "query", "quality", "metrics"].includes(saved)) {
+    if (saved && validTabs.includes(saved as TabId)) {
       return saved as TabId;
     }
-    return "config";
+    return "home";
   });
 
   useEffect(() => {
@@ -189,6 +211,7 @@ export function App() {
   });
   const [checklistDismissed, setChecklistDismissed] = useState(false);
   const [isCheckingModels, setIsCheckingModels] = useState(false);
+  const [isExportingInstallReport, setIsExportingInstallReport] = useState(false);
   const [isDownloadingEmbedding, setIsDownloadingEmbedding] = useState(false);
   const [isDownloadingReranker, setIsDownloadingReranker] = useState(false);
   const [modelActionMessage, setModelActionMessage] = useState("");
@@ -404,11 +427,12 @@ export function App() {
 
   const refreshAll = async () => {
     try {
-      const [cfg, docs, traceList, cache] = await Promise.all([
+      const [cfg, docs, traceList, cache, posture] = await Promise.all([
         fetchJson<AppConfig>("/config"),
         fetchJson<DocumentOut[]>("/documents"),
         fetchJson<TraceOut[]>("/monitoring/traces"),
         fetchJson<CacheStats>("/monitoring/cache"),
+        fetchJson<SecurityPostureResponse>("/security/posture"),
       ]);
       setConfig(cfg);
       setSelectedProfile(cfg.profile);
@@ -416,6 +440,7 @@ export function App() {
       setDocuments(docs);
       setTraces(traceList);
       setCacheStats(cache);
+      setSecurityPosture(posture);
       setStatus("API data loaded");
       setIsConnected(true);
     } catch (error) {
@@ -456,6 +481,29 @@ export function App() {
       });
     } finally {
       setIsCheckingModels(false);
+    }
+  };
+
+  const downloadInstallReport = async () => {
+    setIsExportingInstallReport(true);
+    try {
+      const report = await fetchJson<InstallReportResponse>("/install/report");
+      const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const timestamp = report.generated_at.replace(/[:.]/g, "-");
+      link.href = url;
+      link.download = `jr-autorag-install-report-${timestamp}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      toast({ title: "Install report exported", description: report.status, variant: "success" });
+    } catch (error) {
+      setStatus(`Install report export failed: ${toMessage(error)}`);
+      toast({ title: "Install report export failed", description: toMessage(error), variant: "error" });
+    } finally {
+      setIsExportingInstallReport(false);
     }
   };
 
@@ -1213,6 +1261,33 @@ export function App() {
   const docsReady = documents.length > 0;
   const modelsReady = Boolean(config?.provider?.planner_model && config?.provider?.generator_model);
   const apiReady = isConnected || Boolean(config);
+  const securityLevel = securityPosture?.level ?? "needs_attention";
+  const securityReady = securityLevel === "client_ready" || securityLevel === "local_only";
+  const securityLabel = securityLevel.replace("_", " ");
+  const securityBlockers = securityPosture?.checks.filter(check => check.status === "fail").length ?? 0;
+  const readyChecks = [
+    { label: "API", ready: apiReady, detail: apiReady ? "FastAPI reachable" : "Connect local API" },
+    {
+      label: "Models",
+      ready: modelsReady,
+      detail: modelsReady ? "Planner and generator selected" : "Choose local or routed models",
+    },
+    {
+      label: "Corpus",
+      ready: docsReady,
+      detail: docsReady ? `${documents.length} document${documents.length === 1 ? "" : "s"} indexed` : "Seed demo or ingest client docs",
+    },
+    {
+      label: "Security",
+      ready: securityReady,
+      detail: securityPosture?.summary ?? "Load security posture",
+    },
+  ];
+  const readyPercent = Math.round((readyChecks.filter(check => check.ready).length / readyChecks.length) * 100);
+  const providerName = config?.provider?.name || "No provider selected";
+  const retrievalMode = activePreset.replace("_", " ");
+  const demoMode = onboarding?.demo_mode ?? false;
+  const demoSeeded = Boolean(onboarding?.demo_seeded || onboarding?.demo_document_count || docsReady);
 
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-background transition-colors duration-300">
@@ -1227,7 +1302,7 @@ export function App() {
               />
               <div className="min-w-0">
                 <h1 className="truncate text-lg font-bold leading-tight text-foreground sm:text-xl">JR AutoRAG</h1>
-                <p className="hidden truncate text-xs text-muted-foreground sm:block">Admin Console</p>
+                <p className="hidden truncate text-xs text-muted-foreground sm:block">Local RAG Command Center</p>
               </div>
             </div>
           </div>
@@ -1283,13 +1358,16 @@ export function App() {
             </div>
 
             {/* Checklist items indicator */}
-            <div className="hidden items-center gap-1.5 rounded-full bg-muted/30 px-2.5 py-1.5 text-xs text-muted-foreground/80 xl:flex">
-              <div className={`h-2 w-2 rounded-full ${apiReady ? "bg-primary" : "bg-muted-foreground"}`} />
-              <span className="font-medium mr-2">API</span>
-              <div className={`h-2 w-2 rounded-full ${modelsReady ? "bg-primary" : "bg-secondary"}`} />
-              <span className="font-medium mr-2">Models</span>
-              <div className={`h-2 w-2 rounded-full ${docsReady ? "bg-primary" : "bg-secondary"}`} />
-              <span className="font-medium">Knowledge</span>
+            <div
+              className="hidden items-center gap-1.5 rounded-full bg-muted/30 px-2.5 py-1.5 text-xs text-muted-foreground/80 xl:flex"
+              aria-label={`Readiness: API ${apiReady ? "ready" : "needs attention"}, models ${modelsReady ? "ready" : "needs attention"}, knowledge ${docsReady ? "ready" : "needs attention"}, security ${securityReady ? "ready" : "needs attention"}`}
+            >
+              {readyChecks.map(check => (
+                <div key={check.label} className="flex items-center gap-1.5">
+                  <div className={`h-2 w-2 rounded-full ${check.ready ? "bg-primary" : "bg-secondary"}`} />
+                  <span className="font-medium">{check.label === "Corpus" ? "Knowledge" : check.label}</span>
+                </div>
+              ))}
             </div>
 
             {/* Theme Toggle */}
@@ -1310,6 +1388,200 @@ export function App() {
       <main className="flex-1 min-h-0 mx-auto w-full max-w-[1600px]">
         <div className="flex h-full flex-col">
           <div className={`flex-1 bg-background ${activeTab === "query" ? "overflow-hidden p-0" : "overflow-auto p-6"}`}>
+            <div className={`h-full animate-in fade-in slide-in-from-bottom-2 duration-300 ${activeTab !== "home" ? "hidden" : ""}`}>
+              <div className="mx-auto flex max-w-[1500px] flex-col gap-6">
+                <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
+                  <div className="rounded-lg border border-border/60 bg-card p-6 shadow-sm">
+                    <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="max-w-3xl">
+                        <div className="mb-3 flex items-center gap-2 text-sm font-medium text-primary">
+                          <ShieldCheck className="size-4" />
+                          Local-first enterprise install
+                        </div>
+                        <h2 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
+                          Run private AutoRAG with evidence, quality gates, and operator controls.
+                        </h2>
+                        <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">
+                          Start with a disposable demo corpus, connect local models, inspect retrieval evidence, then export quality receipts before a client install.
+                        </p>
+                      </div>
+
+                      <div className="grid min-w-[260px] gap-2 rounded-lg border border-border/60 bg-muted/10 p-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-sm font-medium text-muted-foreground">Install readiness</span>
+                          <span className="font-mono text-2xl font-semibold text-foreground">{readyPercent}%</span>
+                        </div>
+                        <div className="h-2 overflow-hidden rounded-full bg-muted">
+                          <div className="h-full rounded-full bg-primary transition-all duration-300" style={{ width: `${readyPercent}%` }} />
+                        </div>
+                        <div className="text-xs leading-relaxed text-muted-foreground">
+                          {demoMode ? "Disposable demo mode is active for this run." : "Persistent local mode is active. Use demo mode for sales walkthroughs."}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border border-border/60 bg-card p-5 shadow-sm">
+                    <div className="mb-4 flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-semibold text-foreground">Operator Path</div>
+                        <div className="text-xs text-muted-foreground">Make the system demonstrable fast.</div>
+                      </div>
+                      <PackageCheck className="size-5 text-primary" />
+                    </div>
+                    <div className="grid gap-2">
+                      <Button onClick={handleSeedDemo} disabled={!apiReady || isSeedingDemo}>
+                        <Database className="size-4" />
+                        {isSeedingDemo ? "Seeding Demo Corpus" : demoSeeded ? "Refresh Demo Corpus" : "Load Demo Corpus"}
+                      </Button>
+                      <div className="grid grid-cols-2 gap-2">
+                        <Button variant="outline" onClick={() => setActiveTab("query")}>
+                          <MessageSquare className="size-4" />
+                          Ask
+                        </Button>
+                        <Button variant="outline" onClick={() => setActiveTab("quality")}>
+                          <Trophy className="size-4" />
+                          Prove
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="grid gap-4 lg:grid-cols-4">
+                  {readyChecks.map(check => (
+                    <div key={check.label} className="rounded-lg border border-border/60 bg-card p-5 shadow-sm">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-xs font-semibold uppercase text-muted-foreground">{check.label}</div>
+                          <div className="mt-2 text-lg font-semibold text-foreground">{check.ready ? "Ready" : "Needs attention"}</div>
+                          <div className="mt-1 text-sm leading-6 text-muted-foreground">{check.detail}</div>
+                        </div>
+                        <div className={`rounded-full border p-2 ${check.ready ? "border-primary/30 bg-primary/10 text-primary" : "border-border bg-muted/20 text-muted-foreground"}`}>
+                          {check.label === "API" ? <Activity className="size-4" /> : check.label === "Corpus" ? <FileText className="size-4" /> : <ShieldCheck className="size-4" />}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </section>
+
+                <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
+                  <Suspense fallback={<LoadingSpinner message="Loading onboarding..." />}>
+                    <OnboardingFlow
+                      onboarding={onboarding}
+                      apiReady={apiReady}
+                      docsReady={docsReady}
+                      modelsReady={modelsReady}
+                      isSeedingDemo={isSeedingDemo}
+                      activeMode={onboardingMode}
+                      onModeChange={setOnboardingMode}
+                      onSeedDemo={handleSeedDemo}
+                      onOpenTab={setActiveTab}
+                      onAskExample={handleAskExample}
+                    />
+                  </Suspense>
+
+                  <div className="grid content-start gap-4">
+                    <div className="rounded-lg border border-border/60 bg-card p-5 shadow-sm">
+                      <div className="mb-4 flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-sm font-semibold text-foreground">Delivery Evidence</div>
+                          <div className="text-xs text-muted-foreground">Artifacts an installer can hand to a client.</div>
+                        </div>
+                        <FileCheck2 className="size-5 text-primary" />
+                      </div>
+                      <div className="grid gap-3 text-sm">
+                        <div className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-muted/10 px-3 py-2">
+                          <span className="text-muted-foreground">Install doctor</span>
+                          <code className="rounded bg-muted px-2 py-1 text-xs text-foreground">bun run doctor</code>
+                        </div>
+                        <div className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-muted/10 px-3 py-2">
+                          <span className="text-muted-foreground">Client handoff</span>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => void downloadInstallReport()}
+                            disabled={!apiReady || isExportingInstallReport}
+                          >
+                            {isExportingInstallReport ? "Exporting" : "Export"}
+                            <ArrowRight className="size-4" />
+                          </Button>
+                        </div>
+                        <div className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-muted/10 px-3 py-2">
+                          <span className="text-muted-foreground">Quality receipts</span>
+                          <Button variant="ghost" size="sm" onClick={() => setActiveTab("quality")}>
+                            Open
+                            <ArrowRight className="size-4" />
+                          </Button>
+                        </div>
+                        <div className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-muted/10 px-3 py-2">
+                          <span className="text-muted-foreground">Runtime traces</span>
+                          <Button variant="ghost" size="sm" onClick={() => setActiveTab("metrics")}>
+                            Inspect
+                            <ArrowRight className="size-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-lg border border-border/60 bg-card p-5 shadow-sm">
+                      <div className="mb-4 flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-sm font-semibold text-foreground">Security Posture</div>
+                          <div className="text-xs text-muted-foreground">Pre-exposure checks for client installs.</div>
+                        </div>
+                        <ShieldCheck className={`size-5 ${securityReady ? "text-primary" : "text-destructive"}`} />
+                      </div>
+                      <div className="grid gap-3 text-sm">
+                        <div className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-muted/10 px-3 py-2">
+                          <span className="text-muted-foreground">Posture</span>
+                          <span className={`rounded-full px-2 py-1 text-xs font-semibold capitalize ${securityReady ? "bg-primary/10 text-primary" : "bg-destructive/10 text-destructive"}`}>
+                            {securityLabel}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-muted/10 px-3 py-2">
+                          <span className="text-muted-foreground">Blocking checks</span>
+                          <span className="font-mono text-foreground">{securityBlockers}</span>
+                        </div>
+                        <Button variant="outline" size="sm" onClick={() => setActiveTab("config")}>
+                          Open Configuration
+                          <ArrowRight className="size-4" />
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="rounded-lg border border-border/60 bg-card p-5 shadow-sm">
+                      <div className="mb-4 flex items-center gap-2">
+                        <TerminalSquare className="size-5 text-primary" />
+                        <div>
+                          <div className="text-sm font-semibold text-foreground">Current Runtime</div>
+                          <div className="text-xs text-muted-foreground">Local operator context.</div>
+                        </div>
+                      </div>
+                      <dl className="grid gap-3 text-sm">
+                        <div className="flex items-center justify-between gap-3">
+                          <dt className="text-muted-foreground">Provider</dt>
+                          <dd className="max-w-[220px] truncate font-medium text-foreground">{providerName}</dd>
+                        </div>
+                        <div className="flex items-center justify-between gap-3">
+                          <dt className="text-muted-foreground">Preset</dt>
+                          <dd className="font-medium capitalize text-foreground">{retrievalMode}</dd>
+                        </div>
+                        <div className="flex items-center justify-between gap-3">
+                          <dt className="text-muted-foreground">Documents</dt>
+                          <dd className="font-mono text-foreground">{documents.length}</dd>
+                        </div>
+                        <div className="flex items-center justify-between gap-3">
+                          <dt className="text-muted-foreground">Traces</dt>
+                          <dd className="font-mono text-foreground">{traces.length}</dd>
+                        </div>
+                      </dl>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </div>
+
             <div className={`h-full animate-in fade-in slide-in-from-bottom-2 duration-300 ${activeTab !== "config" ? "hidden" : ""}`}>
               {/* Configuration Panel */}
               <div className="space-y-6 max-w-[1600px] mx-auto">
