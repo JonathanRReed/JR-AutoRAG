@@ -2897,3 +2897,146 @@ Be helpful, accurate, and concise."""
         if hasattr(self._retrieval, "get_model_status"):
             return self._retrieval.get_model_status()
         return {}
+
+    def get_readiness_status(self) -> dict[str, Any]:
+        """Return a truthful operator readiness contract."""
+        checks: dict[str, dict[str, Any]] = {
+            "orchestrator": {
+                "status": "ok",
+                "message": None,
+                "details": {"configured": self._config is not None},
+            }
+        }
+
+        try:
+            snapshot = (
+                self._retrieval.get_readiness_snapshot()
+                if hasattr(self._retrieval, "get_readiness_snapshot")
+                else {}
+            )
+        except Exception as exc:
+            snapshot = {}
+            checks["retrieval_engine"] = {
+                "status": "fail",
+                "message": f"Retrieval status unavailable: {exc}",
+                "details": {},
+            }
+
+        document_count = int(snapshot.get("document_count", 0) or 0)
+        chunk_count = int(snapshot.get("chunk_count", 0) or 0)
+        embedding_count = int(snapshot.get("embedding_count", 0) or 0)
+        index_ready = bool(snapshot.get("index_ready", False))
+        model_status = snapshot.get("model_status", {}) if isinstance(snapshot.get("model_status"), dict) else {}
+        config = snapshot.get("config", {}) if isinstance(snapshot.get("config"), dict) else {}
+
+        checks.setdefault("retrieval_engine", {
+            "status": "ok",
+            "message": None,
+            "details": {
+                "chunk_count": chunk_count,
+                "sparse_ready": bool(snapshot.get("sparse_ready", False)),
+                "dense_ready": bool(snapshot.get("dense_ready", False)),
+                "bq_enabled": bool(snapshot.get("bq_enabled", False)),
+                "bq_ready": bool(snapshot.get("bq_ready", False)),
+            },
+        })
+        checks["document_store"] = {
+            "status": "ok",
+            "message": None,
+            "details": {"document_count": document_count},
+        }
+        checks["retrieval_index"] = {
+            "status": "ok" if index_ready else "fail",
+            "message": None if index_ready else "Documents exist but no retrieval chunks are indexed",
+            "details": {
+                "document_count": document_count,
+                "chunk_count": chunk_count,
+                "embedding_count": embedding_count,
+            },
+        }
+
+        embedding = model_status.get("embedding_model", {}) if isinstance(model_status, dict) else {}
+        embedding_state = embedding.get("status", "unknown") if isinstance(embedding, dict) else "unknown"
+        checks["embedding_model"] = {
+            "status": "warn" if embedding_state in {"failed", "unknown"} else "ok",
+            "message": None if embedding_state not in {"failed", "unknown"} else "Embedding model is not ready; sparse retrieval may still work",
+            "details": {
+                "state": embedding_state,
+                "model": embedding.get("name") if isinstance(embedding, dict) else config.get("embedding_model"),
+                "backend_id": embedding.get("backend_id") if isinstance(embedding, dict) else None,
+            },
+        }
+
+        reranker = model_status.get("reranker_model", {}) if isinstance(model_status, dict) else {}
+        reranker_state = reranker.get("status", "disabled") if isinstance(reranker, dict) else "disabled"
+        use_reranking = bool(config.get("use_reranking", False))
+        checks["reranker_model"] = {
+            "status": "warn" if use_reranking and reranker_state in {"failed", "unknown"} else "ok",
+            "message": (
+                "Reranker is enabled but not ready"
+                if use_reranking and reranker_state in {"failed", "unknown"}
+                else None
+            ),
+            "details": {
+                "state": reranker_state,
+                "model": reranker.get("name") if isinstance(reranker, dict) else config.get("reranker_model"),
+                "enabled": use_reranking,
+                "backend_id": reranker.get("backend_id") if isinstance(reranker, dict) else None,
+            },
+        }
+
+        checks["provider"] = {
+            "status": "ok" if self._provider is not None else "warn",
+            "message": None if self._provider is not None else "No generator provider configured; grounded summaries remain available",
+            "details": {"configured": self._provider is not None},
+        }
+
+        has_failures = any(check["status"] == "fail" for check in checks.values())
+        has_warnings = any(check["status"] == "warn" for check in checks.values())
+        return {
+            "ready": not has_failures,
+            "level": "not_ready" if has_failures else ("degraded" if has_warnings else "ready"),
+            "checks": checks,
+        }
+
+    def get_eval_audit_context(self) -> dict[str, Any]:
+        """Return redacted runtime context for durable eval reports."""
+        corpus = (
+            self._retrieval.get_corpus_manifest()
+            if hasattr(self._retrieval, "get_corpus_manifest")
+            else {}
+        )
+        runtime_profile = (
+            self._retrieval.get_runtime_profile()
+            if hasattr(self._retrieval, "get_runtime_profile")
+            else {}
+        )
+        model_status = self.get_model_status()
+        config_snapshot: dict[str, Any] = {}
+        if self._config is not None:
+            config_snapshot = self._redacted_config_snapshot(self._config.model_dump(mode="json"))
+
+        return {
+            "corpus": corpus,
+            "runtime_profile": runtime_profile,
+            "model_status": model_status,
+            "config_snapshot": config_snapshot,
+        }
+
+    @staticmethod
+    def _redacted_config_snapshot(value: Any) -> Any:
+        """Remove secret-shaped values from config snapshots."""
+        secret_terms = ("apikey", "authorization", "token", "secret", "password", "credential")
+        if isinstance(value, dict):
+            return {
+                key: (
+                    "[redacted]"
+                    if any(term in re.sub(r"[^a-z0-9]", "", key.lower()) for term in secret_terms)
+                    and item is not None
+                    else Orchestrator._redacted_config_snapshot(item)
+                )
+                for key, item in value.items()
+            }
+        if isinstance(value, list):
+            return [Orchestrator._redacted_config_snapshot(item) for item in value]
+        return value

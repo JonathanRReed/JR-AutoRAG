@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Activity, ArrowUpRight, Beaker, FileSearch, RefreshCw, ShieldCheck, Trophy } from "lucide-react";
+import { Activity, ArrowUpRight, Beaker, Download, FileCheck2, FileSearch, RefreshCw, ShieldCheck, Trophy } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -31,6 +31,17 @@ const readJson = async <T,>(response: Response): Promise<T> => {
 const formatScore = (value?: number) =>
   typeof value === "number" && Number.isFinite(value) ? `${Math.round(value * 100)}%` : "0%";
 
+const shortHash = (value?: string) => (value ? value.slice(0, 12) : "No artifact");
+
+const auditString = (run: EvalRunSummary | undefined, section: string, key: string) => {
+  const value = run?.audit?.[section];
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return "";
+  }
+  const item = (value as Record<string, unknown>)[key];
+  return typeof item === "string" ? item : "";
+};
+
 export function QualityCockpit({ documents, buildUrl, buildHeaders, onPresetPromoted }: QualityCockpitProps) {
   const [recommendations, setRecommendations] = useState<QualityRecommendations | null>(null);
   const [experiments, setExperiments] = useState<ExperimentRun[]>([]);
@@ -39,6 +50,7 @@ export function QualityCockpit({ documents, buildUrl, buildHeaders, onPresetProm
   const [selectedDocumentId, setSelectedDocumentId] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isRunningExperiment, setIsRunningExperiment] = useState(false);
+  const [downloadingReportId, setDownloadingReportId] = useState("");
   const [error, setError] = useState("");
 
   const selectedDocument = useMemo(
@@ -124,9 +136,36 @@ export function QualityCockpit({ documents, buildUrl, buildHeaders, onPresetProm
     }
   };
 
+  const downloadEvalReport = async (run: EvalRunSummary) => {
+    setDownloadingReportId(run.run_id);
+    setError("");
+    try {
+      const report = await fetch(buildUrl(`/evaluation/runs/${run.run_id}/report`), {
+        headers: buildHeaders(),
+      }).then((response) => readJson<Record<string, unknown>>(response));
+      const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `jr-autorag-eval-${run.run_id}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (caught) {
+      setError(toMessage(caught));
+    } finally {
+      setDownloadingReportId("");
+    }
+  };
+
   useEffect(() => {
     void refresh();
   }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [documents.length]);
 
   useEffect(() => {
     if (!selectedDocumentId && documents[0]?.id) {
@@ -138,6 +177,10 @@ export function QualityCockpit({ documents, buildUrl, buildHeaders, onPresetProm
   const faithfulness = latestExperiment?.metrics.find((metric) => metric.name === "faithfulness")?.value ?? 0;
   const contextPrecision = latestExperiment?.metrics.find((metric) => metric.name === "context_precision")?.value ?? 0;
   const latestEval = evalRuns[0];
+  const latestCorpusFingerprint = auditString(latestEval, "corpus", "fingerprint");
+  const latestGoldenFingerprint = auditString(latestEval, "golden_set", "fingerprint");
+  const corpusDocumentCount = Math.max(documents.length, recommendations?.document_count ?? 0);
+  const lowConfidenceCount = recommendations?.low_confidence_documents ?? 0;
 
   return (
     <section className="flex flex-col gap-6">
@@ -169,10 +212,10 @@ export function QualityCockpit({ documents, buildUrl, buildHeaders, onPresetProm
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <StatCard
           title="Corpus"
-          value={recommendations?.document_count ?? documents.length}
-          subtitle={`${recommendations?.low_confidence_documents ?? 0} low confidence`}
+          value={corpusDocumentCount}
+          subtitle={`${lowConfidenceCount} low confidence`}
           icon={<FileSearch />}
-          trend={(recommendations?.low_confidence_documents ?? 0) > 0 ? "down" : "neutral"}
+          trend={lowConfidenceCount > 0 ? "down" : "neutral"}
         />
         <StatCard
           title="Faithfulness"
@@ -191,7 +234,7 @@ export function QualityCockpit({ documents, buildUrl, buildHeaders, onPresetProm
         <StatCard
           title="Eval Runs"
           value={evalRuns.length}
-          subtitle={latestEval ? latestEval.golden_set_name : "No golden run yet"}
+          subtitle={latestEval?.report_sha256 ? `Report ${shortHash(latestEval.report_sha256)}` : latestEval ? latestEval.golden_set_name : "No golden run yet"}
           icon={<Trophy />}
           trend={evalRuns.length ? "up" : "neutral"}
         />
@@ -277,6 +320,60 @@ export function QualityCockpit({ documents, buildUrl, buildHeaders, onPresetProm
         </Card>
 
         <div className="flex flex-col gap-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Evaluation Evidence</CardTitle>
+              <CardDescription>Golden-run artifacts, corpus fingerprints, and exportable quality receipts.</CardDescription>
+              <CardAction>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={!latestEval?.report_sha256 || downloadingReportId === latestEval?.run_id}
+                  onClick={() => latestEval && void downloadEvalReport(latestEval)}
+                >
+                  <Download data-icon="inline-start" />
+                  {downloadingReportId === latestEval?.run_id ? "Exporting" : "Export"}
+                </Button>
+              </CardAction>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-3">
+              {!latestEval ? (
+                <EmptyState icon={<FileCheck2 />} title="No golden reports" description="Run a golden evaluation to create a report artifact." />
+              ) : (
+                <>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
+                      <div className="text-xs text-muted-foreground">Golden Set</div>
+                      <div className="mt-1 truncate text-sm font-medium">{latestEval.golden_set_name}</div>
+                    </div>
+                    <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
+                      <div className="text-xs text-muted-foreground">Report SHA</div>
+                      <div className="mt-1 font-mono text-sm font-medium">{shortHash(latestEval.report_sha256)}</div>
+                    </div>
+                    <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
+                      <div className="text-xs text-muted-foreground">Corpus</div>
+                      <div className="mt-1 font-mono text-sm font-medium">{shortHash(latestCorpusFingerprint)}</div>
+                    </div>
+                    <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
+                      <div className="text-xs text-muted-foreground">Golden Fingerprint</div>
+                      <div className="mt-1 font-mono text-sm font-medium">{shortHash(latestGoldenFingerprint)}</div>
+                    </div>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-background p-3">
+                      <span className="text-sm text-muted-foreground">Recall</span>
+                      <span className="font-mono text-sm font-semibold">{formatScore(latestEval.retrieval_metrics.recall_at_k)}</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-background p-3">
+                      <span className="text-sm text-muted-foreground">Faithfulness</span>
+                      <span className="font-mono text-sm font-semibold">{formatScore(latestEval.answer_metrics.faithfulness)}</span>
+                    </div>
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+
           <Card>
             <CardHeader>
               <CardTitle>Recommendations</CardTitle>

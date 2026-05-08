@@ -15,6 +15,7 @@ from collections.abc import Callable
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.security import APIKeyHeader
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
 from starlette.types import ASGIApp
 
 from .audit import get_audit_log
@@ -45,6 +46,8 @@ PUBLIC_PATHS = {
     "/redoc",
 }
 
+DOCS_PATHS = {"/docs", "/openapi.json", "/redoc"}
+
 # Scope requirements per route prefix
 ROUTE_SCOPES = {
     "/api/artifacts/build": "admin",
@@ -56,6 +59,8 @@ ROUTE_SCOPES = {
     "/config": "admin",
     "/evaluation": "read",
     "/providers": "read",
+    "/security": "read",
+    "/install": "read",
     "/monitoring": "read",
     "/api/traces": "read",
     "/api/artifacts": "read",
@@ -257,6 +262,22 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
 
 # =============================================================================
+# Exposed Mode Docs Guard
+# =============================================================================
+
+class ExposedDocsBlockerMiddleware(BaseHTTPMiddleware):
+    """Middleware that disables interactive docs when the API is exposed."""
+
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        if request.url.path in DOCS_PATHS and is_exposed_mode():
+            return JSONResponse(
+                {"detail": "Interactive API docs are disabled while AUTORAG_EXPOSE=true."},
+                status_code=404,
+            )
+        return await call_next(request)
+
+
+# =============================================================================
 # Request Size Limit Middleware
 # =============================================================================
 
@@ -351,6 +372,7 @@ def configure_security(app: FastAPI, *, strict: bool = False) -> None:
     app.add_middleware(TimeoutMiddleware)
     app.add_middleware(RequestSizeLimitMiddleware)
     app.add_middleware(RateLimitMiddleware)
+    app.add_middleware(ExposedDocsBlockerMiddleware)
 
     # Log configuration
     auth = get_auth()
@@ -367,6 +389,7 @@ def configure_security(app: FastAPI, *, strict: bool = False) -> None:
 __all__ = [
     "verify_api_key",
     "RateLimitMiddleware",
+    "ExposedDocsBlockerMiddleware",
     "RequestSizeLimitMiddleware",
     "TimeoutMiddleware",
     "SecurityHeadersMiddleware",
@@ -378,4 +401,5 @@ __all__ = [
     "ROUTE_SCOPES",
     "MAX_REQUEST_SIZE",
     "ROUTE_TIMEOUTS",
+    "DOCS_PATHS",
 ]

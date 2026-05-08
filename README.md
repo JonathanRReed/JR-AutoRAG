@@ -43,6 +43,7 @@ The product is built for two use cases:
 bun install
 cd api && python3 -m pip install -r requirements.txt
 cd ..
+bun run doctor
 bun run dev:all
 ```
 
@@ -56,6 +57,23 @@ If port 3000 is busy, run the frontend manually on another port:
 ```bash
 PORT=3001 BUN_PUBLIC_API_BASE_URL=http://127.0.0.1:8000 bun --hot src/index.ts
 ```
+
+Run the local install doctor any time an operator changes machines, ports, OCR tooling, auth settings, or model runtimes:
+
+```bash
+bun run doctor
+bun run doctor -- --json
+```
+
+The doctor checks Bun, Python, core API imports, OCR tools, API and web ports, data directory write access, auth environment consistency, security posture, and local Ollama or LM Studio availability. Warnings do not block local document search, but failed checks should be fixed before a client install.
+
+After the API is running, collect the full install evidence bundle:
+
+```bash
+bun run evidence:bundle
+```
+
+The bundle is written under `evidence/install/` by default and includes `doctor.json`, `readyz.json`, `config-policy.json`, `security-posture.json`, `install-report.json`, `research-architecture.md`, `manifest.json`, and `SHA256SUMS`. Set `JR_EVIDENCE_API_BASE_URL` or pass `--api-base-url` when collecting evidence from a non-default API origin.
 
 ## Normal Product Workflow
 
@@ -128,6 +146,9 @@ Common environment variables:
 - Binds to localhost by default.
 - Allows only local UI origins unless configured.
 - Supports optional API-key authentication.
+- Reports redacted install posture at `GET /security/posture`.
+- Exports a redacted client handoff report at `GET /install/report`.
+- Blocks `/docs`, `/redoc`, and `/openapi.json` when `AUTORAG_EXPOSE=true`.
 - Applies request size limits, route timeouts, and security headers.
 - Uses local-only deployment policy by default, rejecting public cloud providers unless the deployment profile allows them.
 - Keeps client-adjacent policy fields explicit, including retention, external model calls, PII redaction, and operator review.
@@ -141,6 +162,9 @@ Useful endpoints:
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /healthz` | API health |
+| `GET /readyz` | Runtime readiness with degraded states |
+| `GET /security/posture` | Redacted install security posture |
+| `GET /install/report` | Redacted client handoff report with readiness, posture, corpus, evaluation, and artifact evidence |
 | `GET /config` | Current product configuration |
 | `PUT /config` | Save provider, retrieval, and deployment settings |
 | `GET /providers/local` | Discover Ollama and LM Studio |
@@ -180,11 +204,14 @@ Uploads trigger indexing and retrieval rebuilds. Deleting a document also rebuil
 
 The UI surfaces related controls for hybrid search, reranking, RAPTOR, graph retrieval, evidence contracts, HyDE, and Self-RAG critique where supported by the current backend settings.
 
+See [docs/architecture/research-backed-rag-architecture.md](./docs/architecture/research-backed-rag-architecture.md) for the current research-to-implementation matrix used in client evidence bundles.
+
 ## Verification
 
 Run these before sharing a branch:
 
 ```bash
+bun run doctor:test
 bun run typecheck
 bun test
 bun run build
@@ -232,8 +259,12 @@ curl http://127.0.0.1:8000/documents
 4. Set `BUN_PUBLIC_API_BASE_URL` to the API origin at build/runtime.
 5. Enable `AUTORAG_AUTH_ENABLED=true`.
 6. Set `AUTORAG_API_KEYS`.
-7. Persist `data/` or set `JR_DATA_DIR` to durable storage.
-8. Review [Public/SECURITY.md](./Public/SECURITY.md) before exposing the API.
+7. Set exact `AUTORAG_ALLOWED_ORIGINS`.
+8. Run `bun run doctor -- --json` and fix any failed `security_posture` check.
+9. Verify `GET /security/posture` returns no failed checks.
+10. Run `bun run evidence:bundle` and keep the generated directory with the client handoff evidence.
+11. Persist `data/` or set `JR_DATA_DIR` to durable storage.
+12. Review [Public/SECURITY.md](./Public/SECURITY.md) before exposing the API.
 
 ## License
 

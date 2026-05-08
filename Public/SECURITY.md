@@ -155,9 +155,13 @@ Before any client run, verify the live policy:
 
 ```bash
 curl -H "X-API-Key: ${AUTORAG_API_KEYS%%,*}" http://localhost:8000/config/policy
+curl -H "X-API-Key: ${AUTORAG_API_KEYS%%,*}" http://localhost:8000/security/posture
+curl -H "X-API-Key: ${AUTORAG_API_KEYS%%,*}" http://localhost:8000/install/report
+bun run doctor -- --json
+bun run evidence:bundle
 ```
 
-The response includes `deployment_profile`, `data_policy`, and `guardrails`; save it with the engagement evidence.
+The policy response includes `deployment_profile`, `data_policy`, and `guardrails`; the security posture response includes auth, CORS, exposure, docs, headers, and rate-limit checks. The install report combines readiness, posture, corpus state, evaluation receipts, retrieval artifacts, and redaction metadata. The evidence bundle saves these live responses, the research-backed architecture matrix, hashes, and a manifest. Failed `security_posture` doctor checks must be fixed before a client-network install.
 
 ## Client Data Policy
 
@@ -201,9 +205,10 @@ export AUTORAG_ALLOWED_ORIGINS="https://yourdomain.com"
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-> ⚠️ **Warning**: Never expose the API without authentication enabled and proper CORS configuration.
+> Warning: Never expose the API without authentication enabled and proper CORS configuration.
 
 When `AUTORAG_EXPOSE=true`, JR AutoRAG will refuse non-public requests unless `AUTORAG_AUTH_ENABLED=true`.
+Interactive API docs at `/docs`, `/redoc`, and `/openapi.json` are disabled in exposed mode.
 
 ### TLS/HTTPS
 
@@ -357,7 +362,7 @@ Before deploying to production:
 - [ ] Configure request size limits appropriately
 - [ ] Enable PII detection if handling sensitive data
 - [ ] Test with security scanning tools
-- [ ] For client work, use `deployment_profile=client_safe` and save `/config/policy` evidence
+- [ ] For client work, use `deployment_profile=client_safe` and save a `bun run evidence:bundle` output directory
 
 ## Environment Variable Reference
 

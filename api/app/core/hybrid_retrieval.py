@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import hashlib
+import json
 import math
 import os
 import re
@@ -1860,6 +1862,79 @@ class HybridRetrievalEngine:
             }
         }
         return status
+
+    def get_readiness_snapshot(self) -> dict[str, Any]:
+        """Return non-invasive retrieval readiness facts."""
+        docs = self._docs.list()
+        chunk_count = len(self._chunks)
+        embedding_count = int(len(self._embeddings)) if self._embeddings is not None else 0
+        sparse_ready = bool(self._bm25 and self._tokenized_corpus)
+        dense_ready = self._embeddings is not None and embedding_count > 0
+        model_status = self.get_model_status()
+        bq_enabled = bool(getattr(self, "_bq_enabled", False))
+        bq_ready = bool(getattr(self, "_bq_ready", False))
+
+        return {
+            "document_count": len(docs),
+            "chunk_count": chunk_count,
+            "embedding_count": embedding_count,
+            "sparse_ready": sparse_ready,
+            "dense_ready": dense_ready,
+            "bq_enabled": bq_enabled,
+            "bq_ready": bq_ready,
+            "index_ready": len(docs) == 0 or chunk_count > 0,
+            "model_status": model_status,
+            "config": {
+                "embedding_model": self._config.embedding_model,
+                "reranker_model": self._config.reranker_model,
+                "use_reranking": self._config.use_reranking,
+                "use_colbert": self._config.use_colbert,
+                "raptor": self._config.raptor,
+                "graph": self._config.graph,
+                "deployment_profile": self._config.deployment_profile,
+            },
+        }
+
+    def get_corpus_manifest(self) -> dict[str, Any]:
+        """Return a content-safe corpus manifest for eval reproducibility."""
+        documents = sorted(self._docs.list(), key=lambda doc: doc.id)
+        document_hashes = []
+        secret_terms = ("apikey", "authorization", "token", "secret", "password", "credential")
+        for doc in documents:
+            metadata = {
+                key: value
+                for key, value in sorted((doc.metadata or {}).items())
+                if not any(term in re.sub(r"[^a-z0-9]", "", key.lower()) for term in secret_terms)
+            }
+            payload = {
+                "id": doc.id,
+                "title": doc.title,
+                "text_sha256": hashlib.sha256(doc.text.encode("utf-8")).hexdigest(),
+                "metadata": metadata,
+            }
+            digest = hashlib.sha256(
+                json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()
+            document_hashes.append({"id": doc.id, "title": doc.title, "sha256": digest})
+
+        fingerprint_payload = {
+            "documents": document_hashes,
+            "chunk_count": len(self._chunks),
+            "embedding_count": int(len(self._embeddings)) if self._embeddings is not None else 0,
+            "corpus_version": self.get_corpus_version(),
+        }
+        fingerprint = hashlib.sha256(
+            json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+
+        return {
+            "fingerprint": fingerprint,
+            "document_count": len(documents),
+            "chunk_count": len(self._chunks),
+            "embedding_count": int(len(self._embeddings)) if self._embeddings is not None else 0,
+            "corpus_version": self.get_corpus_version(),
+            "documents": document_hashes,
+        }
 
     def get_runtime_profile(self) -> dict[str, Any]:
         return {
