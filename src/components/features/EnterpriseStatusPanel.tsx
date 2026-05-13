@@ -16,6 +16,7 @@ import {
     Database,
     Play
 } from "lucide-react";
+import { buildApiUrl } from "@/lib/api-url";
 
 type ArtifactStage = "not_built" | "building" | "ready" | "failed";
 
@@ -114,7 +115,7 @@ export function EnterpriseStatusPanel({ baseUrl, apiKey = "" }: EnterpriseStatus
         }
 
         try {
-            const res = await fetch(`${baseUrl}/api/artifacts/status`, {
+            const res = await fetch(buildApiUrl(baseUrl, "/api/artifacts/status"), {
                 headers: Object.keys(headers).length ? headers : undefined,
                 signal: controller.signal
             });
@@ -162,7 +163,7 @@ export function EnterpriseStatusPanel({ baseUrl, apiKey = "" }: EnterpriseStatus
             headers["X-API-Key"] = trimmedApiKey;
         }
         try {
-            const res = await fetch(`${baseUrl}/api/traces/download`, {
+            const res = await fetch(buildApiUrl(baseUrl, "/api/traces/download"), {
                 headers: Object.keys(headers).length ? headers : undefined,
             });
             if (res.ok) {
@@ -208,7 +209,7 @@ export function EnterpriseStatusPanel({ baseUrl, apiKey = "" }: EnterpriseStatus
         }
         try {
             // Updated to use Query Parameter as per FastAPI spec
-            const res = await fetch(`${baseUrl}/api/artifacts/build?force=true`, {
+            const res = await fetch(buildApiUrl(baseUrl, "/api/artifacts/build?force=true"), {
                 method: "POST",
                 headers,
                 // Empty body since we using query param, but keeping empty object just in case middleware needs valid JSON

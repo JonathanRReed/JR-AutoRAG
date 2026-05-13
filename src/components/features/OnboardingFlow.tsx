@@ -25,29 +25,29 @@ type OnboardingFlowProps = {
 
 const steps = [
   { id: "connect", title: "Connect", description: "API health and local services", icon: Network },
-  { id: "seed", title: "Demo Corpus", description: "Disposable evaluator data", icon: Database },
+  { id: "knowledge", title: "Knowledge", description: "Client documents", icon: Database },
   { id: "ask", title: "First Answer", description: "Streaming answer with citations", icon: MessageSquare },
   { id: "inspect", title: "Inspect", description: "Trace, sources, and quality", icon: FileSearch },
 ];
 
 const fallbackQueries: OnboardingExampleQuery[] = [
   {
-    query: "What should an evaluator notice first about JR AutoRAG?",
-    category: "demo",
+    query: "What should an operator verify before a client install?",
+    category: "install",
     expected_docs: ["JR AutoRAG Evaluation Brief"],
   },
   {
-    query: "Which current RAG research ideas does this project already surface?",
+    query: "Which RAG controls should be enabled for a high-risk knowledge base?",
     category: "research",
     expected_docs: ["State of the Art RAG Playbook"],
   },
   {
-    query: "Give me a project-manager style demo script for this app.",
+    query: "How should a client handoff explain evidence, traces, and quality receipts?",
     category: "workflow",
     expected_docs: ["Project Manager Demo Scenario"],
   },
   {
-    query: "Compare hybrid search and RAPTOR",
+    query: "Compare hybrid search and RAPTOR for enterprise documents",
     category: "comparison",
     expected_docs: ["Advanced Retrieval Techniques"],
   },
@@ -113,8 +113,8 @@ export function OnboardingFlow({
   return (
     <Card className="overflow-hidden">
       <CardHeader>
-        <CardTitle>Evaluator Onboarding</CardTitle>
-        <CardDescription>Reach a credible first answer, then inspect the evidence and quality controls.</CardDescription>
+        <CardTitle>Install Onboarding</CardTitle>
+        <CardDescription>Connect services, ingest client knowledge, then prove answer quality with evidence.</CardDescription>
         <CardAction>
           <ToggleGroup aria-label="Onboarding mode">
             <ToggleGroupItem pressed={activeMode === "guided"} onClick={() => onModeChange("guided")}>
@@ -127,15 +127,15 @@ export function OnboardingFlow({
         </CardAction>
       </CardHeader>
       <CardContent className="flex flex-col gap-5">
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-4">
             <Alert variant={onboardingState.demo_mode ? "info" : "default"}>
               <ShieldCheck data-icon="inline-start" />
-              <AlertTitle>{onboardingState.demo_mode ? "Disposable Demo Mode" : "Local First Mode"}</AlertTitle>
+              <AlertTitle>{onboardingState.demo_mode ? "Demo Walkthrough Mode" : "Client Install Mode"}</AlertTitle>
               <AlertDescription>
                 {onboardingState.demo_mode
-                  ? "Data is stored in a temporary local directory for this app run."
-                  : "Demo seeding is local and safe. Enable JR_DEMO_MODE=1 when you want data discarded after shutdown."}
+                  ? "This run uses a temporary local directory for sales or evaluation walkthroughs."
+                  : "Persistent local storage is active. Client installs start with the customer's documents and finish with evidence receipts."}
               </AlertDescription>
             </Alert>
 
@@ -144,7 +144,7 @@ export function OnboardingFlow({
                 const Icon = step.icon;
                 const complete =
                   (step.id === "connect" && apiReady) ||
-                  (step.id === "seed" && (docsReady || demoSeeded)) ||
+                  (step.id === "knowledge" && (docsReady || demoSeeded)) ||
                   (step.id === "ask" && docsReady) ||
                   (step.id === "inspect" && docsReady);
                 return (
@@ -169,32 +169,29 @@ export function OnboardingFlow({
             </div>
           </div>
 
-          <div className="flex flex-col gap-3 rounded-lg border border-border/60 bg-muted/10 p-4">
-            <div>
-              <div className="text-sm font-semibold text-foreground">Fast Demo Setup</div>
-              <div className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                Seed research, peer comparison, and project-manager documents. Then ask an example prompt.
+          <details className="rounded-lg border border-border/60 bg-muted/10 p-3">
+            <summary className="cursor-pointer text-sm font-medium text-muted-foreground">Demo walkthrough options</summary>
+            <div className="mt-3 flex flex-col gap-3">
+              <div className="text-xs leading-relaxed text-muted-foreground">
+                Load sample documents only for sales or evaluator walkthroughs. Client installs should use the Documents tab.
+              </div>
+              <Separator />
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                <Badge variant={apiReady ? "default" : "muted"}>API</Badge>
+                <Badge variant={modelsReady ? "default" : "muted"}>Models</Badge>
+                <Badge variant={docsReady ? "default" : "muted"}>Corpus</Badge>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" size="sm" onClick={onSeedDemo} disabled={!apiReady || isSeedingDemo}>
+                  <Play data-icon="inline-start" />
+                  {isSeedingDemo ? "Loading Demo" : demoSeeded ? "Refresh Demo" : "Load Demo"}
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => onOpenTab("documents")}>
+                  Documents
+                </Button>
               </div>
             </div>
-            <Separator />
-            <div className="grid grid-cols-3 gap-2 text-xs">
-              <Badge variant={apiReady ? "default" : "muted"}>API</Badge>
-              <Badge variant={modelsReady ? "default" : "muted"}>Models</Badge>
-              <Badge variant={docsReady ? "default" : "muted"}>Corpus</Badge>
-            </div>
-            <Button onClick={onSeedDemo} disabled={!apiReady || isSeedingDemo}>
-              <Play data-icon="inline-start" />
-              {isSeedingDemo ? "Seeding" : demoSeeded ? "Refresh Demo Corpus" : "Load Demo Corpus"}
-            </Button>
-            <div className="grid grid-cols-2 gap-2">
-              <Button variant="outline" onClick={() => onOpenTab("query")}>
-                Chat
-              </Button>
-              <Button variant="outline" onClick={() => onOpenTab("quality")}>
-                Quality
-              </Button>
-            </div>
-          </div>
+          </details>
         </div>
 
         {activeMode === "guided" ? (
@@ -211,7 +208,7 @@ export function OnboardingFlow({
               </EmptyMedia>
               <EmptyTitle>Advanced Path</EmptyTitle>
               <EmptyDescription>
-                Configure providers, tune retrieval, run advisory experiments, and inspect parser previews before demoing.
+                Configure providers, tune retrieval, run advisory experiments, and inspect parser previews before client handoff.
               </EmptyDescription>
             </EmptyHeader>
             <EmptyContent>

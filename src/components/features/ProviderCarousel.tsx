@@ -415,13 +415,21 @@ export function ProviderCarousel({
           </div>
         </div>
 
-        <div className="space-y-2">
-          <Label className="text-xs font-bold uppercase tracking-wider">API Key</Label>
+        <form
+          className="space-y-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void fetchOllamaCloudModels();
+          }}
+        >
+          <Label htmlFor="ollama-cloud-api-key" className="text-xs font-bold uppercase tracking-wider">API Key</Label>
           <div className="flex gap-2">
             <Input
+              id="ollama-cloud-api-key"
               type="password"
               value={ollamaCloudApiKey}
               onChange={(e) => setOllamaCloudApiKey(e.target.value)}
+              autoComplete="off"
               placeholder="Enter your Ollama API key"
               className="flex-1"
             />
@@ -431,7 +439,7 @@ export function ProviderCarousel({
               </a>
             </Button>
           </div>
-        </div>
+        </form>
 
         {ollamaCloudError && (
           <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-sm text-destructive">
@@ -570,13 +578,21 @@ export function ProviderCarousel({
 
     return (
       <div className="space-y-4">
-        <div className="space-y-2">
-          <Label className="text-xs font-bold uppercase tracking-wider">API Key</Label>
+        <form
+          className="space-y-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void fetchOpenRouterModels();
+          }}
+        >
+          <Label htmlFor="openrouter-api-key" className="text-xs font-bold uppercase tracking-wider">API Key</Label>
           <div className="flex gap-2">
             <Input
+              id="openrouter-api-key"
               type="password"
               value={openRouterApiKey}
               onChange={(e) => setOpenRouterApiKey(e.target.value)}
+              autoComplete="off"
               placeholder="sk-or-v1-..."
               className="flex-1"
             />
@@ -586,7 +602,7 @@ export function ProviderCarousel({
               </a>
             </Button>
           </div>
-        </div>
+        </form>
 
         {openRouterLoading ? (
           <div className="flex items-center justify-center py-6">

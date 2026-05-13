@@ -7,15 +7,24 @@
   "scripts": {
     "dev": "bun --hot src/index.ts",
     "dev:all": "bash ./scripts/dev.sh",
+    "api:sync": "uv sync --project api --all-groups --extra ml",
+    "api:test": "cd api && uv run pytest",
+    "api:lint": "cd api && uv run ruff check app tests",
     "start": "NODE_ENV=production bun src/index.ts",
     "doctor": "bash ./scripts/doctor.sh",
     "doctor:test": "env -i PATH=\"$PATH\" HOME=\"$HOME\" bash ./scripts/doctor.test.sh",
+    "container:smoke": "bash ./scripts/container-build-smoke.sh",
+    "research:check": "bash ./scripts/research-architecture-check.sh",
+    "supply-chain": "bash ./scripts/supply-chain-evidence.sh",
     "evidence:bundle": "bash ./scripts/evidence-bundle.sh",
     "evidence:test": "bash ./scripts/evidence-bundle.test.sh",
+    "handoff:gate": "bash ./scripts/client-handoff-gate.sh",
+    "handoff:test": "bash ./scripts/client-handoff-gate.test.sh",
+    "verify": "bash ./scripts/verify.sh",
     "build": "bash ./scripts/build.sh",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "ci": "bun run typecheck && bun test && bun run build"
+    "ci": "bash ./scripts/verify.sh"
   },
   "dependencies": {
     "@radix-ui/react-label": "^2.1.8",

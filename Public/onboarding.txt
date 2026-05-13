@@ -4,7 +4,7 @@ JR AutoRAG – 5 Minute Onboarding (v3.0)
 Follow these steps from a fresh clone to your first answered query.
 
 0) Prerequisites
-   - Bun v1.3+, Python 3.11+ with pip
+   - Bun v1.3+, Python 3.11+, uv 0.11+
    - OCR deps (for scanned PDFs):
      - macOS: `brew install tesseract poppler`
      - Ubuntu/Debian: `sudo apt-get install tesseract-ocr poppler-utils`
@@ -13,7 +13,7 @@ Follow these steps from a fresh clone to your first answered query.
 1) Clone & install
    - `git clone <repo> && cd JR-AutoRAG`
    - `bun install`
-   - `cd api && python3 -m pip install -r requirements.txt && cd ..`
+   - `bun run api:sync`
 
 2) Start everything (recommended)
    - `bun run dev:all`
@@ -21,7 +21,7 @@ Follow these steps from a fresh clone to your first answered query.
    - API: http://localhost:8000
 
    Manual control (if preferred):
-   - API: `cd api && PYTHONPATH=. uvicorn app.main:app --reload --port 8000`
+   - API: `cd api && uv run uvicorn app.main:app --reload --port 8000`
    - UI: `bun dev`
 
 3) Verify connectivity

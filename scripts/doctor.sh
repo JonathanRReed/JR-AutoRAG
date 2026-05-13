@@ -26,7 +26,9 @@ for arg in "$@"; do
 done
 
 python_bin() {
-  if [[ -x "${ROOT_DIR}/.venv/bin/python" ]]; then
+  if [[ -x "${API_DIR}/.venv/bin/python" ]]; then
+    printf '%s\n' "${API_DIR}/.venv/bin/python"
+  elif [[ -x "${ROOT_DIR}/.venv/bin/python" ]]; then
     printf '%s\n' "${ROOT_DIR}/.venv/bin/python"
   elif command -v python3 >/dev/null 2>&1; then
     command -v python3
@@ -129,11 +131,22 @@ check_python() {
   fi
 }
 
+check_uv() {
+  if ! command -v uv >/dev/null 2>&1; then
+    add_check "uv" "warn" "uv is not installed" "Install uv, then run uv sync --project api --all-groups."
+    return
+  fi
+  local version
+  version="$(uv --version 2>/dev/null | awk '{print $2}')"
+  version="${version:-unknown}"
+  add_check "uv" "pass" "uv ${version} is available" "$(command -v uv)"
+}
+
 check_api_dependencies() {
   local py
   py="$(python_bin 2>/dev/null || true)"
   if [[ -z "${py}" ]]; then
-    add_check "api_dependencies" "fail" "Cannot check API dependencies without Python" "Install Python dependencies with cd api && python3 -m pip install -r requirements.txt."
+    add_check "api_dependencies" "fail" "Cannot check API dependencies without Python" "Install Python dependencies with uv sync --project api --all-groups."
     return
   fi
   if (cd "${API_DIR}" && "${py}" - <<'PY' >/dev/null 2>&1
@@ -145,7 +158,7 @@ PY
   ); then
     add_check "api_dependencies" "pass" "Core API dependencies import successfully" "Checked FastAPI, Pydantic, httpx, NumPy, and scikit-learn."
   else
-    add_check "api_dependencies" "fail" "Core API dependencies are missing" "Run cd api && python3 -m pip install -r requirements.txt."
+    add_check "api_dependencies" "fail" "Core API dependencies are missing" "Run uv sync --project api --all-groups."
   fi
 }
 
@@ -303,6 +316,7 @@ PY
 
 check_bun
 check_python
+check_uv
 check_api_dependencies
 check_command "ocr_tesseract" "Tesseract OCR" "tesseract" "Install tesseract for scanned PDF OCR."
 check_command "ocr_poppler" "Poppler PDF tools" "pdftotext" "Install poppler for PDF text extraction and preview."

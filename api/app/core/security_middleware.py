@@ -227,8 +227,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self.limiter = get_rate_limiter()
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        # Skip rate limiting for health checks
-        if request.url.path in {"/healthz", "/readyz"}:
+        # Skip rate limiting for health checks and CORS preflight requests
+        if request.url.path in {"/healthz", "/readyz"} or request.method == "OPTIONS":
             return await call_next(request)
 
         # Determine rate limit key (API key > IP)

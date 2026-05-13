@@ -12,6 +12,7 @@ from ..core.golden_eval import (
     GoldenSetStore,
     GoldenTestCase,
 )
+from ..core.eval_gates import install_builtin_datasets
 from ..schemas.evaluation import (
     AnswerMetricsSchema,
     EvalRunResultSchema,
@@ -140,6 +141,17 @@ async def list_golden_sets():
     """List all golden test sets."""
     store = get_golden_store()
     return [GoldenSetInfo(**info) for info in store.list_sets()]
+
+
+@router.post("/golden-sets/builtins", response_model=dict[str, Any])
+async def install_builtin_golden_sets():
+    """Install built-in benchmark packs, including the client-readiness suite."""
+    store = get_golden_store()
+    installed = install_builtin_datasets(store)
+    return {
+        "installed": installed,
+        "sets": store.list_sets(),
+    }
 
 
 @router.get("/golden-sets/{set_name}", response_model=list[GoldenTestCaseSchema])

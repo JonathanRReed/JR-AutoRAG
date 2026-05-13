@@ -11,7 +11,7 @@ import hashlib
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 
 logger = logging.getLogger("autorag.trace_export")
 
@@ -189,7 +189,7 @@ def create_trace_export(
         trace_id=trace_id,
         query=query,
         answer=answer,
-        timestamp=datetime.utcnow().isoformat(),
+        timestamp=datetime.now(UTC).isoformat(),
         stages=stages,
         total_duration_ms=total_ms,
         config=config,

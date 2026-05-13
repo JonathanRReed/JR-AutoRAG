@@ -17,7 +17,7 @@ Environment variables:
 import logging
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import UTC, datetime
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -64,7 +64,7 @@ async def lifespan(app: FastAPI):
     # Log startup in audit log
     audit_log = get_audit_log()
     audit_log.log(AuditEntry(
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(UTC),
         action=AuditAction.SYSTEM,
         details={"event": "startup", "version": app.version},
     ))
@@ -94,7 +94,7 @@ async def lifespan(app: FastAPI):
 
     # Log shutdown in audit log
     audit_log.log(AuditEntry(
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(UTC),
         action=AuditAction.SYSTEM,
         details={"event": "shutdown"},
     ))

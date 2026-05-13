@@ -234,17 +234,18 @@ export function ProviderConfig({
               </div>
             </div>
 
-            <div className="space-y-2">
+            <form className="space-y-2" onSubmit={(event) => event.preventDefault()}>
               <Label htmlFor="apiKey" className="text-xs">API Key (if required)</Label>
               <Input
                 id="apiKey"
                 type="password"
                 value={configProvider?.api_key ?? ""}
                 onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateProvider("api_key", e.target.value)}
+                autoComplete="off"
                 placeholder="sk-..."
                 className="max-w-md"
               />
-            </div>
+            </form>
 
             <div className="space-y-3 rounded-lg border border-border/60 bg-muted/10 p-4">
               <div>

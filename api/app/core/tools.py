@@ -1,14 +1,15 @@
 """Tool registry and execution for agentic RAG.
 
-This module provides a framework for RAG agents to use external tools:
+This module provides local tools for RAG agents:
 - Calculator for math expressions
 - Date/time information
-- Web search (placeholder for external API)
 - Document search (internal RAG)
 """
 
 from __future__ import annotations
 
+import ast
+import operator
 import math
 import re
 from abc import ABC, abstractmethod
@@ -61,6 +62,21 @@ class Tool(ABC):
 class CalculatorTool(Tool):
     """Simple calculator for mathematical expressions."""
 
+    MAX_EXPRESSION_LENGTH = 120
+    MAX_ABS_VALUE = 1_000_000_000_000
+    MAX_ABS_RESULT = 1_000_000_000_000_000
+    ALLOWED_BINOPS = {
+        ast.Add: operator.add,
+        ast.Sub: operator.sub,
+        ast.Mult: operator.mul,
+        ast.Div: operator.truediv,
+        ast.Mod: operator.mod,
+    }
+    ALLOWED_UNARYOPS = {
+        ast.UAdd: operator.pos,
+        ast.USub: operator.neg,
+    }
+
     @property
     def name(self) -> str:
         return "calculator"
@@ -87,13 +103,45 @@ class CalculatorTool(Tool):
                 return 0.8
         return 0.0
 
+    def _normalize(self, expression: str) -> str:
+        expr = expression.strip()
+        if len(expr) > self.MAX_EXPRESSION_LENGTH:
+            raise ValueError("Expression is too long")
+        if re.search(r"[^0-9+\-*/().%\s]", expr):
+            raise ValueError("Expression contains unsupported characters")
+        expr = re.sub(r"(\d+(?:\.\d+)?)\s*%", r"(\1/100)", expr)
+        return expr
+
+    def _evaluate_node(self, node: ast.AST) -> float | int:
+        if isinstance(node, ast.Expression):
+            return self._evaluate_node(node.body)
+        if isinstance(node, ast.Constant) and isinstance(node.value, int | float):
+            if abs(node.value) > self.MAX_ABS_VALUE:
+                raise ValueError("Number is too large")
+            return node.value
+        if isinstance(node, ast.UnaryOp) and type(node.op) in self.ALLOWED_UNARYOPS:
+            result = self.ALLOWED_UNARYOPS[type(node.op)](self._evaluate_node(node.operand))
+            return self._check_result(result)
+        if isinstance(node, ast.BinOp) and type(node.op) in self.ALLOWED_BINOPS:
+            left = self._evaluate_node(node.left)
+            right = self._evaluate_node(node.right)
+            result = self.ALLOWED_BINOPS[type(node.op)](left, right)
+            return self._check_result(result)
+        raise ValueError("Unsupported expression")
+
+    def _check_result(self, value: float | int) -> float | int:
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError("Result is not finite")
+        if abs(value) > self.MAX_ABS_RESULT:
+            raise ValueError("Result is too large")
+        return value
+
     def execute(self, expression: str = "", **kwargs) -> ToolResult:
         import time
         start = time.perf_counter()
 
         try:
-            # Sanitize expression - only allow safe characters
-            safe_expr = re.sub(r'[^0-9+\-*/().%\s]', '', expression)
+            safe_expr = self._normalize(expression)
             if not safe_expr.strip():
                 return ToolResult(
                     tool_name=self.name,
@@ -102,11 +150,8 @@ class CalculatorTool(Tool):
                     error="Invalid expression",
                 )
 
-            # Replace common math words
-            safe_expr = safe_expr.replace('%', '/100*')
-
-            # Evaluate safely
-            result = eval(safe_expr, {"__builtins__": {}}, {"math": math})
+            parsed = ast.parse(safe_expr, mode="eval")
+            result = self._check_result(self._evaluate_node(parsed))
 
             return ToolResult(
                 tool_name=self.name,

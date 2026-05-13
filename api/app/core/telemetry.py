@@ -6,7 +6,7 @@ import builtins
 import json
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock
 from typing import Any
@@ -91,7 +91,7 @@ class TelemetryStore:
         started_at: datetime | None = None,
     ) -> Trace:
         with self._lock:
-            now = datetime.utcnow()
+            now = datetime.now(UTC)
             trace = Trace(
                 id=str(uuid.uuid4()),
                 started_at=started_at or now,

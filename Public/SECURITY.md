@@ -21,7 +21,7 @@ export AUTORAG_API_KEYS="your-secret-key-1,your-secret-key-2"
 export AUTORAG_ALLOWED_ORIGINS="https://app.yourdomain.com,https://admin.yourdomain.com"
 
 # Start the API
-uvicorn app.main:app --host 127.0.0.1 --port 8000
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
 ## Authentication
@@ -76,7 +76,7 @@ Never store API keys (OpenAI, Anthropic, etc.) in plain configuration files.
 
 2. **OS Keychain** (Recommended for local development)
    ```bash
-   pip install keyring
+   cd api && uv pip install keyring
    ```
    Keys are automatically stored in:
    - macOS: Keychain Access
@@ -161,7 +161,7 @@ bun run doctor -- --json
 bun run evidence:bundle
 ```
 
-The policy response includes `deployment_profile`, `data_policy`, and `guardrails`; the security posture response includes auth, CORS, exposure, docs, headers, and rate-limit checks. The install report combines readiness, posture, corpus state, evaluation receipts, retrieval artifacts, and redaction metadata. The evidence bundle saves these live responses, the research-backed architecture matrix, hashes, and a manifest. Failed `security_posture` doctor checks must be fixed before a client-network install.
+The policy response includes `deployment_profile`, `data_policy`, and `guardrails`; the security posture response includes auth, CORS, exposure, docs, headers, and rate-limit checks. The install report combines readiness, posture, corpus state, evaluation receipts, retrieval artifacts, and redaction metadata. The evidence bundle saves these live responses, install smoke output, container manifest output, secret-scan output, supply-chain SBOM and audit output, the research-backed architecture matrix, hashes, and a manifest. Failed `security_posture` doctor checks must be fixed before a client-network install.
 
 ## Client Data Policy
 
@@ -184,7 +184,7 @@ Minimum closeout checklist:
 - [ ] Confirm whether the client wants the local `data/` volume handed off or deleted.
 - [ ] Delete local temporary upload files and unneeded trace bundles.
 - [ ] Rotate or remove `AUTORAG_API_KEYS`, provider keys, and `AUTORAG_VAULT_KEY`.
-- [ ] Save `/config/policy` output and dependency/test evidence with the engagement record.
+- [ ] Save `/config/policy` output, the evidence bundle, SBOM, dependency audit, and test evidence with the engagement record.
 
 ### Exposing to Network
 
@@ -202,7 +202,7 @@ export AUTORAG_API_KEYS="your-secret-key"
 export AUTORAG_ALLOWED_ORIGINS="https://yourdomain.com"
 
 # Bind to all interfaces
-uvicorn app.main:app --host 0.0.0.0 --port 8000
+uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
 > Warning: Never expose the API without authentication enabled and proper CORS configuration.

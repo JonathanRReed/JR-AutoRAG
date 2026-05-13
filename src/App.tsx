@@ -22,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/components/ui/toast";
 import { LoadingSpinner } from "@/components/ui/loading";
+import { buildApiUrl, resolveDefaultApiBaseUrl } from "@/lib/api-url";
 
 const AdvancedRAGSettings = lazy(() => import("@/components/features/AdvancedRAGSettings").then(m => ({ default: m.AdvancedRAGSettings })));
 const ChatInterface = lazy(() => import("@/components/features/ChatInterface").then(m => ({ default: m.ChatInterface })));
@@ -60,29 +61,7 @@ import type {
   OnboardingState,
 } from "@/types";
 
-const resolveDefaultBaseUrl = () => {
-  const envBase =
-    (import.meta.env?.BUN_PUBLIC_API_BASE_URL as string | undefined) ||
-    (import.meta.env?.VITE_API_BASE_URL as string | undefined);
-  if (envBase) {
-    return envBase.replace("http://localhost:8000", "http://127.0.0.1:8000");
-  }
-  if (typeof window !== "undefined") {
-    try {
-      const url = new URL(window.location.href);
-      const isLocalHost = ["localhost", "127.0.0.1", "::1"].includes(url.hostname);
-      if (isLocalHost) {
-        return "http://127.0.0.1:8000";
-      }
-      return `${url.protocol}//${url.hostname}${url.port ? `:${url.port}` : ""}`;
-    } catch {
-      return "http://127.0.0.1:8000";
-    }
-  }
-  return "http://127.0.0.1:8000";
-};
-
-const defaultBaseUrl = resolveDefaultBaseUrl();
+const defaultBaseUrl = resolveDefaultApiBaseUrl();
 
 const formatNumber = (value?: number) =>
   typeof value === "number" && Number.isFinite(value) ? value.toFixed(2) : "0.00";
@@ -293,7 +272,7 @@ export function App() {
     }
   }, [chatHistory, queryResult?.answer, activeTab]);
 
-  const buildUrl = (path: string) => `${baseUrl.replace(/\/$/, "")}${path}`;
+  const buildUrl = (path: string) => buildApiUrl(baseUrl, path);
 
   const fetchJson = async <T,>(path: string, init?: RequestInit): Promise<T> => {
     try {
@@ -1275,7 +1254,7 @@ export function App() {
     {
       label: "Corpus",
       ready: docsReady,
-      detail: docsReady ? `${documents.length} document${documents.length === 1 ? "" : "s"} indexed` : "Seed demo or ingest client docs",
+      detail: docsReady ? `${documents.length} document${documents.length === 1 ? "" : "s"} indexed` : "Ingest client documents",
     },
     {
       label: "Security",
@@ -1335,7 +1314,13 @@ export function App() {
 
           <div className="flex min-w-0 items-center justify-end gap-2">
             {/* API URL */}
-            <div className="hidden 2xl:flex items-center gap-2">
+            <form
+              className="hidden 2xl:flex items-center gap-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void handleTestConnection();
+              }}
+            >
               <Input
                 className="w-48 text-xs"
                 value={baseUrl}
@@ -1352,10 +1337,10 @@ export function App() {
                 placeholder="X-API-Key (session)"
                 aria-label="API key"
               />
-              <Button size="sm" variant="outline" onClick={handleTestConnection}>
+              <Button size="sm" variant="outline" type="submit">
                 {apiReady ? "Connected" : "Connect"}
               </Button>
-            </div>
+            </form>
 
             {/* Checklist items indicator */}
             <div
@@ -1399,10 +1384,10 @@ export function App() {
                           Local-first enterprise install
                         </div>
                         <h2 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
-                          Run private AutoRAG with evidence, quality gates, and operator controls.
+                          Install private AutoRAG for real client knowledge bases.
                         </h2>
                         <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">
-                          Start with a disposable demo corpus, connect local models, inspect retrieval evidence, then export quality receipts before a client install.
+                          Connect the local API, choose private model routes, ingest client documents, inspect retrieval evidence, and export the receipts needed for a B2B handoff.
                         </p>
                       </div>
 
@@ -1415,7 +1400,7 @@ export function App() {
                           <div className="h-full rounded-full bg-primary transition-all duration-300" style={{ width: `${readyPercent}%` }} />
                         </div>
                         <div className="text-xs leading-relaxed text-muted-foreground">
-                          {demoMode ? "Disposable demo mode is active for this run." : "Persistent local mode is active. Use demo mode for sales walkthroughs."}
+                          {demoMode ? "Demo mode is active for this run. Use persistent mode for client installs." : "Persistent local mode is active for client installs."}
                         </div>
                       </div>
                     </div>
@@ -1424,26 +1409,30 @@ export function App() {
                   <div className="rounded-lg border border-border/60 bg-card p-5 shadow-sm">
                     <div className="mb-4 flex items-center justify-between gap-3">
                       <div>
-                        <div className="text-sm font-semibold text-foreground">Operator Path</div>
-                        <div className="text-xs text-muted-foreground">Make the system demonstrable fast.</div>
+                        <div className="text-sm font-semibold text-foreground">Install Path</div>
+                        <div className="text-xs text-muted-foreground">Bring a client workspace online.</div>
                       </div>
                       <PackageCheck className="size-5 text-primary" />
                     </div>
                     <div className="grid gap-2">
-                      <Button onClick={handleSeedDemo} disabled={!apiReady || isSeedingDemo}>
-                        <Database className="size-4" />
-                        {isSeedingDemo ? "Seeding Demo Corpus" : demoSeeded ? "Refresh Demo Corpus" : "Load Demo Corpus"}
+                      <Button onClick={() => setActiveTab("documents")}>
+                        <FileText className="size-4" />
+                        Ingest Client Documents
                       </Button>
                       <div className="grid grid-cols-2 gap-2">
+                        <Button variant="outline" onClick={() => setActiveTab("config")}>
+                          <Settings className="size-4" />
+                          Configure
+                        </Button>
                         <Button variant="outline" onClick={() => setActiveTab("query")}>
                           <MessageSquare className="size-4" />
-                          Ask
-                        </Button>
-                        <Button variant="outline" onClick={() => setActiveTab("quality")}>
-                          <Trophy className="size-4" />
-                          Prove
+                          Query
                         </Button>
                       </div>
+                      <Button variant="secondary" onClick={() => setActiveTab("quality")}>
+                        <FileCheck2 className="size-4" />
+                        Prove Readiness
+                      </Button>
                     </div>
                   </div>
                 </section>

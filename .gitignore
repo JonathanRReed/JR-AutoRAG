@@ -61,3 +61,4 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # app data (runtime configs, documents, traces)
 data/
 api/data/
+evidence/

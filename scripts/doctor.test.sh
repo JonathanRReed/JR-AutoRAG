@@ -28,6 +28,7 @@ checks = {item["id"]: item for item in payload["checks"]}
 required = {
     "bun",
     "python",
+    "uv",
     "api_dependencies",
     "ocr_tesseract",
     "ocr_poppler",

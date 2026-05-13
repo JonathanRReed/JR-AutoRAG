@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -79,7 +79,7 @@ class AuditLog:
     Usage:
         audit = AuditLog()
         audit.log(AuditEntry(
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             action=AuditAction.QUERY,
             details={"query": "...", "documents": [...]},
             user_id="user123",
@@ -106,13 +106,13 @@ class AuditLog:
     def _get_log_file(self, date: datetime | None = None) -> Path:
         """Get log file path for a given date."""
         if date is None:
-            date = datetime.utcnow()
+            date = datetime.now(UTC)
         date_str = date.strftime("%Y-%m-%d")
         return self._log_dir / f"audit_{date_str}.jsonl"
 
     def _ensure_file_for_today(self) -> None:
         """Ensure we have the correct file handle for today."""
-        today = datetime.utcnow().strftime("%Y-%m-%d")
+        today = datetime.now(UTC).strftime("%Y-%m-%d")
         if self._current_date != today:
             self._current_date = today
             self._current_file = self._get_log_file()
@@ -146,7 +146,7 @@ class AuditLog:
     ) -> None:
         """Convenience method to log a query operation."""
         self.log(AuditEntry(
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             action=AuditAction.QUERY,
             details={
                 "query": query[:500],  # Truncate for storage
@@ -169,7 +169,7 @@ class AuditLog:
     ) -> None:
         """Convenience method to log document ingestion."""
         self.log(AuditEntry(
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             action=AuditAction.INGEST,
             details={
                 "document_id": document_id,
@@ -190,7 +190,7 @@ class AuditLog:
     ) -> None:
         """Convenience method to log document deletion."""
         self.log(AuditEntry(
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             action=AuditAction.DELETE,
             details={"document_id": document_id},
             user_id=user_id,
@@ -208,7 +208,7 @@ class AuditLog:
         """Log an authentication attempt."""
         action = AuditAction.AUTH_SUCCESS if success else AuditAction.AUTH_FAILURE
         self.log(AuditEntry(
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             action=action,
             details={"reason": reason} if reason else {},
             user_id=user_id,

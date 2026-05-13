@@ -190,7 +190,7 @@ class ChromaVectorStore(VectorStore):
             self._initialized = True
         except ImportError:
             raise RuntimeError(
-                "ChromaDB not installed. Install with: pip install chromadb"
+                "ChromaDB not installed. Install with: cd api && uv pip install chromadb"
             )
 
     def add(self, documents: list[VectorDocument]) -> list[str]:

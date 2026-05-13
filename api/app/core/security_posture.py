@@ -6,6 +6,7 @@ import os
 from urllib.parse import urlparse
 
 from ..schemas.security import SecurityPostureCheck, SecurityPostureResponse, SecurityPostureSettings
+from .prompt_guard import INJECTION_PATTERNS
 from .security_middleware import get_allowed_origins, is_exposed_mode
 
 
@@ -116,7 +117,7 @@ def build_security_posture() -> SecurityPostureResponse:
             id="rate_limit",
             status="pass",
             message="Rate limiting is enabled",
-            detail=f"{os.environ.get('AUTORAG_RATE_LIMIT_RPM', '100')} requests per minute.",
+            detail=f"{os.environ.get('AUTORAG_RATE_LIMIT_RPM', '600')} requests per minute.",
         ))
     else:
         checks.append(SecurityPostureCheck(
@@ -139,6 +140,16 @@ def build_security_posture() -> SecurityPostureResponse:
         status="pass",
         message="Security headers middleware is installed",
         detail="Responses include nosniff, frame denial, referrer policy, CSP, and timing headers.",
+    ))
+
+    checks.append(SecurityPostureCheck(
+        id="prompt_injection",
+        status="pass",
+        message="Indirect prompt-injection defenses are active",
+        detail=(
+            f"{len(INJECTION_PATTERNS)} detection patterns sanitize ingested text, "
+            "and retrieved snippets are wrapped as document data before generation."
+        ),
     ))
 
     recommendations = [
