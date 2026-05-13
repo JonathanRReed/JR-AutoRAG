@@ -45,6 +45,7 @@ from .document_parser import DocumentParserRouter, parser_result_from_text, pars
 from .langextract_enricher import LangExtractEnricher
 from .local_first import LocalFirstRegistry
 from .ocr import OCRRouter
+from .prompt_guard import ThreatLevel, sanitize_at_ingest
 from .retrieval import RetrievalEngine
 
 _INDEX_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="autorag-index")
@@ -100,12 +101,24 @@ class IngestPipeline:
         meta = self._prepare_metadata(metadata)
         meta.setdefault("processing_status", "processing")
 
+        sanitized_text, injection_attempts = sanitize_at_ingest(
+            text,
+            source=f"document:{title}",
+            wrap_delimiters=False,
+        )
+        if injection_attempts:
+            threat_order = [ThreatLevel.NONE, ThreatLevel.LOW, ThreatLevel.MEDIUM, ThreatLevel.HIGH, ThreatLevel.CRITICAL]
+            highest_threat = max(injection_attempts, key=lambda attempt: threat_order.index(attempt.threat_level)).threat_level
+            meta["prompt_injection_detected"] = "true"
+            meta["prompt_injection_attempts"] = str(len(injection_attempts))
+            meta["prompt_injection_threat_level"] = highest_threat.value
+
         langextract_result = self._run_langextract(
-            text=text,
+            text=sanitized_text,
             profile_override=langextract_profile_override,
             prompt_override=langextract_prompt_override,
         )
-        augmented_text = self._append_langextract_sections(text, langextract_result.get("synthetic_sections", []))
+        augmented_text = self._append_langextract_sections(sanitized_text, langextract_result.get("synthetic_sections", []))
         self._apply_langextract_metadata(meta, langextract_result)
 
         # Compute content hash for change detection (A1)
@@ -389,7 +402,7 @@ class IngestPipeline:
         }
         get_audit_log().log(
             AuditEntry(
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(UTC),
                 action=AuditAction.INGEST,
                 details=details,
                 success=True,
@@ -517,7 +530,7 @@ class IngestPipeline:
         except UnicodeDecodeError:
             text = f"(Binary content: {ext or 'unknown'})"
             return text, self._build_extraction_metadata(
-                extraction_method="binary_placeholder",
+                extraction_method="binary_unsupported",
                 extraction_engine="binary",
                 extraction_confidence=0.0,
                 ocr_policy=self._resolve_ocr_policy(metadata).value,

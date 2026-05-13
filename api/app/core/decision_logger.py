@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -29,7 +29,7 @@ class GateDecisionLog:
     confidence: float
     reasoning: str
     outcome_quality: float | None = None  # Filled after answer evaluation
-    timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
 @dataclass
@@ -42,7 +42,7 @@ class RouteDecisionLog:
     use_rerank: bool
     max_iterations: int
     outcome_quality: float | None = None
-    timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
 @dataclass
@@ -57,7 +57,7 @@ class RetrievalVerdictLog:
     coverage_ratio: float | None = None
     missing_aspects: list[str] = field(default_factory=list)
     outcome_helped: bool | None = None
-    timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
 @dataclass
@@ -73,7 +73,7 @@ class AnswerQualityLog:
     overall_score: float
     reflection_quality: str
     should_retry: bool
-    timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
 @dataclass
@@ -84,7 +84,7 @@ class HardNegativeExample:
     positive_score: float
     hard_negative_chunk: str  # Chunk that was retrieved but not helpful
     hard_negative_score: float
-    timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
 class RAGDecisionLogger:
@@ -263,7 +263,7 @@ class RAGDecisionLogger:
 
     def flush(self) -> None:
         """Flush all logs to disk."""
-        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
 
         if self._gate_logs:
             self._write_logs(f"gate_decisions_{timestamp}.jsonl", self._gate_logs)

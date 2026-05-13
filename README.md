@@ -31,7 +31,9 @@ The product is built for two use cases:
 
 - Bun 1.3 or newer.
 - Python 3.11 or newer.
+- uv 0.11 or newer for Python dependency sync and locking.
 - Optional local LLM runtime: Ollama on `http://localhost:11434` or LM Studio on `http://localhost:1234`.
+- Optional local ML extras for Docling parsing and local dense embedding models are installed by `bun run api:sync`.
 - Optional OCR tooling for scanned PDFs:
   - macOS: `brew install tesseract poppler`
   - Ubuntu or Debian: `sudo apt-get install tesseract-ocr poppler-utils`
@@ -41,8 +43,7 @@ The product is built for two use cases:
 
 ```bash
 bun install
-cd api && python3 -m pip install -r requirements.txt
-cd ..
+bun run api:sync
 bun run doctor
 bun run dev:all
 ```
@@ -73,7 +74,15 @@ After the API is running, collect the full install evidence bundle:
 bun run evidence:bundle
 ```
 
-The bundle is written under `evidence/install/` by default and includes `doctor.json`, `readyz.json`, `config-policy.json`, `security-posture.json`, `install-report.json`, `research-architecture.md`, `manifest.json`, and `SHA256SUMS`. Set `JR_EVIDENCE_API_BASE_URL` or pass `--api-base-url` when collecting evidence from a non-default API origin.
+The bundle is written under `evidence/install/` by default and includes `doctor.json`, `install-smoke.txt`, `container-manifest.txt`, `secret-scan.txt`, `supply-chain.txt`, `supply-chain-manifest.json`, `python-sbom.cdx.json`, `web-audit.json`, `web-dependencies.txt`, `readyz.json`, `config-policy.json`, `security-posture.json`, `install-report.json`, `evaluation-runs.json`, `client-readiness-report.json`, `research-architecture.md`, `manifest.json`, and `SHA256SUMS`. Set `JR_EVIDENCE_API_BASE_URL` or pass `--api-base-url` when collecting evidence from a non-default API origin. For auth-enabled installs, set `JR_EVIDENCE_API_KEY` so protected evidence endpoints are fetched with `X-API-Key`.
+
+For strict client handoff, run the bundle gate against the generated directory:
+
+```bash
+bun run handoff:gate -- evidence/install/<timestamp>-install-evidence
+```
+
+The handoff gate verifies hashes, required artifacts, ready install status, `client_ready` security posture, and a passing `client_readiness` receipt. That receipt must cover mixed-format evidence, prompt injection, poisoned-document handling, knowledge-extraction refusal, abstention, binary retrieval, agentic retrieval, and graph retrieval. Local-demo or incomplete bundles are expected to fail this gate.
 
 ## Normal Product Workflow
 
@@ -88,6 +97,7 @@ Use this path to verify the real product, not only the demo seed:
 7. Open Query.
 8. Ask a grounded question about the uploaded document.
 9. Inspect the answer citations, source list, trace, and quality signals.
+10. Open Quality and run Client Readiness before collecting the handoff bundle.
 
 The product can answer without a configured provider by returning a grounded context summary, but provider setup is required for normal generated answers.
 
@@ -208,15 +218,30 @@ See [docs/architecture/research-backed-rag-architecture.md](./docs/architecture/
 
 ## Verification
 
-Run these before sharing a branch:
+Run the aggregate gate before sharing a branch:
+
+```bash
+bun run verify
+```
+
+The aggregate gate runs API lint, API tests, evidence bundle tests, strict handoff gate tests, research architecture checks, TypeScript checks, frontend tests, and the web build. For deeper release or environment checks, also run:
+
+```bash
+bash scripts/release-gate.sh
+```
+
+The release gate adds doctor, install smoke, container manifest, secret scan, supply-chain evidence, container build smoke, and whitespace checks. It should be run directly with `bash` because it starts a nested Bun web server for install smoke verification. If Docker is unavailable on a local machine, use `bash scripts/release-gate.sh --skip-container-smoke` and treat the skipped container smoke as a release blocker until CI or a Docker-enabled workstation runs it.
+
+Individual release checks:
 
 ```bash
 bun run doctor:test
-bun run typecheck
-bun test
-bun run build
-.venv/bin/python -m ruff check api/app api/tests --statistics
-cd api && PYTHONPATH=. ../.venv/bin/pytest -q
+bash scripts/install-smoke.test.sh
+bash scripts/container-manifest-check.sh
+bun run research:check
+bun run container:smoke
+bash scripts/secret-scan.sh
+bun run supply-chain
 git diff --check
 ```
 
@@ -262,9 +287,15 @@ curl http://127.0.0.1:8000/documents
 7. Set exact `AUTORAG_ALLOWED_ORIGINS`.
 8. Run `bun run doctor -- --json` and fix any failed `security_posture` check.
 9. Verify `GET /security/posture` returns no failed checks.
-10. Run `bun run evidence:bundle` and keep the generated directory with the client handoff evidence.
-11. Persist `data/` or set `JR_DATA_DIR` to durable storage.
-12. Review [Public/SECURITY.md](./Public/SECURITY.md) before exposing the API.
+10. Run the `client_readiness` golden benchmark from the Quality Cockpit, or call `POST /evaluation/golden-sets/builtins` followed by `POST /evaluation/batch/client_readiness`.
+11. Run `JR_EVIDENCE_API_KEY="${AUTORAG_API_KEYS%%,*}" bun run evidence:bundle` and keep the generated directory with the client handoff evidence.
+12. Run `bun run handoff:gate -- evidence/install/<timestamp>-install-evidence`; fix every failure before handoff.
+13. Persist `data/` or set `JR_DATA_DIR` to durable storage.
+14. Review [Public/SECURITY.md](./Public/SECURITY.md) before exposing the API.
+
+The API Docker image sets `UV_TORCH_BACKEND=cpu` so default local installs avoid CUDA wheel downloads. Use a GPU-specific image or override only when the client environment explicitly requires GPU acceleration.
+The default API container installs the core backend dependency set. For local workstation installs, `bun run api:sync` includes the `ml` extra for Docling and local sentence-transformer embeddings.
+Run `bun run container:smoke` to build both local images, import the API app inside the image, verify API `/healthz` and `/readyz`, start the web image, and verify the served production shell plus CSS and JavaScript assets.
 
 ## License
 

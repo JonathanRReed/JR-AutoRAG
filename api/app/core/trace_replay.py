@@ -12,9 +12,12 @@ debugging and ensuring reproducibility.
 from __future__ import annotations
 
 import difflib
+import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
+
+from ..schemas.config import AppConfig
 
 if TYPE_CHECKING:
     from .orchestrator import Orchestrator
@@ -278,7 +281,7 @@ class TraceDiffer:
         return TraceDiff(
             trace_a_id=trace_a_id,
             trace_b_id=trace_b_id,
-            timestamp=datetime.utcnow().isoformat(),
+            timestamp=datetime.now(UTC).isoformat(),
             config_identical=config_identical,
             corpus_identical=corpus_identical,
             retrieval=retrieval,
@@ -450,6 +453,8 @@ class ReplayResult:
     success: bool
     error: str | None
     diff: TraceDiff | None
+    config_snapshot_applied: bool = False
+    config_snapshot_error: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -460,6 +465,8 @@ class ReplayResult:
             "error": self.error,
             "is_identical": self.diff.is_identical if self.diff else None,
             "diff": self.diff.to_dict() if self.diff else None,
+            "config_snapshot_applied": self.config_snapshot_applied,
+            "config_snapshot_error": self.config_snapshot_error,
         }
 
 
@@ -473,6 +480,37 @@ class TraceReplayer:
     def __init__(self, orchestrator: Orchestrator) -> None:
         self._orchestrator = orchestrator
         self._differ = TraceDiffer()
+
+    @staticmethod
+    def _contains_redacted_secret(value: Any) -> bool:
+        """Return true when a snapshot cannot be safely replayed exactly."""
+        secret_terms = ("apikey", "authorization", "token", "secret", "password", "credential")
+        if isinstance(value, dict):
+            for key, item in value.items():
+                normalized = re.sub(r"[^a-z0-9]", "", str(key).lower())
+                if item == "[redacted]" and any(term in normalized for term in secret_terms):
+                    return True
+                if TraceReplayer._contains_redacted_secret(item):
+                    return True
+        elif isinstance(value, list):
+            return any(TraceReplayer._contains_redacted_secret(item) for item in value)
+        return False
+
+    def _apply_config_snapshot(self, snapshot: Any) -> tuple[bool, str | None]:
+        """Apply a trace config snapshot when it is complete enough for replay."""
+        if not snapshot:
+            return False, "Trace bundle did not include a config_snapshot."
+        if not isinstance(snapshot, dict):
+            return False, "Trace config_snapshot is not an object."
+        if self._contains_redacted_secret(snapshot):
+            return False, "Trace config_snapshot contains redacted secret fields; replay used current config."
+        try:
+            replay_config = AppConfig.model_validate(snapshot)
+        except Exception as exc:
+            return False, f"Trace config_snapshot is not compatible with current config schema: {exc}"
+
+        self._orchestrator.rebuild(replay_config)
+        return True, None
 
     async def replay(
         self,
@@ -489,12 +527,16 @@ class TraceReplayer:
             ReplayResult with comparison if requested
         """
         original_trace_id = trace_bundle.get("trace_id", "unknown")
-        timestamp = datetime.utcnow().isoformat()
+        timestamp = datetime.now(UTC).isoformat()
+        config_snapshot_applied = False
+        config_snapshot_error: str | None = None
+        saved_config = getattr(self._orchestrator, "_config", None)
+        saved_provider = getattr(self._orchestrator, "_provider", None)
 
         try:
             # Extract original query and configuration
             query = trace_bundle.get("query", "")
-            trace_bundle.get("config_snapshot", {})
+            config_snapshot = trace_bundle.get("config_snapshot")
 
             if not query:
                 return ReplayResult(
@@ -504,15 +546,11 @@ class TraceReplayer:
                     success=False,
                     error="No query found in trace bundle",
                     diff=None,
+                    config_snapshot_applied=False,
+                    config_snapshot_error=None,
                 )
 
-            # TODO: Apply config snapshot settings to orchestrator
-            # For now, we replay with current settings
-            # In full implementation, we would:
-            # 1. Save current config
-            # 2. Apply snapshot config
-            # 3. Run query
-            # 4. Restore original config
+            config_snapshot_applied, config_snapshot_error = self._apply_config_snapshot(config_snapshot)
 
             # Run the query
             result = await self._orchestrator.answer(
@@ -536,6 +574,8 @@ class TraceReplayer:
                 success=True,
                 error=None,
                 diff=diff,
+                config_snapshot_applied=config_snapshot_applied,
+                config_snapshot_error=config_snapshot_error,
             )
 
         except Exception as e:
@@ -546,7 +586,16 @@ class TraceReplayer:
                 success=False,
                 error=str(e),
                 diff=None,
+                config_snapshot_applied=config_snapshot_applied,
+                config_snapshot_error=config_snapshot_error,
             )
+        finally:
+            if config_snapshot_applied:
+                if saved_config is not None:
+                    self._orchestrator.rebuild(saved_config)
+                else:
+                    self._orchestrator._config = None  # type: ignore[attr-defined]
+                    self._orchestrator._provider = saved_provider  # type: ignore[attr-defined]
 
     def diff(
         self,

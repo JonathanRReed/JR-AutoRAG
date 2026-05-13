@@ -18,7 +18,7 @@ import hashlib
 import importlib.metadata
 import json
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -238,7 +238,7 @@ class ConfigSnapshot:
         Returns:
             Immutable ConfigSnapshot with computed ID
         """
-        timestamp = datetime.utcnow().isoformat()
+        timestamp = datetime.now(UTC).isoformat()
 
         model = ModelSnapshot.from_config(model_config)
         retrieval = RetrievalSnapshot.from_config(retrieval_config)

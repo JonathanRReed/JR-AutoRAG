@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Network, Layers, Database, ChevronRight, ChevronDown, FileText, Info } from 'lucide-react';
 import { Button } from '../ui/button';
+import { buildApiUrl } from '@/lib/api-url';
 
 interface ArtifactViewerProps {
     type: 'graph_rag' | 'raptor';
@@ -18,14 +19,13 @@ export function ArtifactViewer({ type, onClose, baseUrl, apiKey = "" }: Artifact
         const fetchData = async () => {
             setLoading(true);
             try {
-                const root = baseUrl ? baseUrl.replace(/\/$/, "") : "";
                 const endpoint = type === 'graph_rag' ? '/api/artifacts/graph' : '/api/artifacts/raptor';
                 const headers: Record<string, string> = {};
                 const trimmedApiKey = apiKey.trim();
                 if (trimmedApiKey) {
                     headers["X-API-Key"] = trimmedApiKey;
                 }
-                const res = await fetch(`${root}${endpoint}`, {
+                const res = await fetch(buildApiUrl(baseUrl, endpoint), {
                     headers: Object.keys(headers).length ? headers : undefined,
                 });
                 if (!res.ok) throw new Error("Failed to fetch artifact data");

@@ -13,7 +13,7 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 logger = logging.getLogger("autorag.eval_harness")
@@ -213,7 +213,7 @@ class EvalHarness:
         run_id = run_id or str(uuid.uuid4())[:8]
         run = EvalRun(
             run_id=run_id,
-            timestamp=datetime.utcnow().isoformat(),
+            timestamp=datetime.now(UTC).isoformat(),
             config_snapshot=config or {},
         )
 

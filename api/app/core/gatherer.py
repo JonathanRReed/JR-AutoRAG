@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from .prompt_guard import wrap_ingested_content
 from .retrieval import RetrievalEngine, RetrievalResult
 
 
@@ -54,11 +55,12 @@ class Gatherer:
                 start_marker = getattr(result, "start_char", 0)
                 chunk_identifier = f"{result.document.id}-{start_marker}"
             snippet = getattr(result, "chunk_text", None) or result.document.text
+            wrapped_snippet = wrap_ingested_content(snippet, chunk_identifier)
             chunks.append(
                 EvidenceChunk(
                     id=chunk_identifier,
                     title=result.document.title,
-                    snippet=snippet,
+                    snippet=wrapped_snippet,
                     score=result.score,
                     doc_id=result.document.id,
                 )

@@ -1604,6 +1604,7 @@ export function ChatInterface({
                         <div className="max-w-3xl mx-auto">
                             <div className="relative group bg-background rounded-xl shadow-sm border border-border/40 focus-within:border-primary/50 focus-within:ring-1 focus-within:ring-primary/20 transition-all">
                                 <textarea
+                                    aria-label="Ask a grounded question"
                                     value={question}
                                     onChange={e => setQuestion(e.target.value)}
                                     // Submit on Enter
@@ -1630,6 +1631,7 @@ export function ChatInterface({
                                         </Button>
                                     )}
                                     <Button
+                                        aria-label={isQuerying ? "Query running" : "Ask grounded question"}
                                         size="icon"
                                         disabled={isQuerying || !question.trim()}
                                         onClick={() => handleAsk()}

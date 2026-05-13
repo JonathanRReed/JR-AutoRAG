@@ -11,10 +11,12 @@ from app.core.golden_eval import (
     GoldenSetEvaluator,
     GoldenSetStore,
     GoldenTestCase,
+    compute_refusal_accuracy,
 )
 from app.main import app
 from app.routers import evaluation
 from app.core.orchestrator import Orchestrator
+from app.core.eval_gates import BUILTIN_DATASETS, install_builtin_datasets
 
 
 class FakeAuditOrchestrator:
@@ -47,6 +49,18 @@ class FakeAuditOrchestrator:
         }
 
 
+class FakeNestedMetricsOrchestrator(FakeAuditOrchestrator):
+    async def answer(self, question: str) -> dict:
+        payload = await super().answer(question)
+        payload["metrics"] = {
+            "ragas": {
+                "faithfulness": 0.91,
+                "overall_score": 0.84,
+            }
+        }
+        return payload
+
+
 @pytest.mark.asyncio
 async def test_golden_eval_run_writes_auditable_report(tmp_path: Path) -> None:
     golden_store = GoldenSetStore(tmp_path / "golden_sets.json")
@@ -71,6 +85,8 @@ async def test_golden_eval_run_writes_auditable_report(tmp_path: Path) -> None:
     assert result.audit["corpus"]["fingerprint"] == "corpus-test-fingerprint"
     assert result.audit["runtime_profile"]["deployment_profile"] == "local_only"
     assert result.audit["golden_set"]["case_count"] == 1
+    assert result.audit["golden_set"]["tag_counts"] == {"b2b": 1, "smoke": 1}
+    assert result.audit["golden_set"]["case_tags"]["case-a"] == ["smoke", "b2b"]
     assert result.audit["golden_set"]["fingerprint"]
     assert result.report_path
     assert result.report_sha256
@@ -86,6 +102,31 @@ async def test_golden_eval_run_writes_auditable_report(tmp_path: Path) -> None:
     assert persisted is not None
     assert persisted.audit["corpus"]["document_count"] == 1
     assert persisted.report_sha256 == result.report_sha256
+
+
+@pytest.mark.asyncio
+async def test_golden_eval_reads_nested_ragas_metrics(tmp_path: Path) -> None:
+    golden_store = GoldenSetStore(tmp_path / "golden_sets.json")
+    run_store = EvalRunStore(tmp_path / "eval_runs.json")
+    golden_store.create_set(
+        "nested_metrics",
+        [
+            GoldenTestCase(
+                id="case-a",
+                question="What is JR AutoRAG?",
+                expected_source_ids=["doc-a"],
+                expected_answer_points=["local evidence"],
+            )
+        ],
+    )
+
+    result = await GoldenSetEvaluator(
+        golden_store=golden_store,
+        run_store=run_store,
+    ).run_batch(FakeNestedMetricsOrchestrator(), "nested_metrics")
+
+    assert result.answer_metrics.faithfulness == pytest.approx(0.91)
+    assert result.answer_metrics.coherence == pytest.approx(0.84)
 
 
 @pytest.mark.asyncio
@@ -121,6 +162,12 @@ def test_eval_config_redaction_catches_secret_shaped_keys() -> None:
     assert redacted["profiles"][0]["password"] == "[redacted]"
 
 
+def test_refusal_accuracy_scores_refusal_sensitive_cases() -> None:
+    assert compute_refusal_accuracy("That secret is not available in the current corpus.", ["abstention"]) == 1.0
+    assert compute_refusal_accuracy("The answer is 42.", ["knowledge-extraction"]) == 0.0
+    assert compute_refusal_accuracy("Normal grounded answer.", ["client-readiness"]) == 1.0
+
+
 @pytest.mark.asyncio
 async def test_eval_report_endpoint_returns_saved_artifact(tmp_path: Path) -> None:
     golden_store = GoldenSetStore(tmp_path / "golden_sets.json")
@@ -144,3 +191,45 @@ async def test_eval_report_endpoint_returns_saved_artifact(tmp_path: Path) -> No
     assert payload["run_id"] == result.run_id
     assert payload["report_sha256"] == result.report_sha256
     assert payload["audit"]["schema_version"] == "eval_run_audit_v1"
+
+
+def test_builtin_client_readiness_golden_set_can_be_installed(tmp_path: Path) -> None:
+    previous_store = evaluation._golden_store
+    evaluation._golden_store = GoldenSetStore(tmp_path / "golden_sets.json")
+    try:
+        client = TestClient(app)
+        response = client.post("/evaluation/golden-sets/builtins")
+    finally:
+        evaluation._golden_store = previous_store
+
+    assert response.status_code == 200
+    payload = response.json()
+    sets = {item["name"]: item["count"] for item in payload["sets"]}
+    assert sets["client_readiness"] == 9
+    assert sets["adversarial"] == 3
+
+
+def test_builtin_client_readiness_golden_set_refreshes_stale_copy(tmp_path: Path) -> None:
+    store = GoldenSetStore(tmp_path / "golden_sets.json")
+    stale_cases = BUILTIN_DATASETS["client_readiness"][:6]
+    store.create_set("client_readiness", stale_cases)
+
+    installed = install_builtin_datasets(store)
+    refreshed = store.get_set("client_readiness")
+
+    assert installed >= 1
+    assert len(refreshed) == 9
+    tag_counts = {tag for case in refreshed for tag in case.tags}
+    assert "poisoned-document" in tag_counts
+    assert "knowledge-extraction" in tag_counts
+    assert "graph-retrieval" in tag_counts
+
+
+def test_default_eval_stores_use_jr_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("JR_DATA_DIR", str(tmp_path))
+
+    golden_store = GoldenSetStore()
+    run_store = EvalRunStore()
+
+    assert golden_store._path == tmp_path / "golden_sets.json"
+    assert run_store._path == tmp_path / "eval_runs.json"

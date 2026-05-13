@@ -14,6 +14,8 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
+from hashlib import sha256
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .binary_quantization import (
@@ -199,12 +201,86 @@ class BQRetrievalService:
         if float32_engine and hasattr(float32_engine, '_reranker'):
             self._reranker = float32_engine._reranker
 
+    @staticmethod
+    def _chunk_text(text: str, max_chars: int = 1200, overlap: int = 120) -> list[str]:
+        """Split plain text into deterministic chunks for BQ directory indexing."""
+        normalized = "\n".join(line.rstrip() for line in text.splitlines()).strip()
+        if not normalized:
+            return []
+        chunks: list[str] = []
+        start = 0
+        while start < len(normalized):
+            end = min(len(normalized), start + max_chars)
+            if end < len(normalized):
+                boundary = max(
+                    normalized.rfind("\n\n", start, end),
+                    normalized.rfind(". ", start, end),
+                    normalized.rfind("\n", start, end),
+                )
+                if boundary > start + max_chars // 2:
+                    end = boundary + 1
+            chunk = normalized[start:end].strip()
+            if chunk:
+                chunks.append(chunk)
+            if end >= len(normalized):
+                break
+            start = max(end - overlap, start + 1)
+        return chunks
+
+    def _load_chunks_from_docs_path(self, docs_path: str) -> tuple[list[MilvusChunk], dict[str, Any]]:
+        """Load text and Markdown files from a directory into embedded Milvus chunks."""
+        root = Path(docs_path).expanduser()
+        if not root.exists():
+            raise FileNotFoundError(f"docs_path does not exist: {root}")
+        if not root.is_dir():
+            raise NotADirectoryError(f"docs_path is not a directory: {root}")
+
+        supported_suffixes = {".txt", ".md", ".markdown"}
+        files = [
+            path
+            for path in sorted(root.rglob("*"))
+            if path.is_file() and path.suffix.lower() in supported_suffixes
+        ]
+        chunks: list[MilvusChunk] = []
+        skipped_empty = 0
+        for file_path in files:
+            try:
+                text = file_path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                text = file_path.read_text(encoding="utf-8", errors="ignore")
+            text_chunks = self._chunk_text(text)
+            if not text_chunks:
+                skipped_empty += 1
+                continue
+            rel_source = str(file_path.relative_to(root))
+            doc_id = sha256(rel_source.encode("utf-8")).hexdigest()[:16]
+            for index, chunk_text in enumerate(text_chunks):
+                embedding, _ = self._embed_query(chunk_text)
+                chunks.append(MilvusChunk(
+                    doc_id=doc_id,
+                    chunk_id=f"{doc_id}-{index}",
+                    source=rel_source,
+                    text=chunk_text,
+                    metadata={
+                        "source_path": rel_source,
+                        "chunk_index": index,
+                        "index_source": "docs_path",
+                    },
+                    embedding=embedding,
+                ))
+
+        return chunks, {
+            "documents_scanned": len(files),
+            "documents_skipped_empty": skipped_empty,
+            "supported_extensions": sorted(supported_suffixes),
+        }
+
     def _ensure_milvus(self) -> MilvusVectorStore:
         """Ensure Milvus store is initialized."""
         if self._milvus_store is None:
             if not is_milvus_available():
                 raise RuntimeError(
-                    "pymilvus not installed. Install with: pip install pymilvus"
+                    "pymilvus not installed. Install with: cd api && uv pip install pymilvus"
                 )
 
             self._milvus_store = MilvusVectorStore(
@@ -510,7 +586,7 @@ class BQRetrievalService:
         """Index documents into the retrieval store.
 
         Args:
-            docs_path: Path to documents directory (uses LlamaIndex if available)
+            docs_path: Path to a directory of .txt, .md, or .markdown documents
             chunks: Pre-processed chunks to index
             mode: Indexing mode
 
@@ -520,9 +596,19 @@ class BQRetrievalService:
         start = time.perf_counter()
 
         if mode == RetrievalModeV2.BINARY:
-            store = self._ensure_milvus()
+            docs_stats: dict[str, Any] = {}
+            if not chunks and docs_path:
+                try:
+                    chunks, docs_stats = self._load_chunks_from_docs_path(docs_path)
+                except Exception as exc:
+                    return {
+                        "mode": "binary",
+                        "chunks_indexed": 0,
+                        "error": str(exc),
+                    }
 
             if chunks:
+                store = self._ensure_milvus()
                 ids = store.bulk_insert(chunks)
                 store.build_index()
 
@@ -532,10 +618,14 @@ class BQRetrievalService:
                     "chunks_indexed": len(ids),
                     "elapsed_ms": elapsed,
                     "collection": self._config.milvus_config.collection_name,
+                    **docs_stats,
                 }
 
-            # TODO: Implement LlamaIndex directory loading if docs_path provided
-            return {"mode": "binary", "chunks_indexed": 0, "error": "No chunks provided"}
+            return {
+                "mode": "binary",
+                "chunks_indexed": 0,
+                "error": "No chunks or supported docs_path documents provided",
+            }
 
         else:
             # Use existing float32 engine

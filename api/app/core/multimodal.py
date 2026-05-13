@@ -3,8 +3,7 @@
 This module provides a framework for:
 - Image detection in documents
 - OCR text extraction (when available)
-- Image captioning/description (placeholder for vision models)
-- Diagram interpretation
+- Explicit metadata when no vision-caption backend is configured
 """
 
 from __future__ import annotations
@@ -111,8 +110,7 @@ class ImageExtractor:
 class OCRProcessor:
     """OCR text extraction from images.
 
-    This is a placeholder that can be extended with actual OCR.
-    The system already has pytesseract for PDF OCR.
+    Uses pytesseract when it is installed and available on the host.
     """
 
     def __init__(self) -> None:
@@ -237,7 +235,10 @@ class MultimodalProcessor:
                 alt_text=alt_text,
                 caption=alt_text,  # Use alt as caption if none provided
                 ocr_text=ocr_text,
-                description="",  # Would be filled by vision model
+                description="",
+                metadata={
+                    "vision_description_status": "not_configured",
+                },
             ))
 
         return images

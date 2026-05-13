@@ -188,6 +188,55 @@ class TestBQRetrievalService:
         # No stores initialized, should return empty dict
         assert isinstance(stats, dict)
 
+    def test_index_documents_from_docs_path(self, tmp_path, monkeypatch):
+        docs_dir = tmp_path / "docs"
+        docs_dir.mkdir()
+        (docs_dir / "handbook.md").write_text(
+            "# Handbook\n\nInstall locally. Keep client data in the client-owned data volume.",
+            encoding="utf-8",
+        )
+        (docs_dir / "notes.txt").write_text("Use API-key auth before client exposure.", encoding="utf-8")
+        (docs_dir / "ignored.pdf").write_text("unsupported", encoding="utf-8")
+
+        class FakeStore:
+            def __init__(self):
+                self.inserted = []
+                self.index_built = False
+
+            def bulk_insert(self, chunks):
+                self.inserted = chunks
+                return list(range(1, len(chunks) + 1))
+
+            def build_index(self):
+                self.index_built = True
+
+        store = FakeStore()
+        service = BQRetrievalService(embed_fn=lambda _text: [0.1] * 768)
+        monkeypatch.setattr(service, "_ensure_milvus", lambda: store)
+
+        result = service.index_documents(docs_path=str(docs_dir))
+
+        assert result["mode"] == "binary"
+        assert result["chunks_indexed"] == 2
+        assert result["documents_scanned"] == 2
+        assert result["collection"] == service._config.milvus_config.collection_name
+        assert store.index_built is True
+        assert {chunk.source for chunk in store.inserted} == {"handbook.md", "notes.txt"}
+        assert all(chunk.embedding == [0.1] * 768 for chunk in store.inserted)
+        assert all(chunk.metadata["index_source"] == "docs_path" for chunk in store.inserted)
+
+    def test_index_documents_reports_invalid_docs_path_without_milvus(self, monkeypatch):
+        service = BQRetrievalService(embed_fn=lambda _text: [0.1] * 768)
+        ensure_milvus = MagicMock(side_effect=AssertionError("should not initialize Milvus"))
+        monkeypatch.setattr(service, "_ensure_milvus", ensure_milvus)
+
+        result = service.index_documents(docs_path="/does/not/exist")
+
+        assert result["mode"] == "binary"
+        assert result["chunks_indexed"] == 0
+        assert "does not exist" in result["error"]
+        ensure_milvus.assert_not_called()
+
 
 class TestBQRetrievalServiceWithMockEngine:
     @pytest.fixture
