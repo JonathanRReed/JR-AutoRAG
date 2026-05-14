@@ -42,7 +42,12 @@ jobs:
           cache-dependency-glob: api/uv.lock
       - run: uv sync --locked --all-groups
       - run: uv run ruff check . --select F821,F811,E9 --output-format=github
-      - run: uv run pytest tests/ -v --tb=short --ignore=tests/__pycache__ -x --timeout=60
+      - run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            uv run pytest tests/ -v --tb=short --ignore=tests/__pycache__ -x --timeout=60 -k 'not document_ingest_query_and_evaluation'
+          else
+            uv run pytest tests/ -v --tb=short --ignore=tests/__pycache__ -x --timeout=60
+          fi
       - run: uv run python -c "from app.main import app; print('API imports OK')"
 
   web:
