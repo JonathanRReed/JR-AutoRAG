@@ -9,10 +9,6 @@ on:
       - "artifacts/**"
   pull_request:
     branches: [main]
-    paths-ignore:
-      - "**/*.md"
-      - "docs/**"
-      - "artifacts/**"
   workflow_dispatch:
 
 concurrency:
