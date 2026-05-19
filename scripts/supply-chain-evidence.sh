@@ -58,9 +58,25 @@ need_command() {
   fi
 }
 
+resolve_bun() {
+  local path_entry
+  IFS=":" read -r -a path_entries <<< "${PATH}"
+  for path_entry in "${path_entries[@]}"; do
+    case "${path_entry}" in
+      */node_modules/.bin) continue ;;
+    esac
+    if [[ -x "${path_entry}/bun" ]]; then
+      printf '%s\n' "${path_entry}/bun"
+      return 0
+    fi
+  done
+  command -v bun
+}
+
 need_command bun
 need_command python3
 need_command uv
+BUN_BIN="$(resolve_bun)"
 
 if [[ -z "${OUTPUT_DIR}" ]]; then
   timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -88,7 +104,7 @@ fi
 
 if ! audit_output="$(
   cd "${ROOT_DIR}"
-  NO_COLOR=1 bun audit --audit-level "${AUDIT_LEVEL}" --json 2> "${web_audit_log}"
+  NO_COLOR=1 "${BUN_BIN}" audit --audit-level "${AUDIT_LEVEL}" --json 2> "${web_audit_log}"
 )"; then
   printf 'Bun audit failed. See %s and %s\n' "${web_audit}" "${web_audit_log}" >&2
   tail -n 80 "${web_audit_log}" >&2 || true
@@ -102,7 +118,7 @@ printf '%s\n' "${audit_output}" > "${web_audit}"
 
 (
   cd "${ROOT_DIR}"
-  NO_COLOR=1 bun list --all
+  NO_COLOR=1 "${BUN_BIN}" list --all
 ) > "${web_deps}"
 
 python3 - "${OUTPUT_DIR}" "${AUDIT_LEVEL}" <<'PY'

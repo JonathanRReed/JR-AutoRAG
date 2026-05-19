@@ -22,6 +22,21 @@ need_command() {
   fi
 }
 
+resolve_bun() {
+  local path_entry
+  IFS=":" read -r -a path_entries <<< "${PATH}"
+  for path_entry in "${path_entries[@]}"; do
+    case "${path_entry}" in
+      */node_modules/.bin) continue ;;
+    esac
+    if [[ -x "${path_entry}/bun" ]]; then
+      printf '%s\n' "${path_entry}/bun"
+      return 0
+    fi
+  done
+  command -v bun
+}
+
 check_port_available() {
   local port="$1"
   local label="$2"
@@ -36,6 +51,7 @@ need_command bun
 need_command curl
 need_command python3
 need_command uv
+BUN_BIN="$(resolve_bun)"
 
 check_port_available "${API_PORT}" "api"
 check_port_available "${WEB_PORT}" "web"
@@ -110,7 +126,7 @@ API_PID="$!"
     BUN_PUBLIC_API_BASE_URL="http://127.0.0.1:${API_PORT}" \
     VITE_API_BASE_URL="http://127.0.0.1:${API_PORT}" \
     PORT="${WEB_PORT}" \
-    bun --hot src/index.ts
+    "${BUN_BIN}" src/index.ts
 ) > "${TMP_DIR}/web.log" 2>&1 &
 WEB_PID="$!"
 

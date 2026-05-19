@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from ..core.cache import get_cache_manager
+from ..core.auth import get_auth
 from ..schemas.query import TraceOut, TraceStepOut
 from ..services import ServiceContainer, get_container
 
@@ -12,8 +13,14 @@ router = APIRouter(prefix="/monitoring", tags=["monitoring"])
 
 
 @router.get("/traces", response_model=list[TraceOut])
-def traces(container: ServiceContainer = Depends(get_container)):
-    traces = container.telemetry.list()
+def traces(
+    request: Request,
+    container: ServiceContainer = Depends(get_container),
+):
+    owner_id = None
+    if get_auth().require_auth() and "admin" not in getattr(request.state, "scopes", []):
+        owner_id = str(getattr(request.state, "user_id", "") or "")
+    traces = container.telemetry.list(owner_id=owner_id)
     return [
         TraceOut(
             id=trace.id,

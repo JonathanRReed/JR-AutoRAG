@@ -13,6 +13,15 @@ from ..services import ServiceContainer, get_container
 router = APIRouter(prefix="/documents", tags=["documents"])
 
 
+def _document_out(doc, *, include_text: bool) -> DocumentOut:
+    return DocumentOut(
+        id=doc.id,
+        title=doc.title,
+        text=doc.text if include_text else "",
+        metadata=doc.metadata,
+    )
+
+
 def _ensure_document_read_access(document_id: str, request: Request) -> None:
     auth_enabled = get_auth().require_auth()
     if not auth_enabled:
@@ -36,11 +45,11 @@ def list_documents(
     docs = container.document_store.list()
     auth_enabled = get_auth().require_auth()
     if not auth_enabled:
-        return [DocumentOut(id=doc.id, title=doc.title, text=doc.text, metadata=doc.metadata) for doc in docs]
+        return [_document_out(doc, include_text=True) for doc in docs]
 
     scopes = getattr(request.state, "scopes", [])
     if "admin" in scopes:
-        return [DocumentOut(id=doc.id, title=doc.title, text=doc.text, metadata=doc.metadata) for doc in docs]
+        return [_document_out(doc, include_text=True) for doc in docs]
 
     default_public, _ = resolve_acl_defaults(auth_enabled)
     enforcer = get_acl_enforcer(default_public=default_public)
@@ -48,10 +57,7 @@ def list_documents(
     allowed_docs = [
         doc for doc in docs if enforcer.check_access(doc.id, user_id, "read")[0]
     ]
-    return [
-        DocumentOut(id=doc.id, title=doc.title, text=doc.text, metadata=doc.metadata)
-        for doc in allowed_docs
-    ]
+    return [_document_out(doc, include_text=False) for doc in allowed_docs]
 
 
 @router.get("/{document_id}/preview", response_model=DocumentPreviewResponse)

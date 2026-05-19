@@ -395,7 +395,7 @@ class HybridRetrievalEngine:
 
     def _tokenize(self, text: str) -> list[str]:
         """Simple tokenization for BM25."""
-        return text.lower().split()
+        return self._tokenize_terms(text)
 
     def _tokenize_terms(self, text: str) -> list[str]:
         """Tokenize text into alphanumeric terms for scoring boosts."""

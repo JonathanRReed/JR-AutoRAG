@@ -48,26 +48,45 @@ PUBLIC_PATHS = {
 
 DOCS_PATHS = {"/docs", "/openapi.json", "/redoc"}
 
-# Scope requirements per route prefix
-ROUTE_SCOPES = {
-    "/api/artifacts/build": "admin",
-    "/api/cache/clear": "admin",
-    "/api/cache/rebuild": "admin",
-    "/rag/audit": "admin",
-    "/query": "read",
-    "/documents": "write",
-    "/config": "admin",
-    "/evaluation": "read",
-    "/providers": "read",
-    "/security": "read",
-    "/install": "read",
-    "/monitoring": "read",
-    "/api/traces": "read",
-    "/api/artifacts": "read",
-    "/api/cache": "read",
-    "/admin": "admin",
-    "/api/keys": "admin",
-}
+# Scope requirements per route prefix.
+# Tuples are (methods, path prefix, scope), checked in order.
+ROUTE_SCOPE_RULES: tuple[tuple[frozenset[str] | None, str, str], ...] = (
+    (None, "/admin", "admin"),
+    (None, "/api/keys", "admin"),
+    (None, "/api/artifacts/build", "admin"),
+    (None, "/api/cache/clear", "admin"),
+    (None, "/api/cache/rebuild", "admin"),
+    (None, "/rag/audit", "admin"),
+    (frozenset({"GET"}), "/query/traces", "read"),
+    (frozenset({"POST"}), "/query/cancel", "admin"),
+    (frozenset({"GET"}), "/api/traces", "admin"),
+    (frozenset({"POST"}), "/monitoring/cache/clear", "admin"),
+    (frozenset({"GET"}), "/monitoring/traces", "read"),
+    (frozenset({"PUT", "PATCH", "POST", "DELETE"}), "/config/models/download", "admin"),
+    (frozenset({"PUT", "PATCH", "POST", "DELETE"}), "/config/models/delete", "admin"),
+    (frozenset({"POST"}), "/config/models/status", "read"),
+    (frozenset({"POST"}), "/config/models", "read"),
+    (frozenset({"POST", "PUT", "PATCH", "DELETE"}), "/config/presets", "admin"),
+    (frozenset({"PUT", "PATCH", "POST", "DELETE"}), "/config", "admin"),
+    (frozenset({"GET", "HEAD"}), "/config", "read"),
+    (frozenset({"GET", "HEAD"}), "/monitoring", "read"),
+    (frozenset({"GET", "HEAD"}), "/documents", "read"),
+    (frozenset({"DELETE"}), "/documents", "write"),
+    (frozenset({"POST", "PUT", "PATCH"}), "/documents", "write"),
+    (frozenset({"GET", "HEAD"}), "/onboarding", "read"),
+    (frozenset({"POST", "PUT", "PATCH", "DELETE"}), "/onboarding", "write"),
+    (None, "/query", "read"),
+    (None, "/evaluation", "read"),
+    (frozenset({"GET", "HEAD"}), "/experiments", "read"),
+    (frozenset({"POST", "PUT", "PATCH"}), "/experiments", "write"),
+    (None, "/providers", "read"),
+    (None, "/security", "read"),
+    (None, "/install", "read"),
+    (None, "/api/artifacts", "read"),
+    (None, "/api/cache", "read"),
+)
+
+ROUTE_SCOPES = {prefix: scope for _, prefix, scope in ROUTE_SCOPE_RULES}
 
 # Request size limits (bytes)
 MAX_REQUEST_SIZE = int(os.environ.get("AUTORAG_MAX_REQUEST_SIZE", 50 * 1024 * 1024))  # 50MB default
@@ -104,10 +123,15 @@ def is_exposed_mode() -> bool:
 
 def _resolve_required_scope(path: str, method: str) -> str | None:
     """Resolve required scope based on request path and method."""
-    if path.startswith("/documents"):
-        return "read" if method.upper() in {"GET", "HEAD", "OPTIONS"} else "write"
-    for prefix, scope in ROUTE_SCOPES.items():
+    method_upper = method.upper()
+    if method_upper == "OPTIONS":
+        return None
+    if path.startswith("/experiments/") and path.endswith("/promote") and method_upper == "POST":
+        return "admin"
+    for methods, prefix, scope in ROUTE_SCOPE_RULES:
         if path.startswith(prefix):
+            if methods is not None and method_upper not in methods:
+                continue
             return scope
     return None
 
@@ -399,6 +423,7 @@ __all__ = [
     "_resolve_route_timeout",
     "PUBLIC_PATHS",
     "ROUTE_SCOPES",
+    "ROUTE_SCOPE_RULES",
     "MAX_REQUEST_SIZE",
     "ROUTE_TIMEOUTS",
     "DOCS_PATHS",

@@ -30,7 +30,7 @@ JSON
   printf '%s\n' 'web dependencies' > "${dir}/web-dependencies.txt"
   printf '%s\n' '{"ready":true,"level":"ready","checks":{}}' > "${dir}/readyz.json"
   printf '%s\n' '{"deployment_profile":"local_only"}' > "${dir}/config-policy.json"
-  printf '{"level":"%s","summary":"ready","settings":{"auth_enabled":true,"api_keys_configured":true},"checks":[],"recommendations":[]}\n' "${security_level}" > "${dir}/security-posture.json"
+  printf '{"level":"%s","summary":"ready","settings":{"auth_enabled":true,"api_keys_configured":true,"rate_limit_enabled":true,"wildcard_cors":false},"checks":[],"recommendations":[]}\n' "${security_level}" > "${dir}/security-posture.json"
   cat > "${dir}/evaluation-runs.json" <<'JSON'
 [{"run_id":"client-ready-test","golden_set_name":"client_readiness","report_sha256":"abc123"}]
 JSON
@@ -157,11 +157,29 @@ fi
 grep -q 'completeness' "${TMP_DIR}/weak.err"
 
 local_bundle="${TMP_DIR}/local"
-make_bundle "${local_bundle}" "local_only" "warn" "0.95"
-if bash "${ROOT_DIR}/scripts/client-handoff-gate.sh" "${local_bundle}" > "${TMP_DIR}/local.out" 2>"${TMP_DIR}/local.err"; then
-  printf 'local-only bundle unexpectedly passed strict gate\n' >&2
+make_bundle "${local_bundle}" "local_only" "ready" "0.95"
+bash "${ROOT_DIR}/scripts/client-handoff-gate.sh" "${local_bundle}" > "${TMP_DIR}/local.out"
+grep -q 'client_handoff_gate=pass' "${TMP_DIR}/local.out"
+
+unauth_local_bundle="${TMP_DIR}/unauth-local"
+make_bundle "${unauth_local_bundle}" "local_only" "ready" "0.95"
+python3 - "${unauth_local_bundle}/security-posture.json" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+payload = json.loads(path.read_text(encoding="utf-8"))
+payload["settings"]["auth_enabled"] = False
+payload["settings"]["api_keys_configured"] = False
+path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+PY
+if bash "${ROOT_DIR}/scripts/client-handoff-gate.sh" "${unauth_local_bundle}" > "${TMP_DIR}/unauth-local.out" 2>"${TMP_DIR}/unauth-local.err"; then
+  printf 'unauthenticated local-only bundle unexpectedly passed strict gate\n' >&2
   exit 1
 fi
-grep -q 'security posture must be client_ready' "${TMP_DIR}/local.err"
+grep -q 'security posture must be client_ready or authenticated local_only' "${TMP_DIR}/unauth-local.err"
 
 printf 'client_handoff_gate_test=pass\n'

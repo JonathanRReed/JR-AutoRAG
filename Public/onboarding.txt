@@ -56,7 +56,7 @@ NEW IN latest version: Production Features
    - Set environment variables:
      - `AUTORAG_AUTH_ENABLED=true`
      - `AUTORAG_API_KEYS=your-secret-key`
-   - Pass API key in requests: `Authorization: Bearer your-secret-key`
+   - Pass API key in requests: `X-API-Key: your-secret-key`
    - See SECURITY.md for TLS, rate limiting, and reverse proxy setup.
 
 9) Run Evaluation Gates (for CI/CD)

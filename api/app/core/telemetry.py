@@ -31,6 +31,7 @@ class Trace:
     prompt: str
     answer: str
     metrics: dict[str, Any]
+    owner_id: str | None = None
     steps: list[PipelineStep] = field(default_factory=list)
 
 
@@ -63,6 +64,7 @@ class TelemetryStore:
             prompt=payload["prompt"],
             answer=payload["answer"],
             metrics=payload.get("metrics", {}),
+            owner_id=payload.get("owner_id"),
             steps=steps,
         )
 
@@ -89,6 +91,7 @@ class TelemetryStore:
         metrics: dict[str, Any] | None = None,
         steps: builtins.list[PipelineStep] | None = None,
         started_at: datetime | None = None,
+        owner_id: str | None = None,
     ) -> Trace:
         with self._lock:
             now = datetime.now(UTC)
@@ -99,15 +102,18 @@ class TelemetryStore:
                 prompt=prompt,
                 answer=answer,
                 metrics=metrics or {},
+                owner_id=owner_id,
                 steps=steps or [],
             )
             self._traces.append(trace)
             self._persist()
             return trace
 
-    def list(self) -> builtins.list[Trace]:
+    def list(self, owner_id: str | None = None) -> builtins.list[Trace]:
         with self._lock:
-            return list(self._traces)
+            if owner_id is None:
+                return list(self._traces)
+            return [trace for trace in self._traces if trace.owner_id == owner_id]
 
     def export_metrics(self) -> dict:
         """Export aggregated metrics for dashboard."""

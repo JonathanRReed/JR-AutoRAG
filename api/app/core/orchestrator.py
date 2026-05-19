@@ -671,6 +671,7 @@ class Orchestrator:
         trace_id: str | None = None,
         query_mode: QueryMode | None = None,  # P0.1: Grounded vs Open Domain
         cache_scope: str | None = None,
+        owner_id: str | None = None,
     ) -> dict:
         if trace_id is None:
             trace_id = uuid.uuid4().hex[:16]
@@ -937,6 +938,7 @@ class Orchestrator:
                 conversation_id=conversation_id,
                 memory_context=memory_context,
                 runtime_profile=runtime_profile,
+                owner_id=owner_id,
             )
 
         # Handle clarification case
@@ -948,6 +950,7 @@ class Orchestrator:
                 query, gate_result.clarification_question, pipeline_start, pipeline_steps,
                 conversation_id=conversation_id,
                 runtime_profile=runtime_profile,
+                owner_id=owner_id,
             )
 
         # Update max iterations based on gating decision
@@ -1591,9 +1594,14 @@ class Orchestrator:
         # P0.1: Grounded mode no-evidence check
         # If grounded mode is active and no chunks found, return structured response
         if effective_query_mode == QueryMode.GROUNDED and not chunks:
+            document_count = 0
+            try:
+                document_count = len(self._retrieval._docs.list())
+            except Exception:
+                document_count = 0
             no_evidence_response = build_no_evidence_answer(
                 query=query,
-                corpus_doc_count=len(getattr(self._retrieval, '_document_store', {}) or []),
+                corpus_doc_count=document_count,
                 corpus_chunk_count=len(getattr(self._retrieval, '_chunks', []) or []),
                 search_terms_tried=[s.query for s in plan.steps] if hasattr(plan, 'steps') else [query],
             )
@@ -1660,6 +1668,7 @@ class Orchestrator:
                     pipeline_steps=pipeline_steps,
                     conversation_id=conversation_id,
                     runtime_profile=runtime_profile,
+                    owner_id=owner_id,
                 )
 
         compression_enabled = bool(self._config and self._config.retrieval.compression)
@@ -2319,6 +2328,7 @@ The retrieved evidence contains some conflicting information. When you encounter
             },
             steps=pipeline_steps,
             started_at=pipeline_start,
+            owner_id=owner_id,
         )
 
         # Build step summaries for response
@@ -2453,6 +2463,7 @@ The retrieved evidence contains some conflicting information. When you encounter
         conversation_id: str | None = None,
         memory_context: str = "",
         runtime_profile: dict[str, Any] | None = None,
+        owner_id: str | None = None,
     ) -> dict:
         """Generate answer directly without retrieval (for simple queries LLM can handle)."""
         if on_stage:
@@ -2560,6 +2571,7 @@ Be helpful, accurate, and concise."""
             },
             steps=pipeline_steps,
             started_at=pipeline_start,
+            owner_id=owner_id,
         )
 
         steps_out = [
@@ -2609,6 +2621,7 @@ Be helpful, accurate, and concise."""
         pipeline_steps: list[PipelineStep],
         conversation_id: str | None = None,
         runtime_profile: dict[str, Any] | None = None,
+        owner_id: str | None = None,
     ) -> dict:
         """Build response asking user for clarification."""
         total_duration_ms = sum(s.duration_ms for s in pipeline_steps)
@@ -2632,6 +2645,7 @@ Be helpful, accurate, and concise."""
             },
             steps=pipeline_steps,
             started_at=pipeline_start,
+            owner_id=owner_id,
         )
 
         steps_out = [
@@ -2676,6 +2690,7 @@ Be helpful, accurate, and concise."""
         pipeline_steps: list[PipelineStep],
         conversation_id: str | None = None,
         runtime_profile: dict[str, Any] | None = None,
+        owner_id: str | None = None,
     ) -> dict:
         """Build response when abstaining due to insufficient evidence.
 
@@ -2709,6 +2724,7 @@ Be helpful, accurate, and concise."""
             },
             steps=pipeline_steps,
             started_at=pipeline_start,
+            owner_id=owner_id,
         )
 
         steps_out = [

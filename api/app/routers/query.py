@@ -87,6 +87,35 @@ def _resolve_query_access(
     return allowed_ids, _make_cache_scope(user_id, allowed_ids, payload.conversation_id)
 
 
+def _trace_owner_filter(request: Request) -> str | None:
+    if not get_auth().require_auth():
+        return None
+    scopes = getattr(request.state, "scopes", [])
+    if "admin" in scopes:
+        return None
+    return str(getattr(request.state, "user_id", "") or "")
+
+
+def _trace_out(trace) -> TraceOut:
+    return TraceOut(
+        id=trace.id,
+        prompt=trace.prompt,
+        answer=trace.answer,
+        metrics=trace.metrics,
+        steps=[
+            TraceStepOut(
+                name=s.name,
+                duration_ms=s.duration_ms,
+                details=s.details,
+                status=s.status,
+                started_at=s.started_at.isoformat(),
+                completed_at=s.completed_at.isoformat(),
+            )
+            for s in trace.steps
+        ],
+    )
+
+
 @router.post("", response_model=QueryResponse)
 async def ask(
     payload: QueryRequest,
@@ -108,6 +137,7 @@ async def ask(
         conversation_id=payload.conversation_id,
         query_mode=QueryMode(payload.query_mode) if payload.query_mode else None,
         cache_scope=cache_scope,
+        owner_id=getattr(request.state, "user_id", None),
     )
     return QueryResponse(**result)
 
@@ -165,6 +195,7 @@ async def ask_stream(
                 conversation_id=payload.conversation_id,
                 query_mode=QueryMode(payload.query_mode) if payload.query_mode else None,
                 cache_scope=cache_scope,
+                owner_id=getattr(request.state, "user_id", None),
             )
             await queue.put({"type": "result", "data": result})
         except Exception as exc:
@@ -193,28 +224,12 @@ async def ask_stream(
 
 
 @router.get("/traces", response_model=list[TraceOut])
-def list_traces(container: ServiceContainer = Depends(get_container)):
-    traces = container.telemetry.list()
-    return [
-        TraceOut(
-            id=trace.id,
-            prompt=trace.prompt,
-            answer=trace.answer,
-            metrics=trace.metrics,
-            steps=[
-                TraceStepOut(
-                    name=s.name,
-                    duration_ms=s.duration_ms,
-                    details=s.details,
-                    status=s.status,
-                    started_at=s.started_at.isoformat(),
-                    completed_at=s.completed_at.isoformat(),
-                )
-                for s in trace.steps
-            ],
-        )
-        for trace in traces
-    ]
+def list_traces(
+    request: Request,
+    container: ServiceContainer = Depends(get_container),
+):
+    traces = container.telemetry.list(owner_id=_trace_owner_filter(request))
+    return [_trace_out(trace) for trace in traces]
 @router.post("/cancel")
 async def cancel_trace(trace_id: str, container: ServiceContainer = Depends(get_container)):
     container.orchestrator.cancel_trace(trace_id)

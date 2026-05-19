@@ -9,10 +9,12 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core.auth import APIKeyAuth
+from app.core.document_acl import ACLStore, get_acl_store
 from app.core.golden_eval import AnswerMetrics, EvalRunResult, EvalRunStore, GoldenSetStore, RetrievalMetrics
 from app.main import app
 from app.routers import evaluation
-from app.core.security_middleware import _resolve_route_timeout
+from app.core.security_middleware import _resolve_required_scope, _resolve_route_timeout
 from app.schemas.query import QueryResponse
 from app.services import ServiceContainer, get_container
 from app.state import get_orchestrator, set_orchestrator
@@ -38,6 +40,26 @@ def client():
         evaluation._golden_store = previous_golden_store
         evaluation._eval_run_store = previous_eval_run_store
         evaluation._evaluator = previous_evaluator
+
+
+def configure_scoped_auth(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, str]:
+    auth = APIKeyAuth(enabled=True)
+    read_key, _ = auth.generate_key("read", ["read"])
+    read_alt_key, _ = auth.generate_key("read_alt", ["read"])
+    write_key, _ = auth.generate_key("write", ["write"])
+    admin_key, _ = auth.generate_key("admin", ["admin"])
+
+    monkeypatch.delenv("AUTORAG_ACL_DEFAULT_PUBLIC", raising=False)
+    monkeypatch.delenv("AUTORAG_ACL_NEW_DOC_PUBLIC", raising=False)
+    monkeypatch.setattr("app.core.security_middleware.get_auth", lambda: auth)
+    monkeypatch.setattr("app.routers.config.get_auth", lambda: auth)
+    monkeypatch.setattr("app.routers.documents.get_auth", lambda: auth)
+    monkeypatch.setattr("app.routers.experiments.get_auth", lambda: auth)
+    monkeypatch.setattr("app.routers.onboarding.get_auth", lambda: auth)
+    monkeypatch.setattr("app.routers.query.get_auth", lambda: auth)
+    monkeypatch.setattr("app.core.document_acl._acl_store", ACLStore(tmp_path / "document_acls.json"))
+    monkeypatch.setattr("app.core.document_acl._acl_enforcer", None)
+    return {"read": read_key, "read_alt": read_alt_key, "write": write_key, "admin": admin_key}
 
 
 def test_config_roundtrip(client: TestClient) -> None:
@@ -323,6 +345,49 @@ def test_client_safe_profile_rejects_public_cloud_provider(client: TestClient) -
     assert "client-safe" in str(detail).lower()
 
 
+def test_client_safe_profile_rejects_link_local_provider_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+    client: TestClient,
+) -> None:
+    monkeypatch.delenv("AUTORAG_ALLOW_LINK_LOCAL_PROVIDER", raising=False)
+    resp = client.get("/config")
+    assert resp.status_code == 200
+    config = resp.json()
+    config["deployment_profile"] = "client_safe"
+    config["provider"] = {
+        "name": "Link Local Metadata",
+        "base_url": "http://169.254.169.254:80",
+        "generator_model": "llama3.1",
+    }
+
+    update = client.put("/config", json=config)
+    assert update.status_code in {400, 422}
+    detail = update.json()["detail"]
+    if isinstance(detail, list):
+        detail = " ".join(str(item) for item in detail)
+    assert "client-safe" in str(detail).lower()
+
+
+def test_client_safe_profile_can_explicitly_allow_link_local_provider(
+    monkeypatch: pytest.MonkeyPatch,
+    client: TestClient,
+) -> None:
+    monkeypatch.setenv("AUTORAG_ALLOW_LINK_LOCAL_PROVIDER", "true")
+    resp = client.get("/config")
+    assert resp.status_code == 200
+    config = resp.json()
+    config["deployment_profile"] = "client_safe"
+    config["provider"] = {
+        "name": "Client Link Local",
+        "base_url": "http://169.254.10.5:11434",
+        "generator_model": "llama3.1",
+    }
+
+    update = client.put("/config", json=config)
+    assert update.status_code == 200
+    assert update.json()["deployment_profile"] == "client_safe"
+
+
 def test_client_safe_profile_rejects_cloud_backend(client: TestClient) -> None:
     resp = client.get("/config")
     assert resp.status_code == 200
@@ -494,6 +559,145 @@ def test_query_response_accepts_datetime_step_fields() -> None:
 def test_query_stream_uses_specific_timeout() -> None:
     assert _resolve_route_timeout("/query/stream") == 300
     assert _resolve_route_timeout("/query") == 300
+
+
+def test_scope_resolution_is_method_and_path_aware() -> None:
+    assert _resolve_required_scope("/config", "GET") == "read"
+    assert _resolve_required_scope("/config", "PUT") == "admin"
+    assert _resolve_required_scope("/config/recommendations", "GET") == "read"
+    assert _resolve_required_scope("/config/models", "POST") == "read"
+    assert _resolve_required_scope("/config/models/status", "POST") == "read"
+    assert _resolve_required_scope("/config/models/download", "POST") == "admin"
+    assert _resolve_required_scope("/query/traces", "GET") == "read"
+    assert _resolve_required_scope("/query/cancel", "POST") == "admin"
+    assert _resolve_required_scope("/monitoring/cache", "GET") == "read"
+    assert _resolve_required_scope("/monitoring/cache/clear", "POST") == "admin"
+    assert _resolve_required_scope("/monitoring/traces", "GET") == "read"
+    assert _resolve_required_scope("/api/traces/last", "GET") == "admin"
+    assert _resolve_required_scope("/api/traces/download", "GET") == "admin"
+    assert _resolve_required_scope("/api/artifacts/status", "GET") == "read"
+    assert _resolve_required_scope("/experiments", "GET") == "read"
+    assert _resolve_required_scope("/experiments", "POST") == "write"
+    assert _resolve_required_scope("/experiments/run-1/promote", "POST") == "admin"
+
+
+def test_read_key_cannot_clear_monitoring_cache_or_export_raw_trace_bundle(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    client: TestClient,
+) -> None:
+    keys = configure_scoped_auth(monkeypatch, tmp_path)
+    read_headers = {"X-API-Key": keys["read"]}
+    admin_headers = {"X-API-Key": keys["admin"]}
+
+    assert client.get("/monitoring/cache", headers=read_headers).status_code == 200
+    assert client.post("/monitoring/cache/clear", headers=read_headers).status_code == 403
+    assert client.get("/monitoring/traces", headers=read_headers).status_code == 200
+    assert client.get("/query/traces", headers=read_headers).status_code == 200
+    assert client.get("/api/traces/last", headers=read_headers).status_code == 403
+    assert client.get("/api/traces/download", headers=read_headers).status_code == 403
+
+    assert client.get("/monitoring/traces", headers=admin_headers).status_code == 200
+    assert client.post("/monitoring/cache/clear", headers=admin_headers).status_code == 200
+    assert client.get("/query/traces", headers=admin_headers).status_code == 200
+    assert client.get("/api/traces/last", headers=admin_headers).status_code in {404, 503}
+    assert client.get("/api/traces/download", headers=admin_headers).status_code in {404, 503}
+
+
+def test_trace_lists_are_filtered_to_non_admin_owner(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    client: TestClient,
+) -> None:
+    keys = configure_scoped_auth(monkeypatch, tmp_path)
+    write_headers = {"X-API-Key": keys["write"]}
+    read_headers = {"X-API-Key": keys["read_alt"]}
+    admin_headers = {"X-API-Key": keys["admin"]}
+
+    ingest = client.post(
+        "/documents/text",
+        json={
+            "title": "Trace Owner Contract",
+            "text": "JR AutoRAG trace ownership keeps prompts and answers scoped to the querying API key.",
+            "sync": True,
+        },
+        headers=write_headers,
+    )
+    assert ingest.status_code == 200
+
+    query = client.post(
+        "/query",
+        json={"question": "What does JR AutoRAG trace ownership protect?"},
+        headers=write_headers,
+    )
+    assert query.status_code == 200
+
+    owned_query_traces = client.get("/query/traces", headers=write_headers)
+    assert owned_query_traces.status_code == 200
+    assert [trace["prompt"] for trace in owned_query_traces.json()] == [
+        "What does JR AutoRAG trace ownership protect?"
+    ]
+
+    other_query_traces = client.get("/query/traces", headers=read_headers)
+    assert other_query_traces.status_code == 200
+    assert other_query_traces.json() == []
+
+    owned_monitoring_traces = client.get("/monitoring/traces", headers=write_headers)
+    assert owned_monitoring_traces.status_code == 200
+    assert [trace["prompt"] for trace in owned_monitoring_traces.json()] == [
+        "What does JR AutoRAG trace ownership protect?"
+    ]
+
+    admin_traces = client.get("/monitoring/traces", headers=admin_headers)
+    assert admin_traces.status_code == 200
+    assert len(admin_traces.json()) == 1
+
+
+def test_read_key_can_load_config_but_not_mutate_config(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    client: TestClient,
+) -> None:
+    keys = configure_scoped_auth(monkeypatch, tmp_path)
+    read_headers = {"X-API-Key": keys["read"]}
+
+    config = client.get("/config", headers=read_headers)
+    assert config.status_code == 200
+    assert client.get("/config/recommendations", headers=read_headers).status_code == 200
+    assert client.put("/config", json=config.json(), headers=read_headers).status_code == 403
+
+
+def test_authenticated_document_list_redacts_text_and_missing_acl_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    client: TestClient,
+) -> None:
+    keys = configure_scoped_auth(monkeypatch, tmp_path)
+    write_headers = {"X-API-Key": keys["write"]}
+    read_headers = {"X-API-Key": keys["read"]}
+    admin_headers = {"X-API-Key": keys["admin"]}
+    payload = {
+        "title": "Private Ops",
+        "text": "Sensitive client operating procedure.",
+        "sync": True,
+    }
+
+    ingest = client.post("/documents/text", json=payload, headers=write_headers)
+    assert ingest.status_code == 200
+
+    owned_docs = client.get("/documents", headers=write_headers)
+    assert owned_docs.status_code == 200
+    assert owned_docs.json()[0]["title"] == "Private Ops"
+    assert owned_docs.json()[0]["text"] == ""
+
+    admin_docs = client.get("/documents", headers=admin_headers)
+    assert admin_docs.status_code == 200
+    assert admin_docs.json()[0]["text"]
+
+    get_acl_store().clear()
+    legacy_docs = client.get("/documents", headers=read_headers)
+    assert legacy_docs.status_code == 200
+    assert legacy_docs.json() == []
 
 
 def test_upload_accepts_langextract_override_fields(client: TestClient) -> None:

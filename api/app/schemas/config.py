@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from enum import Enum
-from ipaddress import ip_address
+from ipaddress import IPv4Address, IPv6Address, ip_address
+import os
 import socket
 from typing import Literal
 from urllib.parse import urlparse
@@ -82,10 +83,18 @@ def _is_client_owned_url(value: str) -> bool:
             }
         except OSError:
             return False
-        return bool(resolved) and all(
-            item.is_loopback or item.is_private or item.is_link_local for item in resolved
-        )
-    return parsed_ip.is_loopback or parsed_ip.is_private or parsed_ip.is_link_local
+        return bool(resolved) and all(_is_client_owned_ip(item) for item in resolved)
+    return _is_client_owned_ip(parsed_ip)
+
+
+def _allow_link_local_provider() -> bool:
+    return os.getenv("AUTORAG_ALLOW_LINK_LOCAL_PROVIDER", "").strip().lower() in {"1", "true", "yes"}
+
+
+def _is_client_owned_ip(value: IPv4Address | IPv6Address) -> bool:
+    if value.is_link_local:
+        return _allow_link_local_provider()
+    return value.is_loopback or value.is_private
 
 
 class BackendCapabilities(BaseModel):

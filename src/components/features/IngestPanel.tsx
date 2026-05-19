@@ -97,7 +97,7 @@ export function IngestPanel({
     const processFiles = async (files: FileList | File[]) => {
         const fileArray = Array.from(files);
         const validFiles = fileArray.filter(f =>
-            /\.(pdf|docx?|txt|md|markdown)$/i.test(f.name)
+            /\.(pdf|docx|txt|md|markdown)$/i.test(f.name)
         );
 
         if (validFiles.length === 0) {
@@ -291,7 +291,7 @@ export function IngestPanel({
                     <div className="mt-6">
                         <input
                             type="file"
-                            accept=".pdf,.doc,.docx,.txt,.md,.markdown"
+                            accept=".pdf,.docx,.txt,.md,.markdown"
                             multiple
                             ref={fileInputRef}
                             onChange={handleFileInputChange}

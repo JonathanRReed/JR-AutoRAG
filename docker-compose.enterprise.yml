@@ -1,0 +1,56 @@
+version: '3.9'
+
+services:
+  api:
+    build: ./api
+    restart: unless-stopped
+    ports:
+      - "${AUTORAG_API_BIND:-127.0.0.1}:${AUTORAG_API_PORT:-8000}:8000"
+    environment:
+      JR_DATA_DIR: /data
+      AUTORAG_AUTH_ENABLED: "true"
+      AUTORAG_API_KEYS: "${AUTORAG_API_KEYS:?set AUTORAG_API_KEYS before starting}"
+      AUTORAG_ALLOWED_ORIGINS: "${AUTORAG_ALLOWED_ORIGINS:-http://127.0.0.1:3000}"
+      AUTORAG_EXPOSE: "${AUTORAG_EXPOSE:-false}"
+      AUTORAG_RATE_LIMIT_ENABLED: "true"
+      AUTORAG_RATE_LIMIT_RPM: "${AUTORAG_RATE_LIMIT_RPM:-600}"
+      AUTORAG_RATE_LIMIT_BURST: "${AUTORAG_RATE_LIMIT_BURST:-80}"
+      AUTORAG_RAGFUZZ_ENABLED: "${AUTORAG_RAGFUZZ_ENABLED:-false}"
+      AUTORAG_PII_REDACT: "true"
+      AUTORAG_ALLOW_LINK_LOCAL_PROVIDER: "${AUTORAG_ALLOW_LINK_LOCAL_PROVIDER:-false}"
+    volumes:
+      - api-data:/data
+    tmpfs:
+      - /tmp
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    restart: unless-stopped
+    ports:
+      - "${AUTORAG_WEB_BIND:-127.0.0.1}:${AUTORAG_WEB_PORT:-3000}:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      BUN_PUBLIC_API_BASE_URL: http://api:8000
+      NODE_ENV: production
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  api-data:

@@ -1,13 +1,15 @@
 # Security Guide for JR AutoRAG
 
-This document covers security configuration, best practices, and deployment guidelines for running JR AutoRAG in production environments.
+This document covers security configuration, best practices, and deployment guidelines for running JR AutoRAG as a local or client-owned enterprise RAG evaluation utility.
+
+JR AutoRAG is intentionally local-first. It is not a hosted multi-tenant SaaS platform. Hosted enterprise SaaS deployment would require separate tenant isolation, hosted identity integration, durable audit storage, infrastructure hardening, and production incident operations.
 
 ## Quick Start
 
 By default, JR AutoRAG runs with **safe local defaults**:
 - CORS allows only localhost origins
 - Authentication is disabled (for local development)
-- Rate limiting is enabled (`100` req/min, burst `20`)
+- Rate limiting is enabled (`600` req/min, burst `80`)
 - Server binds to localhost only
 
 For production, enable security features via environment variables:
@@ -107,6 +109,7 @@ Use `deployment_profile=client_safe` for consulting engagements, regulated docum
 Client-safe mode is intentionally narrower than general production hosting:
 
 - Runtime providers must use localhost, loopback, private-network IPs, or client-owned internal hostnames such as `.local`, `.lan`, or `.internal`.
+- Link-local provider URLs are blocked by default. Set `AUTORAG_ALLOW_LINK_LOCAL_PROVIDER=true` only when the engagement explicitly approves that target.
 - Public cloud model endpoints are rejected by config validation.
 - Cloud backends are rejected.
 - Managed cloud hosting is not allowed by the default data policy.
@@ -124,6 +127,7 @@ export AUTORAG_EXPOSE=true
 export AUTORAG_RATE_LIMIT_ENABLED=true
 export AUTORAG_RAGFUZZ_ENABLED=false
 export AUTORAG_PII_REDACT=true
+export AUTORAG_ALLOW_LINK_LOCAL_PROVIDER=false
 ```
 
 Set the application config:
@@ -162,6 +166,8 @@ bun run evidence:bundle
 ```
 
 The policy response includes `deployment_profile`, `data_policy`, and `guardrails`; the security posture response includes auth, CORS, exposure, docs, headers, and rate-limit checks. The install report combines readiness, posture, corpus state, evaluation receipts, retrieval artifacts, and redaction metadata. The evidence bundle saves these live responses, install smoke output, container manifest output, secret-scan output, supply-chain SBOM and audit output, the research-backed architecture matrix, hashes, and a manifest. Failed `security_posture` doctor checks must be fixed before a client-network install.
+
+For a one-command auth-enabled local walkthrough, run `bun run demo:interview`. For the repeatable browser regression path, run `bun run e2e:interview`.
 
 ## Client Data Policy
 
@@ -269,8 +275,8 @@ Rate limiting prevents abuse and ensures fair usage.
 
 **Environment Variables:**
 - `AUTORAG_RATE_LIMIT_ENABLED`: Set to `true` to enable (default: `true`)
-- `AUTORAG_RATE_LIMIT_RPM`: Requests per minute (default: 100)
-- `AUTORAG_RATE_LIMIT_BURST`: Burst capacity (default: 20)
+- `AUTORAG_RATE_LIMIT_RPM`: Requests per minute (default: 600)
+- `AUTORAG_RATE_LIMIT_BURST`: Burst capacity (default: 80)
 
 Rate limits are applied per API key (if authenticated) or per IP address.
 
@@ -373,8 +379,8 @@ Before deploying to production:
 | `AUTORAG_ALLOWED_ORIGINS` | localhost only | CORS allowed origins |
 | `AUTORAG_EXPOSE` | `false` | Allow non-localhost binding |
 | `AUTORAG_RATE_LIMIT_ENABLED` | `true` | Enable rate limiting |
-| `AUTORAG_RATE_LIMIT_RPM` | `100` | Requests per minute |
-| `AUTORAG_RATE_LIMIT_BURST` | `20` | Burst capacity |
+| `AUTORAG_RATE_LIMIT_RPM` | `600` | Requests per minute |
+| `AUTORAG_RATE_LIMIT_BURST` | `80` | Burst capacity |
 | `AUTORAG_MAX_REQUEST_SIZE` | `52428800` | Max request body (50MB) |
 | `AUTORAG_VAULT_KEY` | (auto) | Encryption key for secrets vault |
 | `AUTORAG_RAGFUZZ_ENABLED` | `true` in dev, `false` in prod | Enable RAGFuzz audit endpoints |

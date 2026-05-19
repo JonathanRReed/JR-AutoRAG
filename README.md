@@ -7,10 +7,12 @@ The product is built for two use cases:
 - Normal product use: persistent local documents, provider configuration, retrieval, citations, and traces.
 - Evaluator demo use: a disposable local corpus that gets an evaluator to a credible first answer quickly.
 
+JR AutoRAG is intentionally a local enterprise utility, not a hosted multi-tenant SaaS platform. The enterprise-ready target is client-owned installation, offline or local-first operation, private provider compatibility, safety rails, and evidence bundles that IT/security teams can archive or hand to application owners. Hosted enterprise SaaS deployment would still require separate tenant isolation, hosted identity integration, durable audit storage, infrastructure hardening, and production incident operations.
+
 ## What It Shows
 
 - Local-first document ingestion for PDF, DOCX, Markdown, TXT, and pasted text.
-- Provider discovery for Ollama and LM Studio, with manual OpenAI-compatible profiles.
+- Provider discovery for Ollama and LM Studio, with manual OpenAI-compatible profiles for vLLM and private provider endpoints.
 - Hybrid retrieval with dense vectors, sparse matching, reranking, evidence contracts, and answerability calibration.
 - Visible RAG controls for grounded vs open querying, presets, query scope, and trace inspection.
 - Quality cockpit surfaces for parser preview, recommendations, experiment runs, and evaluation signals.
@@ -68,6 +70,14 @@ bun run doctor -- --json
 
 The doctor checks Bun, Python, core API imports, OCR tools, API and web ports, data directory write access, auth environment consistency, security posture, and local Ollama or LM Studio availability. Warnings do not block local document search, but failed checks should be fixed before a client install.
 
+For an auth-enabled interview or client walkthrough path, run:
+
+```bash
+bun run demo:interview
+```
+
+The script starts a disposable local API/UI, seeds the demo corpus, and prints the exact UI URL, API URL, and API key. For CI or a quick startup proof without leaving services running, use `bun run demo:interview -- --smoke`.
+
 After the API is running, collect the full install evidence bundle:
 
 ```bash
@@ -82,7 +92,7 @@ For strict client handoff, run the bundle gate against the generated directory:
 bun run handoff:gate -- evidence/install/<timestamp>-install-evidence
 ```
 
-The handoff gate verifies hashes, required artifacts, ready install status, `client_ready` security posture, and a passing `client_readiness` receipt. That receipt must cover mixed-format evidence, prompt injection, poisoned-document handling, knowledge-extraction refusal, abstention, binary retrieval, agentic retrieval, and graph retrieval. Local-demo or incomplete bundles are expected to fail this gate.
+The handoff gate verifies hashes, required artifacts, ready install status, `client_ready` or authenticated `local_only` security posture, and a passing `client_readiness` receipt. That receipt must cover mixed-format evidence, prompt injection, poisoned-document handling, knowledge-extraction refusal, abstention, binary retrieval, agentic retrieval, and graph retrieval. Incomplete bundles are expected to fail this gate.
 
 ## Normal Product Workflow
 
@@ -148,8 +158,9 @@ Common environment variables:
 | `AUTORAG_ALLOWED_ORIGINS` | localhost defaults | CORS allow list |
 | `AUTORAG_EXPOSE` | `false` | Allow non-localhost binding |
 | `AUTORAG_RATE_LIMIT_ENABLED` | `true`, `false` in demo mode | Enable request rate limiting |
-| `AUTORAG_RATE_LIMIT_RPM` | `100` | Requests per minute |
-| `AUTORAG_RATE_LIMIT_BURST` | `20` | Burst capacity |
+| `AUTORAG_RATE_LIMIT_RPM` | `600` | Requests per minute |
+| `AUTORAG_RATE_LIMIT_BURST` | `80` | Burst capacity |
+| `AUTORAG_ALLOW_LINK_LOCAL_PROVIDER` | `false` | Explicitly allow link-local provider URLs in client-safe mode |
 
 ## Security Defaults
 
@@ -161,9 +172,10 @@ Common environment variables:
 - Blocks `/docs`, `/redoc`, and `/openapi.json` when `AUTORAG_EXPOSE=true`.
 - Applies request size limits, route timeouts, and security headers.
 - Uses local-only deployment policy by default, rejecting public cloud providers unless the deployment profile allows them.
+- Blocks link-local provider URLs by default in client-safe mode unless `AUTORAG_ALLOW_LINK_LOCAL_PROVIDER=true`.
 - Keeps client-adjacent policy fields explicit, including retention, external model calls, PII redaction, and operator review.
 
-See [Public/SECURITY.md](./Public/SECURITY.md) for production deployment guidance.
+See [Public/SECURITY.md](./Public/SECURITY.md) and [docs/local-enterprise-readiness.md](./docs/local-enterprise-readiness.md) for local enterprise deployment guidance.
 
 ## API Surfaces
 
@@ -195,7 +207,7 @@ Useful endpoints:
 | Input type | Handling |
 | --- | --- |
 | PDF | Text extraction with OCR fallback for scans |
-| DOC/DOCX | Native text extraction through a temporary parse path |
+| DOCX | Native text extraction through a temporary parse path |
 | Markdown | Markdown-aware text extraction |
 | TXT | UTF-8 text extraction with tolerant decoding |
 | Pasted text | Direct ingestion from the Documents panel |
@@ -232,6 +244,12 @@ bash scripts/release-gate.sh
 
 The release gate adds doctor, install smoke, container manifest, secret scan, supply-chain evidence, container build smoke, and whitespace checks. It should be run directly with `bash` because it starts a nested Bun web server for install smoke verification. If Docker is unavailable on a local machine, use `bash scripts/release-gate.sh --skip-container-smoke` and treat the skipped container smoke as a release blocker until CI or a Docker-enabled workstation runs it.
 
+Run the repo-owned browser interview path before showing the project:
+
+```bash
+bun run e2e:interview
+```
+
 Individual release checks:
 
 ```bash
@@ -242,6 +260,8 @@ bun run research:check
 bun run container:smoke
 bash scripts/secret-scan.sh
 bun run supply-chain
+bun run demo:interview -- --smoke
+bun run release:artifact
 git diff --check
 ```
 
@@ -278,9 +298,11 @@ curl http://127.0.0.1:8000/documents
 
 ## Deployment
 
+JR AutoRAG is deployment-ready for local workstations, client-owned servers, lab VLANs, and containers. It is not claiming hosted multi-tenant SaaS readiness.
+
 1. Build the UI with `bun run build`.
-2. Serve `dist/` behind a static server.
-3. Deploy the FastAPI app behind HTTPS.
+2. Serve `dist/` behind a static server, or run the included Bun web service.
+3. Run the FastAPI app on localhost or a client-owned private network.
 4. Set `BUN_PUBLIC_API_BASE_URL` to the API origin at build/runtime.
 5. Enable `AUTORAG_AUTH_ENABLED=true`.
 6. Set `AUTORAG_API_KEYS`.
@@ -296,6 +318,18 @@ curl http://127.0.0.1:8000/documents
 The API Docker image sets `UV_TORCH_BACKEND=cpu` so default local installs avoid CUDA wheel downloads. Use a GPU-specific image or override only when the client environment explicitly requires GPU acceleration.
 The default API container installs the core backend dependency set. For local workstation installs, `bun run api:sync` includes the `ml` extra for Docling and local sentence-transformer embeddings.
 Run `bun run container:smoke` to build both local images, import the API app inside the image, verify API `/healthz` and `/readyz`, start the web image, and verify the served production shell plus CSS and JavaScript assets.
+For a hardened local container profile with auth required, localhost-bound ports, dropped capabilities, read-only API filesystem, and a persistent `api-data` volume, use:
+
+```bash
+AUTORAG_API_KEYS="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')" \
+  docker compose -f docker-compose.enterprise.yml up --build
+```
+
+Generate a versioned local source package and checksum with:
+
+```bash
+bun run release:artifact
+```
 
 ## License
 

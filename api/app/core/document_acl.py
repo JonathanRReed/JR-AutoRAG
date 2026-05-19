@@ -34,7 +34,7 @@ def _env_flag(key: str, default: bool) -> bool:
 
 def resolve_acl_defaults(auth_enabled: bool) -> tuple[bool, bool]:
     """Return (default_public, new_doc_public) based on env and auth state."""
-    default_public = _env_flag("AUTORAG_ACL_DEFAULT_PUBLIC", True)
+    default_public = _env_flag("AUTORAG_ACL_DEFAULT_PUBLIC", not auth_enabled)
     new_doc_public = _env_flag("AUTORAG_ACL_NEW_DOC_PUBLIC", not auth_enabled)
     return default_public, new_doc_public
 

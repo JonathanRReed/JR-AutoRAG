@@ -10,7 +10,7 @@ This is intentionally stricter than local evaluation:
 - bundle hashes must match SHA256SUMS
 - doctor must have zero failed checks
 - install report must be ready
-- security posture must be client_ready
+- security posture must be client_ready or authenticated local_only
 - client_readiness report must be present and meet quality gates
 EOF
 }
@@ -139,8 +139,23 @@ if doctor_summary.get("status") == "fail" or int(doctor_summary.get("failed") or
 if as_dict(manifest.get("install_report")).get("status") != "ready" or install_report.get("status") != "ready":
     issues.append("install report must be ready")
 
-if as_dict(manifest.get("security")).get("level") != "client_ready" or security.get("level") != "client_ready":
-    issues.append("security posture must be client_ready")
+security_level = security.get("level")
+manifest_security_level = as_dict(manifest.get("security")).get("level")
+security_settings = as_dict(security.get("settings"))
+authenticated_local_only = (
+    security_level == "local_only"
+    and manifest_security_level == "local_only"
+    and security_settings.get("auth_enabled") is True
+    and security_settings.get("api_keys_configured") is True
+    and security_settings.get("rate_limit_enabled") is not False
+    and security_settings.get("wildcard_cors") is not True
+)
+if not (
+    security_level == "client_ready"
+    and manifest_security_level == "client_ready"
+    or authenticated_local_only
+):
+    issues.append("security posture must be client_ready or authenticated local_only")
 
 if as_dict(manifest.get("client_readiness")).get("status") != "present":
     issues.append("manifest client_readiness status must be present")
