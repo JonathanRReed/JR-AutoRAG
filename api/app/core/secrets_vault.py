@@ -15,7 +15,7 @@ import contextlib
 import json
 import os
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -71,7 +71,7 @@ class KeychainBackend:
 
     def __init__(self, service_name: str = SERVICE_NAME) -> None:
         if not KEYRING_AVAILABLE:
-            raise RuntimeError("keyring package not installed. Install with: pip install keyring")
+            raise RuntimeError("keyring package not installed. Install with: cd api && uv pip install keyring")
         self.service_name = service_name
 
     def get(self, key: str) -> str | None:
@@ -119,7 +119,7 @@ class EncryptedVaultBackend:
     ) -> None:
         if not CRYPTO_AVAILABLE:
             raise RuntimeError(
-                "cryptography package not installed. Install with: pip install cryptography"
+                "cryptography package not installed. Install with: cd api && uv pip install cryptography"
             )
 
         self.vault_path = vault_path or Path("data/secrets.vault")
@@ -222,7 +222,7 @@ class EncryptedVaultBackend:
 
     def set(self, key: str, value: str) -> None:
         """Store a secret in the vault."""
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
 
         if key in self._metadata:
             self._metadata[key].updated_at = now

@@ -15,6 +15,7 @@ from collections.abc import Callable
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.security import APIKeyHeader
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
 from starlette.types import ASGIApp
 
 from .audit import get_audit_log
@@ -28,8 +29,10 @@ from .rate_limiter import get_rate_limiter
 # Safe default origins (localhost only)
 DEFAULT_ALLOWED_ORIGINS = [
     "http://localhost:3000",
+    "http://localhost:3001",
     "http://localhost:5173",
     "http://127.0.0.1:3000",
+    "http://127.0.0.1:3001",
     "http://127.0.0.1:5173",
 ]
 
@@ -43,6 +46,8 @@ PUBLIC_PATHS = {
     "/redoc",
 }
 
+DOCS_PATHS = {"/docs", "/openapi.json", "/redoc"}
+
 # Scope requirements per route prefix
 ROUTE_SCOPES = {
     "/api/artifacts/build": "admin",
@@ -54,6 +59,8 @@ ROUTE_SCOPES = {
     "/config": "admin",
     "/evaluation": "read",
     "/providers": "read",
+    "/security": "read",
+    "/install": "read",
     "/monitoring": "read",
     "/api/traces": "read",
     "/api/artifacts": "read",
@@ -67,7 +74,7 @@ MAX_REQUEST_SIZE = int(os.environ.get("AUTORAG_MAX_REQUEST_SIZE", 50 * 1024 * 10
 
 # Per-route timeout configurations (seconds)
 ROUTE_TIMEOUTS = {
-    "/query": 120,
+    "/query": 300,
     "/query/stream": 300,
     "/documents/upload": 600,
     "/evaluation/run": 900,
@@ -103,6 +110,19 @@ def _resolve_required_scope(path: str, method: str) -> str | None:
         if path.startswith(prefix):
             return scope
     return None
+
+
+def _resolve_route_timeout(path: str) -> int:
+    """Resolve route timeout using the most specific prefix first."""
+    timeout = ROUTE_TIMEOUTS.get("default", 60)
+    for prefix, route_timeout in sorted(
+        ((key, value) for key, value in ROUTE_TIMEOUTS.items() if key != "default"),
+        key=lambda item: len(item[0]),
+        reverse=True,
+    ):
+        if path.startswith(prefix):
+            return route_timeout
+    return timeout
 
 
 # =============================================================================
@@ -207,8 +227,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self.limiter = get_rate_limiter()
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        # Skip rate limiting for health checks
-        if request.url.path in {"/healthz", "/readyz"}:
+        # Skip rate limiting for health checks and CORS preflight requests
+        if request.url.path in {"/healthz", "/readyz"} or request.method == "OPTIONS":
             return await call_next(request)
 
         # Determine rate limit key (API key > IP)
@@ -239,6 +259,22 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         response.headers["X-RateLimit-Limit"] = str(self.limiter._requests_per_minute)
 
         return response
+
+
+# =============================================================================
+# Exposed Mode Docs Guard
+# =============================================================================
+
+class ExposedDocsBlockerMiddleware(BaseHTTPMiddleware):
+    """Middleware that disables interactive docs when the API is exposed."""
+
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        if request.url.path in DOCS_PATHS and is_exposed_mode():
+            return JSONResponse(
+                {"detail": "Interactive API docs are disabled while AUTORAG_EXPOSE=true."},
+                status_code=404,
+            )
+        return await call_next(request)
 
 
 # =============================================================================
@@ -276,11 +312,7 @@ class TimeoutMiddleware(BaseHTTPMiddleware):
         path = request.url.path
 
         # Determine timeout for this route
-        timeout = ROUTE_TIMEOUTS.get("default", 60)
-        for prefix, route_timeout in ROUTE_TIMEOUTS.items():
-            if prefix != "default" and path.startswith(prefix):
-                timeout = route_timeout
-                break
+        timeout = _resolve_route_timeout(path)
 
         # Store timeout in request state for handlers to use
         request.state.timeout = timeout
@@ -340,6 +372,7 @@ def configure_security(app: FastAPI, *, strict: bool = False) -> None:
     app.add_middleware(TimeoutMiddleware)
     app.add_middleware(RequestSizeLimitMiddleware)
     app.add_middleware(RateLimitMiddleware)
+    app.add_middleware(ExposedDocsBlockerMiddleware)
 
     # Log configuration
     auth = get_auth()
@@ -356,14 +389,17 @@ def configure_security(app: FastAPI, *, strict: bool = False) -> None:
 __all__ = [
     "verify_api_key",
     "RateLimitMiddleware",
+    "ExposedDocsBlockerMiddleware",
     "RequestSizeLimitMiddleware",
     "TimeoutMiddleware",
     "SecurityHeadersMiddleware",
     "configure_security",
     "get_allowed_origins",
     "is_exposed_mode",
+    "_resolve_route_timeout",
     "PUBLIC_PATHS",
     "ROUTE_SCOPES",
     "MAX_REQUEST_SIZE",
     "ROUTE_TIMEOUTS",
+    "DOCS_PATHS",
 ]

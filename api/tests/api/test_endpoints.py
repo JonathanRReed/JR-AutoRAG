@@ -2,20 +2,32 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import tempfile
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core.golden_eval import AnswerMetrics, EvalRunResult, EvalRunStore, GoldenSetStore, RetrievalMetrics
 from app.main import app
+from app.routers import evaluation
+from app.core.security_middleware import _resolve_route_timeout
+from app.schemas.query import QueryResponse
 from app.services import ServiceContainer, get_container
+from app.state import get_orchestrator, set_orchestrator
 
 
 @pytest.fixture()
 def client():
     with tempfile.TemporaryDirectory() as tmpdir:
         container = ServiceContainer(base_path=Path(tmpdir))
+        previous_golden_store = evaluation._golden_store
+        previous_eval_run_store = evaluation._eval_run_store
+        previous_evaluator = evaluation._evaluator
+        evaluation._golden_store = GoldenSetStore(Path(tmpdir) / "golden_sets.json")
+        evaluation._eval_run_store = EvalRunStore(Path(tmpdir) / "eval_runs.json")
+        evaluation._evaluator = None
 
         def override_container() -> ServiceContainer:
             return container
@@ -23,6 +35,9 @@ def client():
         app.dependency_overrides[get_container] = override_container
         yield TestClient(app)
         app.dependency_overrides.clear()
+        evaluation._golden_store = previous_golden_store
+        evaluation._eval_run_store = previous_eval_run_store
+        evaluation._evaluator = previous_evaluator
 
 
 def test_config_roundtrip(client: TestClient) -> None:
@@ -63,6 +78,182 @@ def test_policy_endpoint_exposes_client_data_policy(client: TestClient) -> None:
     assert body["data_policy"]["managed_cloud_hosting_allowed"] is False
     assert body["data_policy"]["external_model_calls_allowed"] is False
     assert body["guardrails"]["pii_redaction_required"] is True
+
+
+def test_readyz_uses_runtime_status_contract(client: TestClient) -> None:
+    resp = client.get("/readyz")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ready"] is True
+    assert body["level"] in {"ready", "degraded"}
+    assert body["checks"]["orchestrator"]["status"] == "ok"
+    assert body["checks"]["document_store"]["details"]["document_count"] == 0
+    assert body["checks"]["retrieval_index"]["status"] == "ok"
+
+
+def test_readyz_returns_503_without_orchestrator(client: TestClient) -> None:
+    previous = get_orchestrator()
+    set_orchestrator(None)
+    try:
+        resp = client.get("/readyz")
+    finally:
+        if previous is not None:
+            set_orchestrator(previous)
+
+    assert resp.status_code == 503
+    body = resp.json()
+    assert body["ready"] is False
+    assert body["level"] == "not_ready"
+    assert body["checks"]["orchestrator"]["status"] == "fail"
+
+
+def test_security_posture_reports_local_install_defaults(client: TestClient) -> None:
+    resp = client.get("/security/posture")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["level"] in {"local_only", "needs_attention", "client_ready"}
+    checks = {item["id"]: item for item in body["checks"]}
+    assert checks["auth"]["status"] in {"pass", "warn"}
+    assert checks["exposure"]["status"] == "pass"
+    assert checks["cors"]["status"] == "pass"
+    assert checks["prompt_injection"]["status"] == "pass"
+    assert body["settings"]["exposed_mode"] is False
+    assert body["settings"]["auth_enabled"] is False
+    assert "recommendations" in body
+
+
+def test_install_report_collects_redacted_handoff_evidence(client: TestClient) -> None:
+    resp = client.get("/install/report")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["schema_version"] == "install_report_v1"
+    assert body["status"] in {"ready", "warn", "blocked"}
+    assert body["readiness"]["level"] in {"ready", "degraded", "not_ready"}
+    assert body["security"]["settings"]["api_keys_configured"] is False
+    assert body["corpus"]["document_count"] == 0
+    assert body["redaction"]["secrets"]
+    evidence = {item["id"]: item for item in body["evidence"]}
+    assert evidence["security_posture"]["endpoint"] == "/security/posture"
+    assert "prompt-injection" in evidence["security_posture"]["detail"]
+    assert evidence["readiness"]["endpoint"] == "/readyz"
+    assert evidence["quality_receipt"]["status"] == "missing"
+    assert evidence["client_readiness_benchmark"]["status"] == "missing"
+    actions = {item["id"] for item in body["actions"]}
+    assert "ingest-corpus" in actions
+    assert "run-golden-eval" in actions
+    assert "run-client-readiness-benchmark" in actions
+
+
+def test_install_report_accepts_client_readiness_receipt(
+    tmp_path: Path,
+    client: TestClient,
+) -> None:
+    run_store = EvalRunStore(tmp_path / "eval_runs.json")
+    result = EvalRunResult(
+        run_id="client-ready-run",
+        golden_set_name="client_readiness",
+        timestamp=datetime.now(timezone.utc),
+        retrieval_metrics=RetrievalMetrics(recall_at_k=1.0, mrr=1.0, ndcg=1.0, citation_coverage=1.0),
+        answer_metrics=AnswerMetrics(faithfulness=1.0, completeness=1.0, refusal_accuracy=1.0, coherence=1.0),
+        audit={
+            "schema_version": "eval_run_audit_v1",
+            "golden_set": {
+                "name": "client_readiness",
+                "case_count": 9,
+                "tag_counts": {
+                    "client-readiness": 9,
+                    "mixed-format": 1,
+                    "prompt-injection": 1,
+                    "abstention": 1,
+                    "binary-retrieval": 1,
+                    "agentic-retrieval": 1,
+                    "poisoned-document": 1,
+                    "knowledge-extraction": 1,
+                    "graph-retrieval": 1,
+                },
+            },
+        },
+    )
+    run_store.save_run(result)
+
+    previous_store = evaluation._eval_run_store
+    evaluation._eval_run_store = run_store
+    try:
+        resp = client.get("/install/report")
+    finally:
+        evaluation._eval_run_store = previous_store
+
+    assert resp.status_code == 200
+    body = resp.json()
+    evidence = {item["id"]: item for item in body["evidence"]}
+    assert evidence["client_readiness_benchmark"]["status"] == "present"
+    assert evidence["client_readiness_benchmark"]["sha256"]
+    actions = {item["id"] for item in body["actions"]}
+    assert "run-client-readiness-benchmark" not in actions
+
+
+def test_install_report_warns_on_weak_client_readiness_metrics(
+    tmp_path: Path,
+    client: TestClient,
+) -> None:
+    run_store = EvalRunStore(tmp_path / "eval_runs.json")
+    result = EvalRunResult(
+        run_id="client-weak-run",
+        golden_set_name="client_readiness",
+        timestamp=datetime.now(timezone.utc),
+        retrieval_metrics=RetrievalMetrics(recall_at_k=0.2, mrr=1.0, ndcg=1.0, citation_coverage=0.3),
+        answer_metrics=AnswerMetrics(faithfulness=0.4, completeness=0.5, refusal_accuracy=1.0, coherence=1.0),
+        audit={
+            "schema_version": "eval_run_audit_v1",
+            "golden_set": {
+                "name": "client_readiness",
+                "case_count": 9,
+                "tag_counts": {
+                    "client-readiness": 9,
+                    "mixed-format": 1,
+                    "prompt-injection": 1,
+                    "abstention": 1,
+                    "binary-retrieval": 1,
+                    "agentic-retrieval": 1,
+                    "poisoned-document": 1,
+                    "knowledge-extraction": 1,
+                    "graph-retrieval": 1,
+                },
+            },
+        },
+    )
+    run_store.save_run(result)
+
+    previous_store = evaluation._eval_run_store
+    evaluation._eval_run_store = run_store
+    try:
+        resp = client.get("/install/report")
+    finally:
+        evaluation._eval_run_store = previous_store
+
+    assert resp.status_code == 200
+    body = resp.json()
+    evidence = {item["id"]: item for item in body["evidence"]}
+    assert evidence["client_readiness_benchmark"]["status"] == "warn"
+    assert "failed metrics" in evidence["client_readiness_benchmark"]["detail"]
+    actions = {item["id"] for item in body["actions"]}
+    assert "run-client-readiness-benchmark" in actions
+
+
+def test_install_report_fails_closed_when_exposed_without_auth(monkeypatch: pytest.MonkeyPatch, client: TestClient) -> None:
+    monkeypatch.setenv("AUTORAG_EXPOSE", "true")
+    monkeypatch.setenv("AUTORAG_AUTH_ENABLED", "false")
+
+    resp = client.get("/install/report")
+    assert resp.status_code == 503
+    assert "Refusing unauthenticated access" in resp.json()["detail"]
+
+
+def test_exposed_mode_blocks_public_docs(monkeypatch: pytest.MonkeyPatch, client: TestClient) -> None:
+    monkeypatch.setenv("AUTORAG_EXPOSE", "true")
+    resp = client.get("/docs")
+    assert resp.status_code == 404
+    assert "disabled" in resp.json()["detail"].lower()
 
 
 def test_client_safe_profile_accepts_private_provider(client: TestClient) -> None:
@@ -187,6 +378,122 @@ def test_document_ingest_query_and_evaluation(client: TestClient) -> None:
     eval_data = eval_resp.json()
     assert eval_data["responses"], "evaluation should include responses"
     assert eval_data["average_coverage"] >= 0
+
+
+def test_onboarding_demo_seed_query_and_clear(client: TestClient) -> None:
+    initial = client.get("/onboarding")
+    assert initial.status_code == 200
+    initial_body = initial.json()
+    assert initial_body["demo_seeded"] is False
+    assert initial_body["sample_documents"], "expected demo sample documents"
+    assert initial_body["example_queries"], "expected demo example queries"
+
+    seed = client.post("/onboarding/demo/seed")
+    assert seed.status_code == 200
+    seed_body = seed.json()
+    assert seed_body["seeded"], "expected at least one demo document to be seeded"
+    assert seed_body["document_count"] >= len(seed_body["seeded"])
+
+    docs = client.get("/documents")
+    assert docs.status_code == 200
+    demo_docs = [doc for doc in docs.json() if doc["metadata"].get("demo_corpus") == "true"]
+    assert demo_docs
+    assert {doc["metadata"].get("retention") for doc in demo_docs} == {"disposable"}
+
+    query_resp = client.post(
+        "/query",
+        json={
+            "question": "What should an evaluator notice first about JR AutoRAG?",
+            "query_mode": "grounded",
+            "conversation_id": "demo-test",
+        },
+    )
+    assert query_resp.status_code == 200
+    query_body = query_resp.json()
+    assert query_body["chunks"], "demo query should retrieve evidence"
+    assert query_body["metrics"]["conversation_id"] == "demo-test"
+
+    clear = client.delete("/onboarding/demo")
+    assert clear.status_code == 200
+    assert clear.json()["deleted"] == len(demo_docs)
+
+    after = client.get("/documents")
+    assert after.status_code == 200
+    assert not [doc for doc in after.json() if doc["metadata"].get("demo_corpus") == "true"]
+
+
+def test_demo_seed_supports_client_readiness_benchmark(client: TestClient) -> None:
+    seed = client.post("/onboarding/demo/seed")
+    assert seed.status_code == 200
+
+    builtins = client.post("/evaluation/golden-sets/builtins")
+    assert builtins.status_code == 200
+
+    run = client.post("/evaluation/batch/client_readiness")
+    assert run.status_code == 200
+    run_body = run.json()
+    assert run_body["retrieval_metrics"]["recall_at_k"] >= 0.70
+    assert run_body["retrieval_metrics"]["citation_coverage"] >= 0.85
+    assert run_body["answer_metrics"]["faithfulness"] >= 0.90
+    assert run_body["answer_metrics"]["completeness"] >= 0.70
+
+    report = client.get("/install/report")
+    assert report.status_code == 200
+    evidence = {item["id"]: item for item in report.json()["evidence"]}
+    assert evidence["client_readiness_benchmark"]["status"] == "present"
+
+
+def test_streaming_query_accepts_grounded_mode(client: TestClient) -> None:
+    seed = client.post("/onboarding/demo/seed")
+    assert seed.status_code == 200
+
+    with client.stream(
+        "POST",
+        "/query/stream",
+        json={
+            "question": "Compare hybrid search and RAPTOR",
+            "query_mode": "grounded",
+            "conversation_id": "stream-test",
+        },
+    ) as response:
+        assert response.status_code == 200
+        body = "\n".join(response.iter_lines())
+
+    assert "data:" in body
+    assert '"type": "result"' in body
+    assert "stream-test" in body
+
+
+def test_query_mode_rejects_unknown_value(client: TestClient) -> None:
+    resp = client.post("/query", json={"question": "What is JR AutoRAG?", "query_mode": "offline_web"})
+    assert resp.status_code == 422
+
+
+def test_query_response_accepts_datetime_step_fields() -> None:
+    now = datetime.now(timezone.utc)
+    response = QueryResponse(
+        answer="ok",
+        chunks=[],
+        sources=[],
+        trace_id="trace-1",
+        metrics={},
+        steps=[
+            {
+                "name": "generate",
+                "duration_ms": 1.0,
+                "started_at": now,
+                "completed_at": now,
+            }
+        ],
+    )
+
+    dumped = response.model_dump(mode="json")
+    assert isinstance(dumped["steps"][0]["started_at"], str)
+
+
+def test_query_stream_uses_specific_timeout() -> None:
+    assert _resolve_route_timeout("/query/stream") == 300
+    assert _resolve_route_timeout("/query") == 300
 
 
 def test_upload_accepts_langextract_override_fields(client: TestClient) -> None:

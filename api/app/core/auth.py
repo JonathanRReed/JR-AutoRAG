@@ -14,7 +14,7 @@ import hashlib
 import os
 import secrets
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 
@@ -23,7 +23,7 @@ class APIKey:
     """An API key with metadata."""
     key_hash: str  # SHA-256 hash of the key
     name: str
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     last_used: datetime | None = None
     enabled: bool = True
     scopes: list[str] = field(default_factory=list)  # e.g., ["read", "write", "admin"]
@@ -184,7 +184,7 @@ class APIKeyAuth:
             return False
 
         # Update last used
-        api_key.last_used = datetime.utcnow()
+        api_key.last_used = datetime.now(UTC)
 
         return True
 

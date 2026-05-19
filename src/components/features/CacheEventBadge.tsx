@@ -38,7 +38,7 @@ export function CacheEventBadge({ event, fromCache }: CacheEventBadgeProps) {
                 <TooltipTrigger asChild>
                     <div
                         className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium transition-colors ${isHit
-                                ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
+                                ? "bg-primary/10 text-primary border border-primary/20"
                                 : "bg-muted text-muted-foreground border border-border/50"
                             }`}
                     >

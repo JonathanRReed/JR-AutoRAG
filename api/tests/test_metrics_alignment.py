@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 
@@ -39,7 +39,7 @@ def test_metrics_cache_hit_rate_uses_embedding_hits(tmp_path):
 
 def test_metrics_distribution_and_rerank_usage(tmp_path):
     store = TelemetryStore(tmp_path / "traces.json")
-    now = datetime.utcnow()
+    now = datetime.now(UTC)
     steps = [
         PipelineStep(
             name="retrieval",

@@ -35,8 +35,13 @@ import {
     ArrowRight
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
+import { Progress as ProgressIndicator } from "@/components/ui/progress";
+import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
+import { TypingAnimation } from "@/components/ui/typing-animation";
 import { useToast } from "@/components/ui/toast";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -300,8 +305,8 @@ function StepDetails({ step }: { step: PipelineStep }) {
         return (
             <div className="mt-2 space-y-2 text-sm">
                 {(queryType || plannerMode) && (
-                    <span className="inline-flex items-center rounded-full bg-secondary/30 px-2.5 py-0.5 text-xs font-medium text-secondary-foreground">
-                        {queryType ?? "planning"}{plannerMode ? ` • ${plannerMode}` : ""}
+                    <span className="inline-flex items-center rounded-full bg-secondary/30 px-2.5 py-0.5 text-xs font-medium text-foreground">
+                        {queryType ?? "planning"}{plannerMode ? ` / ${plannerMode}` : ""}
                     </span>
                 )}
                 {expandedTerms.length > 0 && (
@@ -319,7 +324,7 @@ function StepDetails({ step }: { step: PipelineStep }) {
                         <ul className="ml-4 space-y-1 text-muted-foreground">
                             {queries.map((q, i) => (
                                 <li key={i} className="flex items-start gap-2">
-                                    <span className="text-muted-foreground">•</span>
+                                    <span className="text-muted-foreground">-</span>
                                     <span>{q}</span>
                                 </li>
                             ))}
@@ -423,13 +428,13 @@ function StepDetails({ step }: { step: PipelineStep }) {
                     </span>
                 )}
                 {typeof details.raptor_chunks_added === "number" && (
-                    <span className="inline-flex items-center gap-1.5 rounded-lg bg-cyan-500/10 text-cyan-500 px-2.5 py-1 text-xs font-medium">
+                    <span className="inline-flex items-center gap-1.5 rounded-lg bg-primary/10 text-primary px-2.5 py-1 text-xs font-medium">
                         <Box className="h-3 w-3" />
                         RAPTOR (+{details.raptor_chunks_added})
                     </span>
                 )}
                 {typeof details.graph_chunks_added === "number" && (
-                    <span className="inline-flex items-center gap-1.5 rounded-lg bg-violet-500/10 text-violet-500 px-2.5 py-1 text-xs font-medium">
+                    <span className="inline-flex items-center gap-1.5 rounded-lg bg-secondary text-secondary-foreground px-2.5 py-1 text-xs font-medium">
                         <Network className="h-3 w-3" />
                         GraphRAG (+{details.graph_chunks_added})
                     </span>
@@ -732,7 +737,7 @@ function PipelinePanel({ steps, metrics }: { steps: PipelineStep[]; metrics: Rec
                     </div>
                 </div>
                 <span className="text-xs font-medium text-muted-foreground whitespace-nowrap">
-                    {expanded ? "Hide ▲" : "Show ▼"}
+                    {expanded ? "Hide details" : "Show details"}
                 </span>
             </button>
 
@@ -757,7 +762,7 @@ function PipelinePanel({ steps, metrics }: { steps: PipelineStep[]; metrics: Rec
                                             ? "text-muted-foreground"
                                             : step.status === "failed"
                                                 ? "text-destructive"
-                                                : "text-secondary-foreground"
+                                                : "text-muted-foreground"
                                         }`}>
                                         {step.status === "skipped" ? "skipped" : step.status}
                                     </span>
@@ -769,7 +774,7 @@ function PipelinePanel({ steps, metrics }: { steps: PipelineStep[]; metrics: Rec
                             {(step.started_at || step.completed_at) && (
                                 <div className="mt-2 text-[10px] uppercase tracking-wide text-muted-foreground">
                                     {step.started_at ? `Start ${formatTime(step.started_at)}` : ""}
-                                    {step.started_at && step.completed_at ? " • " : ""}
+                                    {step.started_at && step.completed_at ? " - " : ""}
                                     {step.completed_at ? `End ${formatTime(step.completed_at)}` : ""}
                                 </div>
                             )}
@@ -810,7 +815,7 @@ type CitationSource = {
 
 function SkeletonBlock({ className }: { className?: string }) {
     return (
-        <div className={`animate-pulse rounded-lg bg-muted/60 ${className ?? ""}`} />
+        <Skeleton className={className} />
     );
 }
 
@@ -820,7 +825,7 @@ function InlineHint({ label, detail }: { label: string; detail: string }) {
             className="inline-flex items-center gap-2 rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium text-muted-foreground"
             title={detail}
         >
-            <Info className="h-3.5 w-3.5 text-secondary-foreground" />
+            <Info className="h-3.5 w-3.5 text-muted-foreground" />
             <span className="truncate">{label}</span>
         </span>
     );
@@ -840,7 +845,7 @@ function SourcesList({ sources, highlightedSourceId, onSourceClick }: { sources:
                     <button
                         type="button"
                         onClick={() => setShowAll(!showAll)}
-                        className="text-xs font-medium text-secondary-foreground hover:text-foreground whitespace-nowrap"
+                        className="text-xs font-medium text-primary hover:text-foreground whitespace-nowrap"
                     >
                         {showAll ? "Show less" : `Show all ${sources.length}`}
                     </button>
@@ -880,6 +885,120 @@ function SourcesList({ sources, highlightedSourceId, onSourceClick }: { sources:
     );
 }
 
+function formatStageLabel(value?: string | null) {
+    if (!value) {
+        return "Ready";
+    }
+    return value
+        .split("_")
+        .filter(Boolean)
+        .map(part => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+        .join(" ");
+}
+
+function WhyAnswerPanel({
+    queryResult,
+    sources,
+    queryMode,
+    isQuerying,
+    activeStage,
+    progress,
+}: {
+    queryResult: QueryResponse | null;
+    sources: CitationSource[];
+    queryMode: QueryMode;
+    isQuerying: boolean;
+    activeStage?: string | null;
+    progress?: ProgressData | null;
+}) {
+    const steps = queryResult?.steps ?? [];
+    const routingStep = steps.find(step => step.name === "routing");
+    const retrievalStep = steps.find(step => step.name === "retrieval");
+    const evidenceStep = steps.find(step => step.name === "evidence_contract");
+    const citationStep = steps.find(step => step.name === "citation_verification");
+    const confidence = queryResult?.confidence?.overall;
+    const confidencePercent = typeof confidence === "number" ? Math.round(confidence * 100) : null;
+    const grounding = queryResult?.grounding;
+    const noEvidence = Boolean(grounding?.no_evidence_response || (!isQuerying && queryResult && sources.length === 0));
+
+    const routingDetails = routingStep?.details ?? {};
+    const retrievalDetails = retrievalStep?.details ?? {};
+    const strategyBadges = [
+        typeof retrievalDetails.dense_enabled === "boolean" ? `Dense ${retrievalDetails.dense_enabled ? "on" : "off"}` : null,
+        typeof routingDetails.use_graph === "boolean" ? `GraphRAG ${routingDetails.use_graph ? "on" : "off"}` : null,
+        typeof routingDetails.use_raptor === "boolean" ? `RAPTOR ${routingDetails.use_raptor ? "on" : "off"}` : null,
+        typeof routingDetails.rerank_enabled === "boolean" ? `Rerank ${routingDetails.rerank_enabled ? "on" : "off"}` : null,
+    ].filter(Boolean) as string[];
+
+    const totalChunks = typeof retrievalDetails.total_chunks === "number" ? retrievalDetails.total_chunks : queryResult?.chunks?.length ?? 0;
+    const uniqueSources = typeof retrievalDetails.unique_sources === "number" ? retrievalDetails.unique_sources : sources.length;
+    const progressValue = typeof progress?.progress === "number" ? Math.round(progress.progress * 100) : isQuerying ? 35 : 100;
+
+    return (
+        <div className="flex flex-col gap-3 rounded-lg border border-border/60 bg-background p-4 shadow-sm">
+            <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                    <p className="text-sm font-semibold text-foreground">Why this answer</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                        Trace {queryResult?.trace_id || "pending"}, {queryMode === "grounded" ? "grounded mode" : "open domain mode"}
+                    </p>
+                </div>
+                <Badge variant={noEvidence ? "destructive" : confidencePercent !== null && confidencePercent < 50 ? "secondary" : "outline"}>
+                    {noEvidence ? "No evidence" : confidencePercent !== null ? `${confidencePercent}%` : isQuerying ? "Streaming" : "Ready"}
+                </Badge>
+            </div>
+
+            {isQuerying && (
+                <div className="flex flex-col gap-2">
+                    <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                        <span>{formatStageLabel(activeStage || progress?.stage)}</span>
+                        <span>{progressValue}%</span>
+                    </div>
+                    <ProgressIndicator value={progressValue} />
+                    {progress?.detail && (
+                        <p className="text-xs text-muted-foreground">{progress.detail}</p>
+                    )}
+                </div>
+            )}
+
+            {!isQuerying && noEvidence && (
+                <Alert variant="warning">
+                    <AlertTriangle data-icon="inline-start" />
+                    <AlertTitle>Evidence is not strong enough</AlertTitle>
+                    <AlertDescription>
+                        Grounded mode did not find a reliable source set. Add documents, broaden the scope, or switch modes for a general response.
+                    </AlertDescription>
+                </Alert>
+            )}
+
+            <Separator />
+
+            <div className="grid grid-cols-3 gap-2 text-xs">
+                <div className="rounded-md bg-muted/40 p-2">
+                    <p className="text-muted-foreground">Chunks</p>
+                    <p className="mt-1 font-mono text-sm text-foreground">{totalChunks}</p>
+                </div>
+                <div className="rounded-md bg-muted/40 p-2">
+                    <p className="text-muted-foreground">Sources</p>
+                    <p className="mt-1 font-mono text-sm text-foreground">{uniqueSources}</p>
+                </div>
+                <div className="rounded-md bg-muted/40 p-2">
+                    <p className="text-muted-foreground">Checks</p>
+                    <p className="mt-1 font-mono text-sm text-foreground">
+                        {[evidenceStep, citationStep].filter(Boolean).length}/2
+                    </p>
+                </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+                {(strategyBadges.length ? strategyBadges : ["Hybrid retrieval", "Citation verification"]).map(item => (
+                    <Badge key={item} variant="muted">{item}</Badge>
+                ))}
+            </div>
+        </div>
+    );
+}
+
 export function ChatInterface({
     question,
     setQuestion,
@@ -905,19 +1024,38 @@ export function ChatInterface({
     currentSessionId,
     preset = "balanced",
     onPresetChange,
+    queryMode = "grounded",
+    onQueryModeChange,
 }: ChatInterfaceProps) {
     const [highlightedSourceId, setHighlightedSourceId] = useState<string | null>(null);
     const [selectedDoc, setSelectedDoc] = useState<DocumentOut | null>(null);
-    const [showHistory, setShowHistory] = useState(true);
-    const [showSources, setShowSources] = useState(true);
+    const [showHistory, setShowHistory] = useState(() => (typeof window === "undefined" ? true : window.innerWidth >= 1024));
+    const [showSources, setShowSources] = useState(() => (typeof window === "undefined" ? true : window.innerWidth >= 1280));
     const [viewingArtifact, setViewingArtifact] = useState<'graph_rag' | 'raptor' | null>(null);
 
     // Persist sources panel when query results are available
     useEffect(() => {
-        if (queryResult && !showSources) {
+        const wideEnoughForSources = typeof window === "undefined" || window.innerWidth >= 1280;
+        if (queryResult && !showSources && wideEnoughForSources) {
             setShowSources(true);
         }
-    }, [queryResult]);
+    }, [queryResult, showSources]);
+
+    useEffect(() => {
+        if (typeof window === "undefined") {
+            return;
+        }
+        const media = window.matchMedia("(max-width: 1023px)");
+        const syncPanels = () => {
+            if (media.matches) {
+                setShowHistory(false);
+                setShowSources(false);
+            }
+        };
+        syncPanels();
+        media.addEventListener("change", syncPanels);
+        return () => media.removeEventListener("change", syncPanels);
+    }, []);
 
     // Keyboard shortcuts
     useEffect(() => {
@@ -1181,20 +1319,20 @@ export function ChatInterface({
                                                 <ShieldCheck className="h-4 w-4 text-primary" />
                                                 <p className="text-sm font-semibold text-foreground">Getting ready</p>
                                             </div>
-                                            <span className="text-xs text-muted-foreground">1–2 minutes</span>
+                                            <span className="text-xs text-muted-foreground">1-2 minutes</span>
                                         </div>
                                         <div className="space-y-2 text-sm">
                                             <div className="flex items-center gap-2">
-                                                <span className={`h-2 w-2 rounded-full ${missingDocs ? "bg-amber-500" : "bg-emerald-500"}`} />
+                                                <span className={`h-2 w-2 rounded-full ${missingDocs ? "bg-secondary" : "bg-primary"}`} />
                                                 <span className="text-foreground">{missingDocs ? "Add at least one document" : "Documents detected"}</span>
                                             </div>
                                             <div className="flex items-center gap-2">
-                                                <span className={`h-2 w-2 rounded-full ${missingProvider ? "bg-amber-500" : "bg-emerald-500"}`} />
+                                                <span className={`h-2 w-2 rounded-full ${missingProvider ? "bg-secondary" : "bg-primary"}`} />
                                                 <span className="text-foreground">{missingProvider ? "Select models in Provider Settings" : "Models configured"}</span>
                                             </div>
                                         </div>
                                         <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-                                            <span className="rounded-full bg-muted px-2 py-1">Planner • Gatherer • Generator</span>
+                                            <span className="rounded-full bg-muted px-2 py-1">Planner / Gatherer / Generator</span>
                                             <span className="rounded-full bg-muted px-2 py-1">Uses selected docs; falls back to all if none chosen</span>
                                         </div>
                                         {missingDocs && (
@@ -1205,6 +1343,35 @@ export function ChatInterface({
                                         )}
                                     </div>
                                 )}
+
+                                <div className="grid gap-3 rounded-lg border border-border/60 bg-muted/10 p-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.9fr)]">
+                                    <div className="flex min-w-0 flex-col gap-3">
+                                        <div>
+                                            <p className="text-sm font-semibold text-foreground">Answer Controls</p>
+                                            <p className="mt-1 text-xs text-muted-foreground">
+                                                Tune scope, routing depth, and evidence posture before streaming.
+                                            </p>
+                                        </div>
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            <Badge variant="outline">Trace visible</Badge>
+                                            <Badge variant="outline">Citations required</Badge>
+                                            <Badge variant="outline">Hybrid retrieval</Badge>
+                                        </div>
+                                    </div>
+                                    <div className="flex flex-col gap-3">
+                                        <QueryModeToggle
+                                            mode={queryMode}
+                                            onChange={onQueryModeChange ?? (() => undefined)}
+                                            disabled={isQuerying || !onQueryModeChange}
+                                        />
+                                        <PresetSelector
+                                            value={preset}
+                                            onChange={onPresetChange ?? (() => undefined)}
+                                            disabled={isQuerying || !onPresetChange}
+                                            compact
+                                        />
+                                    </div>
+                                </div>
 
                                 {/* Query Scope */}
                                 <div className="rounded-lg border border-border/60 bg-muted/10 p-4">
@@ -1220,7 +1387,7 @@ export function ChatInterface({
                                         <button
                                             type="button"
                                             onClick={toggleAll}
-                                            className="text-xs font-medium text-secondary-foreground hover:text-foreground"
+                                            className="text-xs font-medium text-primary hover:text-foreground"
                                             title="Switch between all documents and a selected subset."
                                         >
                                             {selectedDocumentIds.length === 0 ? "Select specific" : "Use all"}
@@ -1288,7 +1455,9 @@ export function ChatInterface({
                                             How can I help you today?
                                         </h2>
                                         <p className="text-muted-foreground max-w-lg mx-auto text-lg leading-relaxed font-light">
-                                            Ask me anything about your documents. I'll search, synthesize, and cite sources for every factual claim.
+                                            <TypingAnimation duration={12} startOnView={false}>
+                                                Ask anything about your documents. I will search, synthesize, and cite sources for every factual claim.
+                                            </TypingAnimation>
                                         </p>
                                     </div>
 
@@ -1362,6 +1531,26 @@ export function ChatInterface({
                                 />
                             )}
 
+                            {!isQuerying && queryResult && !hasSources && (
+                                <Alert variant="warning">
+                                    <AlertTriangle data-icon="inline-start" />
+                                    <AlertTitle>No cited evidence returned</AlertTitle>
+                                    <AlertDescription>
+                                        The answer did not include source evidence. Try a narrower question, select specific documents, or seed the demo corpus.
+                                    </AlertDescription>
+                                </Alert>
+                            )}
+
+                            {!isQuerying && queryResult?.confidence?.overall !== undefined && queryResult.confidence.overall < 0.5 && hasSources && (
+                                <Alert variant="warning">
+                                    <ShieldCheck data-icon="inline-start" />
+                                    <AlertTitle>Low confidence answer</AlertTitle>
+                                    <AlertDescription>
+                                        The system found evidence, but confidence is below the normal review threshold. Inspect the citations and trace before using the answer.
+                                    </AlertDescription>
+                                </Alert>
+                            )}
+
                             {/* Progress Indicator - Enhanced with typing dots and detailed step info */}
                             {isQuerying && (
                                 <div className="flex items-start gap-3 mt-4">
@@ -1397,12 +1586,7 @@ export function ChatInterface({
                                                     <p className="text-muted-foreground/80">{progress.detail}</p>
                                                 )}
                                                 {progress.progress !== undefined && (
-                                                    <div className="w-full bg-muted rounded-full h-1.5 mt-1">
-                                                        <div
-                                                            className="bg-primary h-1.5 rounded-full transition-all duration-300"
-                                                            style={{ width: `${Math.round(progress.progress * 100)}%` }}
-                                                        />
-                                                    </div>
+                                                    <ProgressIndicator value={Math.round(progress.progress * 100)} className="mt-1" />
                                                 )}
                                             </div>
                                         )}
@@ -1420,6 +1604,7 @@ export function ChatInterface({
                         <div className="max-w-3xl mx-auto">
                             <div className="relative group bg-background rounded-xl shadow-sm border border-border/40 focus-within:border-primary/50 focus-within:ring-1 focus-within:ring-primary/20 transition-all">
                                 <textarea
+                                    aria-label="Ask a grounded question"
                                     value={question}
                                     onChange={e => setQuestion(e.target.value)}
                                     // Submit on Enter
@@ -1429,7 +1614,7 @@ export function ChatInterface({
                                             if (!isQuerying) handleAsk();
                                         }
                                     }}
-                                    placeholder="Create a report based of the documents..."
+                                    placeholder="Create a report based on the documents..."
                                     className="w-full bg-transparent border-0 focus:ring-0 resize-none py-4 pl-4 pr-24 min-h-[50px] max-h-[200px] text-base outline-none scrollbar-hide font-normal leading-relaxed placeholder:text-muted-foreground/50"
                                     style={{ height: "auto" }}
                                 />
@@ -1446,6 +1631,7 @@ export function ChatInterface({
                                         </Button>
                                     )}
                                     <Button
+                                        aria-label={isQuerying ? "Query running" : "Ask grounded question"}
                                         size="icon"
                                         disabled={isQuerying || !question.trim()}
                                         onClick={() => handleAsk()}
@@ -1491,6 +1677,15 @@ export function ChatInterface({
                     </div>
 
                     <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                        <WhyAnswerPanel
+                            queryResult={queryResult}
+                            sources={sourcesForDisplay}
+                            queryMode={queryMode}
+                            isQuerying={isQuerying}
+                            activeStage={activeStage}
+                            progress={progress}
+                        />
+
                         {/* Pipeline Status Widget - Hide when complete */}
                         {isQuerying && (
                             <div className="rounded-lg border border-border/60 bg-background p-3 mb-4 shadow-sm animate-in slide-in-from-top duration-300">
@@ -1514,7 +1709,7 @@ export function ChatInterface({
                                                     {isActive ? (
                                                         <Loader2 className="h-3 w-3 animate-spin" />
                                                     ) : isDone ? (
-                                                        <CheckCircle2 className="h-3 w-3 text-emerald-500" />
+                                                        <CheckCircle2 className="h-3 w-3 text-primary" />
                                                     ) : (
                                                         <div className="h-1.5 w-1.5 rounded-full bg-muted-foreground/30 ml-0.5 mr-1" />
                                                     )}
@@ -1538,6 +1733,18 @@ export function ChatInterface({
                                 <SkeletonBlock className="h-24 w-full" />
                                 <SkeletonBlock className="h-24 w-full" />
                             </div>
+                        ) : !hasSources ? (
+                            <Empty className="min-h-[180px]">
+                                <EmptyHeader>
+                                    <EmptyMedia>
+                                        <FileSearch data-icon="inline-start" />
+                                    </EmptyMedia>
+                                    <EmptyTitle>No sources yet</EmptyTitle>
+                                    <EmptyDescription>
+                                        Ask a question to reveal cited documents, relevance scores, and source previews.
+                                    </EmptyDescription>
+                                </EmptyHeader>
+                            </Empty>
                         ) : (
                             <SourcesList
                                 sources={sourcesForDisplay}

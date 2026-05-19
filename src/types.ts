@@ -168,6 +168,82 @@ export type AppConfig = {
     stage_budgets?: StageBudgets;
 };
 
+export type SecurityCheckStatus = "pass" | "warn" | "fail";
+export type SecurityPostureLevel = "local_only" | "client_ready" | "needs_attention" | "unsafe";
+
+export type SecurityPostureCheck = {
+    id: string;
+    status: SecurityCheckStatus;
+    message: string;
+    detail?: string | null;
+    remediation?: string | null;
+};
+
+export type SecurityPostureResponse = {
+    level: SecurityPostureLevel;
+    summary: string;
+    settings: {
+        auth_enabled: boolean;
+        api_keys_configured: boolean;
+        exposed_mode: boolean;
+        rate_limit_enabled: boolean;
+        allowed_origin_count: number;
+        wildcard_cors: boolean;
+        docs_public: boolean;
+    };
+    checks: SecurityPostureCheck[];
+    recommendations: string[];
+};
+
+export type InstallReportStatus = "ready" | "warn" | "blocked";
+
+export type InstallReportResponse = {
+    schema_version: "install_report_v1";
+    generated_at: string;
+    product: string;
+    status: InstallReportStatus;
+    summary: string;
+    readiness: {
+        ready: boolean;
+        level: "ready" | "degraded" | "not_ready";
+        checks: Record<string, {
+            status: "ok" | "warn" | "fail";
+            message?: string | null;
+            details: Record<string, unknown>;
+        }>;
+    };
+    security: SecurityPostureResponse;
+    policy: Record<string, unknown>;
+    corpus: {
+        document_count: number;
+        chunk_count: number;
+        fingerprint?: string | null;
+        parser_counts: Record<string, number>;
+        low_confidence_documents: number;
+        processing_errors: number;
+    };
+    evaluations: Record<string, unknown>[];
+    artifacts: Record<string, unknown>;
+    evidence: {
+        id: string;
+        title: string;
+        status: "present" | "missing" | "warn";
+        detail: string;
+        endpoint?: string | null;
+        artifact_path?: string | null;
+        sha256?: string | null;
+    }[];
+    actions: {
+        id: string;
+        title: string;
+        priority: "high" | "medium" | "low";
+        detail: string;
+        command?: string | null;
+        endpoint?: string | null;
+    }[];
+    redaction: Record<string, string>;
+};
+
 export type ModelStatus = {
     embedding: "installed" | "missing" | "unknown" | "error";
     reranker: "installed" | "missing" | "unknown" | "error";
@@ -272,6 +348,9 @@ export type EvalRunSummary = {
         coherence: number;
     };
     duration_ms: number;
+    audit?: Record<string, unknown>;
+    report_path?: string;
+    report_sha256?: string;
 };
 
 export type QualityRecommendation = {
@@ -435,6 +514,47 @@ export type ChatSession = {
     createdAt: string;
 };
 
+export type OnboardingSampleDocument = {
+    title: string;
+    tags: string[];
+    demo_question: string;
+};
+
+export type OnboardingExampleQuery = {
+    query: string;
+    category: string;
+    expected_docs: string[];
+};
+
+export type OnboardingState = {
+    flow: {
+        steps: Array<{
+            id: string;
+            title: string;
+            description: string;
+            action: string;
+            completed: boolean;
+        }>;
+        current_step: number;
+        progress: number;
+        is_complete: boolean;
+    };
+    demo_mode: boolean;
+    demo_seeded: boolean;
+    document_count: number;
+    demo_document_count: number;
+    sample_documents: OnboardingSampleDocument[];
+    example_queries: OnboardingExampleQuery[];
+};
+
+export type DemoSeedResponse = {
+    seeded: Array<{ id: string; title: string }>;
+    skipped: Array<{ id: string; title: string }>;
+    document_count: number;
+    example_queries: OnboardingExampleQuery[];
+    demo_mode: boolean;
+};
+
 // Preset system types
 export type PresetLevel = "turbo" | "fast" | "balanced" | "thorough" | "ultra_accurate";
 
@@ -442,7 +562,6 @@ export type PresetInfo = {
     level: PresetLevel;
     name: string;
     description: string;
-    icon: string;
     features: string[];
 };
 
@@ -451,35 +570,30 @@ export const PRESET_DEFINITIONS: PresetInfo[] = [
         level: "turbo",
         name: "Turbo",
         description: "Fastest responses",
-        icon: "⚡",
         features: ["Basic retrieval", "No reranking"],
     },
     {
         level: "fast",
         name: "Fast",
         description: "Quick & good",
-        icon: "🚀",
         features: ["Reranking"],
     },
     {
         level: "balanced",
         name: "Balanced",
         description: "Speed & accuracy",
-        icon: "⚖️",
         features: ["Reranking", "Multi-resolution"],
     },
     {
         level: "thorough",
         name: "Thorough",
         description: "Deep research",
-        icon: "🔍",
         features: ["FLARE", "RAPTOR", "Iterative"],
     },
     {
         level: "ultra_accurate",
         name: "Ultra Accurate",
         description: "Maximum accuracy",
-        icon: "🎯",
         features: ["All SOTA features", "Evidence contract", "GraphRAG"],
     },
 ];

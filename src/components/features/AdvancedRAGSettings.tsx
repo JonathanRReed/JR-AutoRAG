@@ -38,7 +38,7 @@ function InlineHint({ label, detail }: { label: string; detail: string }) {
             className="inline-flex items-center gap-2 rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium text-muted-foreground"
             title={detail}
         >
-            <Info className="h-3.5 w-3.5 text-secondary-foreground" />
+            <Info className="h-3.5 w-3.5 text-muted-foreground" />
             <span className="truncate">{label}</span>
         </span>
     );
@@ -143,7 +143,7 @@ export function AdvancedRAGSettings({
                     </span>
                     {isCheckingModels && (
                         <span className="inline-flex items-center gap-2 rounded-lg bg-muted px-2.5 py-1">
-                            <Loader2 className="h-3.5 w-3.5 animate-spin text-secondary-foreground" />
+                            <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
                             Checking models...
                         </span>
                     )}
@@ -174,7 +174,7 @@ export function AdvancedRAGSettings({
                                                 className="font-mono text-xs"
                                             />
                                             <p className="text-[10px] uppercase tracking-tight text-muted-foreground">
-                                                {backend?.capabilities?.mode ?? "local"} · fallback {fallback?.enabled ? "on" : "off"} · {fallback?.order?.[0] ?? "none"}
+                                                {backend?.capabilities?.mode ?? "local"} / fallback {fallback?.enabled ? "on" : "off"} / {fallback?.order?.[0] ?? "none"}
                                             </p>
                                         </div>
                                     );

@@ -52,10 +52,10 @@ const STEP_ICONS: Record<string, typeof Target> = {
 
 const STEP_COLORS = {
     completed: { bg: "bg-primary", border: "border-primary", text: "text-primary" },
-    passed: { bg: "bg-emerald-500", border: "border-emerald-500", text: "text-emerald-600" },
-    repaired: { bg: "bg-amber-500", border: "border-amber-500", text: "text-amber-600" },
-    failed: { bg: "bg-red-500", border: "border-red-500", text: "text-red-600" },
-    running: { bg: "bg-secondary", border: "border-secondary", text: "text-secondary-foreground" },
+    passed: { bg: "bg-primary", border: "border-primary", text: "text-primary" },
+    repaired: { bg: "bg-secondary", border: "border-secondary", text: "text-foreground" },
+    failed: { bg: "bg-destructive", border: "border-destructive", text: "text-destructive" },
+    running: { bg: "bg-secondary", border: "border-secondary", text: "text-foreground" },
     skipped: { bg: "bg-muted", border: "border-muted", text: "text-muted-foreground" },
     pending: { bg: "bg-muted/50", border: "border-border", text: "text-muted-foreground" },
 } as const;
@@ -261,7 +261,7 @@ export function PipelineTimeline({
                         {steps.filter(s => ["completed", "passed", "repaired"].includes(s.status)).length} of {steps.length} steps completed
                     </span>
                     {isRunning && activeStage && (
-                        <span className="inline-flex items-center gap-1.5 text-secondary-foreground">
+                        <span className="inline-flex items-center gap-1.5 text-primary">
                             <Loader2 className="h-3 w-3 animate-spin" />
                             Running: {activeStage}
                         </span>

@@ -19,7 +19,7 @@ import re
 import time
 import uuid
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, cast
 
 from ..schemas.config import AppConfig
@@ -590,7 +590,7 @@ class Orchestrator:
         return PipelineStep(
             name=name,
             started_at=start_time,
-            completed_at=datetime.utcnow(),
+            completed_at=datetime.now(UTC),
             duration_ms=round((end - start_perf) * 1000, 2),
             details=details,
             status=status,
@@ -680,7 +680,7 @@ class Orchestrator:
             self._cancelled_traces.remove(trace_id) # Reset for next use
             raise asyncio.CancelledError(f"Trace {trace_id} was cancelled before starting")
 
-        pipeline_start = datetime.utcnow()
+        pipeline_start = datetime.now(UTC)
         pipeline_steps: list[PipelineStep] = []
         reflection_result = None
         runtime_profile = self._retrieval.get_runtime_profile() if hasattr(self._retrieval, "get_runtime_profile") else {}
@@ -796,7 +796,7 @@ class Orchestrator:
             "generator": getattr(provider_config, "generator_model", "") or "",
         } if provider_config else {}
 
-        cache_start_time = datetime.utcnow()
+        cache_start_time = datetime.now(UTC)
         cache_start = time.perf_counter()
         if on_stage:
             on_stage("cache")
@@ -856,7 +856,7 @@ class Orchestrator:
         )
         record_step(cache_step)
 
-        policy_step_start = datetime.utcnow()
+        policy_step_start = datetime.now(UTC)
         policy_step = self._make_step(
             "policy",
             time.perf_counter(),
@@ -874,7 +874,7 @@ class Orchestrator:
         if on_stage:
             on_stage("planning")
         emit_progress("planning", detail="Breaking down your question")
-        plan_start_time = datetime.utcnow()
+        plan_start_time = datetime.now(UTC)
         plan_start = time.perf_counter()
         stage_start_time = plan_start  # Reset stage timer
         planner_mode = "heuristic"
@@ -915,7 +915,7 @@ class Orchestrator:
         if on_stage:
             on_stage("gating")
         emit_progress("gating", detail="Checking if documents are needed")
-        gating_start_time = datetime.utcnow()
+        gating_start_time = datetime.now(UTC)
         gating_start = time.perf_counter()
         stage_start_time = gating_start
 
@@ -970,7 +970,7 @@ class Orchestrator:
         if on_stage:
             on_stage("routing")
         emit_progress("routing", detail="Choosing optimal search strategy")
-        routing_start_time = datetime.utcnow()
+        routing_start_time = datetime.now(UTC)
         routing_start = time.perf_counter()
         stage_start_time = routing_start
 
@@ -1059,8 +1059,8 @@ class Orchestrator:
             if self._graph_ready:
                 record_step(PipelineStep(
                     name="graph_build",
-                    started_at=datetime.utcnow(),
-                    completed_at=datetime.utcnow(),
+                    started_at=datetime.now(UTC),
+                    completed_at=datetime.now(UTC),
                     duration_ms=0.0,
                     details=graph_build_details,
                     status="skipped",
@@ -1069,8 +1069,8 @@ class Orchestrator:
                 graph_build_details["reason"] = "no_provider" if self._provider is None else "no_chunks"
                 record_step(PipelineStep(
                     name="graph_build",
-                    started_at=datetime.utcnow(),
-                    completed_at=datetime.utcnow(),
+                    started_at=datetime.now(UTC),
+                    completed_at=datetime.now(UTC),
                     duration_ms=0.0,
                     details=graph_build_details,
                     status="skipped",
@@ -1079,7 +1079,7 @@ class Orchestrator:
                 if on_stage:
                     on_stage("graph_build")
                 emit_progress("graph_build", detail="Preparing GraphRAG context")
-                graph_build_start_time = datetime.utcnow()
+                graph_build_start_time = datetime.now(UTC)
                 graph_build_start = time.perf_counter()
                 await self._ensure_graph_context(
                     force=False,
@@ -1117,7 +1117,7 @@ class Orchestrator:
             items_done=0,
             items_total=max_iterations,
         )
-        gatherer_start_time = datetime.utcnow()
+        gatherer_start_time = datetime.now(UTC)
         gatherer_start = time.perf_counter()
 
         all_chunks = []
@@ -1501,8 +1501,8 @@ class Orchestrator:
             graph_status = "completed" if total_graph_chunks > 0 else "skipped"
             graph_step = PipelineStep(
                 name="graph_retrieval",
-                started_at=datetime.utcnow(),
-                completed_at=datetime.utcnow(),
+                started_at=datetime.now(UTC),
+                completed_at=datetime.now(UTC),
                 duration_ms=round(graph_retrieval_ms, 2),
                 details={
                     "graph_ready": bool(self._graph_rag),
@@ -1516,7 +1516,7 @@ class Orchestrator:
         # Step 3: Retrieval (aggregation + dedupe)
         if on_stage:
             on_stage("retrieval")
-        retrieval_start_time = datetime.utcnow()
+        retrieval_start_time = datetime.now(UTC)
         retrieval_start = time.perf_counter()
         retrieval_details: dict[str, Any] = {
             "sub_queries": gatherer_details["sub_queries"],
@@ -1603,14 +1603,14 @@ class Orchestrator:
                 for step in pipeline_steps
             ]
             no_evidence_response["metrics"]["total_duration_ms"] = round(
-                (datetime.utcnow() - pipeline_start).total_seconds() * 1000, 2
+                (datetime.now(UTC) - pipeline_start).total_seconds() * 1000, 2
             )
 
             # Record the no-evidence step
             no_evidence_step = PipelineStep(
                 name="no_evidence",
-                started_at=datetime.utcnow(),
-                completed_at=datetime.utcnow(),
+                started_at=datetime.now(UTC),
+                completed_at=datetime.now(UTC),
                 duration_ms=0.0,
                 details={
                     "mode": "grounded",
@@ -1640,8 +1640,8 @@ class Orchestrator:
                 # Record abstention step
                 abstention_step = PipelineStep(
                     name="abstention",
-                    started_at=datetime.utcnow(),
-                    completed_at=datetime.utcnow(),
+                    started_at=datetime.now(UTC),
+                    completed_at=datetime.now(UTC),
                     duration_ms=0.0,
                     details={
                         "reason": abstention_result.reason.value if abstention_result.reason else "unknown",
@@ -1667,7 +1667,7 @@ class Orchestrator:
         def run_compression_step(step_name: str, chunk_list: list[EvidenceChunk]) -> tuple[str, list[dict]]:
             if on_stage:
                 on_stage(step_name)
-            compression_start_time = datetime.utcnow()
+            compression_start_time = datetime.now(UTC)
             compression_start = time.perf_counter()
             if compression_enabled and chunk_list:
                 compressed = self._compressor.compress(
@@ -1729,7 +1729,7 @@ class Orchestrator:
                 step_name,
                 detail=f"Creating response with {len(citation_payload)} sources",
             )
-            gen_start_time = datetime.utcnow()
+            gen_start_time = datetime.now(UTC)
             gen_start = time.perf_counter()
             provider = self._provider
             gen_details: dict[str, Any] = {
@@ -1887,7 +1887,7 @@ For each question:
         # Step 3.5: Conflict Detection
         if on_stage:
             on_stage("conflict_detection")
-        conflict_start_time = datetime.utcnow()
+        conflict_start_time = datetime.now(UTC)
         conflict_start = time.perf_counter()
 
         conflict_result = self._conflict_detector.detect(chunks)
@@ -1920,7 +1920,7 @@ The retrieved evidence contains some conflicting information. When you encounter
         if on_stage:
             on_stage("thinking")
         emit_progress("thinking", detail="Drafting a concise outline")
-        thinking_start_time = datetime.utcnow()
+        thinking_start_time = datetime.now(UTC)
         thinking_start = time.perf_counter()
         _, thinking_details, thinking_status = await self._build_thinking_outline(
             query=query,
@@ -1954,7 +1954,7 @@ The retrieved evidence contains some conflicting information. When you encounter
             stage_label = "verification" if step_name == "verification" else "verification_retry"
             if on_stage:
                 on_stage(stage_label)
-            firewall_start_time = datetime.utcnow()
+            firewall_start_time = datetime.now(UTC)
             firewall_start = time.perf_counter()
             firewall_result = self._hallucination_firewall.verify(
                 answer=answer_text,
@@ -1981,7 +1981,7 @@ The retrieved evidence contains some conflicting information. When you encounter
         try:
             answer, firewall_details = run_firewall_step("verification", answer, chunks)
         except Exception as fw_err:
-            print(f"⚠️ Hallucination firewall error (non-blocking): {fw_err}")
+            print(f"Hallucination firewall error (non-blocking): {fw_err}")
             firewall_details = {"pass_rate": 1.0, "skipped": True, "error": str(fw_err)}
         else:
             firewall_passed = firewall_details.get("meets_threshold", True)
@@ -2017,7 +2017,7 @@ The retrieved evidence contains some conflicting information. When you encounter
                 )
                 if on_stage:
                     on_stage("evidence_contract" if contract_checks == 1 else "evidence_contract_retry")
-                contract_start_time = datetime.utcnow()
+                contract_start_time = datetime.now(UTC)
                 contract_start = time.perf_counter()
                 contract_result = self._evidence_contract.verify_answer(answer, chunks)
                 contract_details = {
@@ -2087,7 +2087,7 @@ The retrieved evidence contains some conflicting information. When you encounter
         # Ensures every citation maps to a retrieved chunk ID or gets repaired/marked
         if on_stage:
             on_stage("citation_verification")
-        citation_start_time = datetime.utcnow()
+        citation_start_time = datetime.now(UTC)
         citation_start = time.perf_counter()
 
         citation_result = self._citation_verifier.verify(answer, chunks)
@@ -2120,7 +2120,7 @@ The retrieved evidence contains some conflicting information. When you encounter
 
         if on_stage:
             on_stage("reflection")
-        reflection_start_time = datetime.utcnow()
+        reflection_start_time = datetime.now(UTC)
         reflection_start = time.perf_counter()
 
         # Phase 1: Heuristic reflection
@@ -2216,7 +2216,7 @@ The retrieved evidence contains some conflicting information. When you encounter
             retry_top_k = max(6, int(plan.steps[0].dense_k * 1.5)) if plan.steps else 6
             if on_stage:
                 on_stage("retrieval_retry")
-            retry_retrieval_start_time = datetime.utcnow()
+            retry_retrieval_start_time = datetime.now(UTC)
             retry_retrieval_start = time.perf_counter()
             retry_evidence = await self._gatherer.gather(
                 query,
@@ -2303,6 +2303,8 @@ The retrieved evidence contains some conflicting information. When you encounter
                 "quality_rating": reflection_result.quality.value if reflection_result else "unknown",
                 "answer_quality": reflection_result.quality.value if reflection_result else "unknown",
                 "answer_confidence": reflection_result.confidence if reflection_result else 0.0,
+                "faithfulness": ragas_metrics.faithfulness,
+                "coherence": ragas_metrics.overall_score,
                 "ragas": ragas_metrics.to_dict(),
                 "invocation": invocation_metrics.to_dict(),
                 "colbert_enabled": colbert_enabled,
@@ -2363,6 +2365,8 @@ The retrieved evidence contains some conflicting information. When you encounter
                 "quality_rating": reflection_result.quality.value if reflection_result else "unknown",
                 "answer_quality": reflection_result.quality.value if reflection_result else "unknown",
                 "answer_confidence": reflection_result.confidence if reflection_result else 0.0,
+                "faithfulness": ragas_metrics.faithfulness,
+                "coherence": ragas_metrics.overall_score,
                 "ragas": ragas_metrics.to_dict(),
                 "invocation": invocation_metrics.to_dict(),
                 "colbert_enabled": colbert_enabled,
@@ -2453,7 +2457,7 @@ The retrieved evidence contains some conflicting information. When you encounter
         """Generate answer directly without retrieval (for simple queries LLM can handle)."""
         if on_stage:
             on_stage("thinking")
-        thinking_start_time = datetime.utcnow()
+        thinking_start_time = datetime.now(UTC)
         thinking_start = time.perf_counter()
         _, thinking_details, thinking_status = await self._build_thinking_outline(
             query=query,
@@ -2473,7 +2477,7 @@ The retrieved evidence contains some conflicting information. When you encounter
         if on_stage:
             on_stage("generation")
 
-        gen_start_time = datetime.utcnow()
+        gen_start_time = datetime.now(UTC)
         gen_start = time.perf_counter()
         provider = self._provider
 
@@ -2897,3 +2901,146 @@ Be helpful, accurate, and concise."""
         if hasattr(self._retrieval, "get_model_status"):
             return self._retrieval.get_model_status()
         return {}
+
+    def get_readiness_status(self) -> dict[str, Any]:
+        """Return a truthful operator readiness contract."""
+        checks: dict[str, dict[str, Any]] = {
+            "orchestrator": {
+                "status": "ok",
+                "message": None,
+                "details": {"configured": self._config is not None},
+            }
+        }
+
+        try:
+            snapshot = (
+                self._retrieval.get_readiness_snapshot()
+                if hasattr(self._retrieval, "get_readiness_snapshot")
+                else {}
+            )
+        except Exception as exc:
+            snapshot = {}
+            checks["retrieval_engine"] = {
+                "status": "fail",
+                "message": f"Retrieval status unavailable: {exc}",
+                "details": {},
+            }
+
+        document_count = int(snapshot.get("document_count", 0) or 0)
+        chunk_count = int(snapshot.get("chunk_count", 0) or 0)
+        embedding_count = int(snapshot.get("embedding_count", 0) or 0)
+        index_ready = bool(snapshot.get("index_ready", False))
+        model_status = snapshot.get("model_status", {}) if isinstance(snapshot.get("model_status"), dict) else {}
+        config = snapshot.get("config", {}) if isinstance(snapshot.get("config"), dict) else {}
+
+        checks.setdefault("retrieval_engine", {
+            "status": "ok",
+            "message": None,
+            "details": {
+                "chunk_count": chunk_count,
+                "sparse_ready": bool(snapshot.get("sparse_ready", False)),
+                "dense_ready": bool(snapshot.get("dense_ready", False)),
+                "bq_enabled": bool(snapshot.get("bq_enabled", False)),
+                "bq_ready": bool(snapshot.get("bq_ready", False)),
+            },
+        })
+        checks["document_store"] = {
+            "status": "ok",
+            "message": None,
+            "details": {"document_count": document_count},
+        }
+        checks["retrieval_index"] = {
+            "status": "ok" if index_ready else "fail",
+            "message": None if index_ready else "Documents exist but no retrieval chunks are indexed",
+            "details": {
+                "document_count": document_count,
+                "chunk_count": chunk_count,
+                "embedding_count": embedding_count,
+            },
+        }
+
+        embedding = model_status.get("embedding_model", {}) if isinstance(model_status, dict) else {}
+        embedding_state = embedding.get("status", "unknown") if isinstance(embedding, dict) else "unknown"
+        checks["embedding_model"] = {
+            "status": "warn" if embedding_state in {"failed", "unknown"} else "ok",
+            "message": None if embedding_state not in {"failed", "unknown"} else "Embedding model is not ready; sparse retrieval may still work",
+            "details": {
+                "state": embedding_state,
+                "model": embedding.get("name") if isinstance(embedding, dict) else config.get("embedding_model"),
+                "backend_id": embedding.get("backend_id") if isinstance(embedding, dict) else None,
+            },
+        }
+
+        reranker = model_status.get("reranker_model", {}) if isinstance(model_status, dict) else {}
+        reranker_state = reranker.get("status", "disabled") if isinstance(reranker, dict) else "disabled"
+        use_reranking = bool(config.get("use_reranking", False))
+        checks["reranker_model"] = {
+            "status": "warn" if use_reranking and reranker_state in {"failed", "unknown"} else "ok",
+            "message": (
+                "Reranker is enabled but not ready"
+                if use_reranking and reranker_state in {"failed", "unknown"}
+                else None
+            ),
+            "details": {
+                "state": reranker_state,
+                "model": reranker.get("name") if isinstance(reranker, dict) else config.get("reranker_model"),
+                "enabled": use_reranking,
+                "backend_id": reranker.get("backend_id") if isinstance(reranker, dict) else None,
+            },
+        }
+
+        checks["provider"] = {
+            "status": "ok" if self._provider is not None else "warn",
+            "message": None if self._provider is not None else "No generator provider configured; grounded summaries remain available",
+            "details": {"configured": self._provider is not None},
+        }
+
+        has_failures = any(check["status"] == "fail" for check in checks.values())
+        has_warnings = any(check["status"] == "warn" for check in checks.values())
+        return {
+            "ready": not has_failures,
+            "level": "not_ready" if has_failures else ("degraded" if has_warnings else "ready"),
+            "checks": checks,
+        }
+
+    def get_eval_audit_context(self) -> dict[str, Any]:
+        """Return redacted runtime context for durable eval reports."""
+        corpus = (
+            self._retrieval.get_corpus_manifest()
+            if hasattr(self._retrieval, "get_corpus_manifest")
+            else {}
+        )
+        runtime_profile = (
+            self._retrieval.get_runtime_profile()
+            if hasattr(self._retrieval, "get_runtime_profile")
+            else {}
+        )
+        model_status = self.get_model_status()
+        config_snapshot: dict[str, Any] = {}
+        if self._config is not None:
+            config_snapshot = self._redacted_config_snapshot(self._config.model_dump(mode="json"))
+
+        return {
+            "corpus": corpus,
+            "runtime_profile": runtime_profile,
+            "model_status": model_status,
+            "config_snapshot": config_snapshot,
+        }
+
+    @staticmethod
+    def _redacted_config_snapshot(value: Any) -> Any:
+        """Remove secret-shaped values from config snapshots."""
+        secret_terms = ("apikey", "authorization", "token", "secret", "password", "credential")
+        if isinstance(value, dict):
+            return {
+                key: (
+                    "[redacted]"
+                    if any(term in re.sub(r"[^a-z0-9]", "", key.lower()) for term in secret_terms)
+                    and item is not None
+                    else Orchestrator._redacted_config_snapshot(item)
+                )
+                for key, item in value.items()
+            }
+        if isinstance(value, list):
+            return [Orchestrator._redacted_config_snapshot(item) for item in value]
+        return value

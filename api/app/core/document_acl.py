@@ -15,7 +15,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -50,8 +50,8 @@ class DocumentACL:
     owner: str  # User ID who owns the document
     readers: list[str] = field(default_factory=list)  # User IDs or "*" for public
     writers: list[str] = field(default_factory=list)  # User IDs who can modify
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -77,19 +77,19 @@ class DocumentACL:
         """Add a reader."""
         if user_id not in self.readers:
             self.readers.append(user_id)
-            self.updated_at = datetime.utcnow()
+            self.updated_at = datetime.now(UTC)
 
     def add_writer(self, user_id: str) -> None:
         """Add a writer (writers can also read)."""
         if user_id not in self.writers:
             self.writers.append(user_id)
-            self.updated_at = datetime.utcnow()
+            self.updated_at = datetime.now(UTC)
 
     def remove_reader(self, user_id: str) -> bool:
         """Remove a reader."""
         if user_id in self.readers:
             self.readers.remove(user_id)
-            self.updated_at = datetime.utcnow()
+            self.updated_at = datetime.now(UTC)
             return True
         return False
 
@@ -97,7 +97,7 @@ class DocumentACL:
         """Remove a writer."""
         if user_id in self.writers:
             self.writers.remove(user_id)
-            self.updated_at = datetime.utcnow()
+            self.updated_at = datetime.now(UTC)
             return True
         return False
 
@@ -105,12 +105,12 @@ class DocumentACL:
         """Make document publicly readable."""
         if "*" not in self.readers:
             self.readers.append("*")
-            self.updated_at = datetime.utcnow()
+            self.updated_at = datetime.now(UTC)
 
     def make_private(self) -> None:
         """Make document private (owner-only)."""
         self.readers = [r for r in self.readers if r != "*"]
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(UTC)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -131,8 +131,8 @@ class DocumentACL:
             owner=data["owner"],
             readers=data.get("readers", []),
             writers=data.get("writers", []),
-            created_at=datetime.fromisoformat(data["created_at"]) if "created_at" in data else datetime.utcnow(),
-            updated_at=datetime.fromisoformat(data["updated_at"]) if "updated_at" in data else datetime.utcnow(),
+            created_at=datetime.fromisoformat(data["created_at"]) if "created_at" in data else datetime.now(UTC),
+            updated_at=datetime.fromisoformat(data["updated_at"]) if "updated_at" in data else datetime.now(UTC),
             metadata=data.get("metadata", {}),
         )
 

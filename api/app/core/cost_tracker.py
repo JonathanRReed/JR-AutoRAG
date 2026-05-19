@@ -12,7 +12,7 @@ Enables cost-aware routing and budget management.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 
@@ -148,7 +148,7 @@ class CostLatencyTracker:
 
         self._history: list[RequestMetrics] = []
         self._current_window_cost = 0.0
-        self._window_start = datetime.utcnow()
+        self._window_start = datetime.now(UTC)
 
     def estimate_cost(
         self,
@@ -198,7 +198,7 @@ class CostLatencyTracker:
 
         metrics = RequestMetrics(
             request_id=request_id,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             tokens=tokens,
             cost=cost,
             latency=latency,
@@ -222,7 +222,7 @@ class CostLatencyTracker:
 
     def _update_budget_window(self, cost: float) -> None:
         """Update budget window tracking."""
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
 
         # Check if we need to reset window
         if now - self._window_start > self.budget_window:
@@ -257,7 +257,7 @@ class CostLatencyTracker:
         Returns:
             AggregatedMetrics with summaries
         """
-        end = end or datetime.utcnow()
+        end = end or datetime.now(UTC)
         start = start or (end - timedelta(hours=24))
 
         # Filter to time window
@@ -325,7 +325,7 @@ class CostLatencyTracker:
         """Clear all history."""
         self._history.clear()
         self._current_window_cost = 0.0
-        self._window_start = datetime.utcnow()
+        self._window_start = datetime.now(UTC)
 
 
 # Singleton

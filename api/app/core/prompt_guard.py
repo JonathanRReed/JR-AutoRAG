@@ -399,7 +399,7 @@ def get_ingestion_warning(content: str) -> str | None:
     pattern_names = {name for _, _, name in detections}
 
     return (
-        f"⚠️ This document may contain prompt injection attempts. "
+        f"This document may contain prompt injection attempts. "
         f"Detected patterns: {', '.join(pattern_names)}. "
         f"Threat level: {threat_level.value}. "
         f"Content will be sanitized during ingestion."
@@ -420,4 +420,3 @@ __all__ = [
     "sanitize_at_ingest",
     "get_ingestion_warning",
 ]
-

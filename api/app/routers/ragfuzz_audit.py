@@ -17,7 +17,7 @@ import hashlib
 import os
 import secrets
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -193,7 +193,7 @@ async def inject_poison_document(
         "_ragfuzz_poison": True,
         "_poison_type": request.poison_type,
         "_canary_token": canary,
-        "_injected_at": datetime.utcnow().isoformat(),
+        "_injected_at": datetime.now(UTC).isoformat(),
     }
 
     try:
@@ -208,7 +208,7 @@ async def inject_poison_document(
 
     audit_log = get_audit_log()
     audit_log.log(AuditEntry(
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(UTC),
         action=AuditAction.INGEST,
         details={
             "ragfuzz": True,
@@ -221,7 +221,7 @@ async def inject_poison_document(
     return PoisonDocumentResponse(
         document_id=doc_id,
         canary_token=canary,
-        injected_at=datetime.utcnow().isoformat(),
+        injected_at=datetime.now(UTC).isoformat(),
         content_hash=content_hash,
     )
 
@@ -268,7 +268,7 @@ async def check_canary_leak(
 
     audit_log = get_audit_log()
     audit_log.log(AuditEntry(
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(UTC),
         action=AuditAction.QUERY,
         details={
             "ragfuzz": True,
@@ -365,7 +365,7 @@ async def remove_poison_document(
 
     audit_log = get_audit_log()
     audit_log.log(AuditEntry(
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(UTC),
         action=AuditAction.DELETE,
         details={
             "ragfuzz": True,

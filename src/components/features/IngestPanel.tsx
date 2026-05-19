@@ -59,7 +59,7 @@ function InlineHint({ label, detail }: { label: string; detail: string }) {
             className="inline-flex items-center gap-2 rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium text-muted-foreground"
             title={detail}
         >
-            <Info className="h-3.5 w-3.5 text-secondary-foreground" />
+            <Info className="h-3.5 w-3.5 text-muted-foreground" />
             <span className="truncate">{label}</span>
         </span>
     );
@@ -330,14 +330,14 @@ export function IngestPanel({
                                     ) : item.status === "error" ? (
                                         <XCircle className="h-4 w-4 text-destructive" />
                                     ) : item.status === "uploading" || item.status === "processing" ? (
-                                        <Loader2 className="h-4 w-4 text-secondary-foreground animate-spin" />
+                                        <Loader2 className="h-4 w-4 text-muted-foreground animate-spin" />
                                     ) : (
                                         <div className="h-4 w-4 rounded-full bg-muted" />
                                     )}
                                     <span className="flex-1 truncate font-medium">{item.filename}</span>
                                     <span className={`text-xs font-semibold uppercase tracking-wide ${item.status === "done" ? "text-primary" :
                                         item.status === "error" ? "text-destructive" :
-                                            "text-secondary-foreground"
+                                            "text-muted-foreground"
                                         }`}>
                                         {item.status}
                                     </span>
@@ -393,16 +393,16 @@ export function IngestPanel({
                         </div>
                         <div className="space-y-2 text-sm">
                             <div className="flex items-center gap-2">
-                                <span className="h-2 w-2 rounded-full bg-amber-500" />
+                                <span className="h-2 w-2 rounded-full bg-secondary" />
                                 <span className="text-foreground">Add at least one document or text snippet</span>
                             </div>
                             <div className="flex items-center gap-2">
-                                <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                                <span className="h-2 w-2 rounded-full bg-primary" />
                                 <span className="text-foreground">Automatic OCR + indexing will start on upload</span>
                             </div>
                         </div>
                         <div className="text-xs text-muted-foreground">
-                            Drag and drop multiple files at once; we’ll queue, parse, and confirm readiness.
+                            Drag and drop multiple files at once; we will queue, parse, and confirm readiness.
                         </div>
                     </div>
                 )}

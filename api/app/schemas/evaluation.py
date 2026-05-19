@@ -83,6 +83,9 @@ class EvalRunResultSchema(BaseModel):
     answer_metrics: AnswerMetricsSchema
     individual_results: list[TestCaseResultSchema] = Field(default_factory=list)
     duration_ms: float = 0.0
+    audit: dict = Field(default_factory=dict)
+    report_path: str = ""
+    report_sha256: str = ""
 
 
 class EvalRunSummary(BaseModel):
@@ -93,6 +96,9 @@ class EvalRunSummary(BaseModel):
     retrieval_metrics: RetrievalMetricsSchema
     answer_metrics: AnswerMetricsSchema
     duration_ms: float = 0.0
+    report_path: str = ""
+    report_sha256: str = ""
+    audit: dict = Field(default_factory=dict)
 
 
 class RunComparisonResult(BaseModel):

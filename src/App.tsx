@@ -1,17 +1,35 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BarChart3, FileText, MessageSquare, Moon, Settings, Sun, Trophy } from "lucide-react";
+import {
+  Activity,
+  ArrowRight,
+  BarChart3,
+  Database,
+  FileCheck2,
+  FileText,
+  Home,
+  MessageSquare,
+  Moon,
+  PackageCheck,
+  Settings,
+  ShieldCheck,
+  Sun,
+  TerminalSquare,
+  Trophy,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/components/ui/toast";
 import { LoadingSpinner } from "@/components/ui/loading";
+import { buildApiUrl, resolveDefaultApiBaseUrl } from "@/lib/api-url";
 
 const AdvancedRAGSettings = lazy(() => import("@/components/features/AdvancedRAGSettings").then(m => ({ default: m.AdvancedRAGSettings })));
 const ChatInterface = lazy(() => import("@/components/features/ChatInterface").then(m => ({ default: m.ChatInterface })));
 const EnterpriseStatusPanel = lazy(() => import("@/components/features/EnterpriseStatusPanel").then(m => ({ default: m.EnterpriseStatusPanel })));
 const IngestPanel = lazy(() => import("@/components/features/IngestPanel").then(m => ({ default: m.IngestPanel })));
 const MetricsDashboard = lazy(() => import("@/components/features/MetricsDashboard").then(m => ({ default: m.MetricsDashboard })));
+const OnboardingFlow = lazy(() => import("@/components/features/OnboardingFlow").then(m => ({ default: m.OnboardingFlow })));
 const ProviderConfig = lazy(() => import("@/components/features/ProviderConfig").then(m => ({ default: m.ProviderConfig })));
 const ProviderCarousel = lazy(() => import("@/components/features/ProviderCarousel").then(m => ({ default: m.ProviderCarousel })));
 const QualityCockpit = lazy(() => import("@/components/features/QualityCockpit").then(m => ({ default: m.QualityCockpit })));
@@ -24,6 +42,7 @@ import type {
   CacheStats,
   DocumentOut,
   IngestResponse,
+  InstallReportResponse,
   LocalProviderInfo,
   ModelStatus,
   ProviderConfig as ProviderConfigType,
@@ -31,35 +50,18 @@ import type {
   QueryResponse,
   RetrievalDefaults,
   RoleSelection,
+  SecurityPostureResponse,
   TraceOut,
   ChatSession,
   PresetLevel,
+  QueryMode,
   SubsystemBackendConfig,
   OCRPolicy,
+  DemoSeedResponse,
+  OnboardingState,
 } from "@/types";
 
-const resolveDefaultBaseUrl = () => {
-  const envBase =
-    (import.meta.env?.BUN_PUBLIC_API_BASE_URL as string | undefined) ||
-    (import.meta.env?.VITE_API_BASE_URL as string | undefined);
-  if (envBase) {
-    return envBase;
-  }
-  if (typeof window !== "undefined") {
-    try {
-      const url = new URL(window.location.href);
-      if (url.port === "3000") {
-        url.port = "8000";
-      }
-      return `${url.protocol}//${url.hostname}${url.port ? `:${url.port}` : ""}`;
-    } catch {
-      return "http://localhost:8000";
-    }
-  }
-  return "http://localhost:8000";
-};
-
-const defaultBaseUrl = resolveDefaultBaseUrl();
+const defaultBaseUrl = resolveDefaultApiBaseUrl();
 
 const formatNumber = (value?: number) =>
   typeof value === "number" && Number.isFinite(value) ? value.toFixed(2) : "0.00";
@@ -96,15 +98,18 @@ const formatDateTime = (value?: string) => {
   return date.toLocaleString();
 };
 
-type TabId = "config" | "documents" | "query" | "quality" | "metrics";
+type TabId = "home" | "config" | "documents" | "query" | "quality" | "metrics";
 
 const tabs: { id: TabId; label: string; icon: typeof Settings }[] = [
+  { id: "home", label: "Home", icon: Home },
   { id: "config", label: "Configuration", icon: Settings },
   { id: "documents", label: "Documents", icon: FileText },
   { id: "query", label: "Query", icon: MessageSquare },
   { id: "quality", label: "Quality", icon: Trophy },
   { id: "metrics", label: "Metrics", icon: BarChart3 },
 ];
+
+const validTabs = tabs.map(tab => tab.id);
 
 export function App() {
   const { toast } = useToast();
@@ -121,6 +126,7 @@ export function App() {
   const [documents, setDocuments] = useState<DocumentOut[]>([]);
   const [traces, setTraces] = useState<TraceOut[]>([]);
   const [cacheStats, setCacheStats] = useState<CacheStats | null>(null);
+  const [securityPosture, setSecurityPosture] = useState<SecurityPostureResponse | null>(null);
   const [question, setQuestion] = useState("");
   const [queryResult, setQueryResult] = useState<QueryResponse | null>(null);
   const [chatHistory, setChatHistory] = useState<{ role: string; content: string }[]>(() => {
@@ -160,16 +166,19 @@ export function App() {
   const [localSelections, setLocalSelections] = useState<Record<string, RoleSelection>>({});
   const [isUploadingFile, setIsUploadingFile] = useState(false);
   const [isClearingCache, setIsClearingCache] = useState(false);
+  const [onboarding, setOnboarding] = useState<OnboardingState | null>(null);
+  const [isSeedingDemo, setIsSeedingDemo] = useState(false);
+  const [onboardingMode, setOnboardingMode] = useState<"guided" | "advanced">("guided");
   const [ingestSync, setIngestSync] = useState(true);
   const [langextractProfileOverride, setLangextractProfileOverride] = useState("__global__");
   const [langextractPromptOverride, setLangextractPromptOverride] = useState("");
   const [activeTab, setActiveTab] = useState<TabId>(() => {
-    if (typeof window === "undefined") return "config";
+    if (typeof window === "undefined") return "home";
     const saved = localStorage.getItem("activeTab");
-    if (saved && ["config", "documents", "query", "quality", "metrics"].includes(saved)) {
+    if (saved && validTabs.includes(saved as TabId)) {
       return saved as TabId;
     }
-    return "config";
+    return "home";
   });
 
   useEffect(() => {
@@ -181,14 +190,15 @@ export function App() {
   });
   const [checklistDismissed, setChecklistDismissed] = useState(false);
   const [isCheckingModels, setIsCheckingModels] = useState(false);
+  const [isExportingInstallReport, setIsExportingInstallReport] = useState(false);
   const [isDownloadingEmbedding, setIsDownloadingEmbedding] = useState(false);
   const [isDownloadingReranker, setIsDownloadingReranker] = useState(false);
   const [modelActionMessage, setModelActionMessage] = useState("");
   const [isDarkMode, setIsDarkMode] = useState(() => {
     if (typeof window !== "undefined") {
-      return window.matchMedia("(prefers-color-scheme: dark)").matches;
+      return localStorage.getItem("jr-autorag-theme") !== "light";
     }
-    return false;
+    return true;
   });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const buildHeaders = useCallback(
@@ -212,6 +222,7 @@ export function App() {
     }
     return "balanced";
   });
+  const [queryMode, setQueryMode] = useState<QueryMode>("grounded");
 
   // Toggle dark mode
   useEffect(() => {
@@ -225,6 +236,12 @@ export function App() {
   useEffect(() => {
     localStorage.setItem("jr-autorag-preset", activePreset);
   }, [activePreset]);
+
+  useEffect(() => {
+    if (config?.query_mode) {
+      setQueryMode(config.query_mode);
+    }
+  }, [config?.query_mode]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -241,8 +258,10 @@ export function App() {
   useEffect(() => {
     if (isDarkMode) {
       document.documentElement.classList.add("dark");
+      localStorage.setItem("jr-autorag-theme", "dark");
     } else {
       document.documentElement.classList.remove("dark");
+      localStorage.setItem("jr-autorag-theme", "light");
     }
   }, [isDarkMode]);
 
@@ -253,7 +272,7 @@ export function App() {
     }
   }, [chatHistory, queryResult?.answer, activeTab]);
 
-  const buildUrl = (path: string) => `${baseUrl.replace(/\/$/, "")}${path}`;
+  const buildUrl = (path: string) => buildApiUrl(baseUrl, path);
 
   const fetchJson = async <T,>(path: string, init?: RequestInit): Promise<T> => {
     try {
@@ -387,11 +406,12 @@ export function App() {
 
   const refreshAll = async () => {
     try {
-      const [cfg, docs, traceList, cache] = await Promise.all([
+      const [cfg, docs, traceList, cache, posture] = await Promise.all([
         fetchJson<AppConfig>("/config"),
         fetchJson<DocumentOut[]>("/documents"),
         fetchJson<TraceOut[]>("/monitoring/traces"),
         fetchJson<CacheStats>("/monitoring/cache"),
+        fetchJson<SecurityPostureResponse>("/security/posture"),
       ]);
       setConfig(cfg);
       setSelectedProfile(cfg.profile);
@@ -399,10 +419,20 @@ export function App() {
       setDocuments(docs);
       setTraces(traceList);
       setCacheStats(cache);
+      setSecurityPosture(posture);
       setStatus("API data loaded");
       setIsConnected(true);
     } catch (error) {
       setStatus(`Failed to load data: ${toMessage(error)}`);
+    }
+  };
+
+  const refreshOnboarding = async () => {
+    try {
+      const data = await fetchJson<OnboardingState>("/onboarding");
+      setOnboarding(data);
+    } catch (error) {
+      setStatus(`Onboarding failed to load: ${toMessage(error)}`);
     }
   };
 
@@ -430,6 +460,29 @@ export function App() {
       });
     } finally {
       setIsCheckingModels(false);
+    }
+  };
+
+  const downloadInstallReport = async () => {
+    setIsExportingInstallReport(true);
+    try {
+      const report = await fetchJson<InstallReportResponse>("/install/report");
+      const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const timestamp = report.generated_at.replace(/[:.]/g, "-");
+      link.href = url;
+      link.download = `jr-autorag-install-report-${timestamp}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      toast({ title: "Install report exported", description: report.status, variant: "success" });
+    } catch (error) {
+      setStatus(`Install report export failed: ${toMessage(error)}`);
+      toast({ title: "Install report export failed", description: toMessage(error), variant: "error" });
+    } finally {
+      setIsExportingInstallReport(false);
     }
   };
 
@@ -508,8 +561,8 @@ export function App() {
 
   useEffect(() => {
     refreshAll();
+    refreshOnboarding();
     refreshLocalProviders();
-    handleTestConnection(); // Check connection explicitly on mount/change
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [baseUrl]);
 
@@ -727,8 +780,8 @@ export function App() {
       }
 
       const payload = useFilter
-        ? { question: currentQuestion, document_ids: selectedDocumentIds, history: historyToSend, conversation_id: localSessionId }
-        : { question: currentQuestion, history: historyToSend, conversation_id: localSessionId };
+        ? { question: currentQuestion, document_ids: selectedDocumentIds, history: historyToSend, conversation_id: localSessionId, query_mode: queryMode }
+        : { question: currentQuestion, history: historyToSend, conversation_id: localSessionId, query_mode: queryMode };
       const response = await fetch(buildUrl("/query/stream"), {
         method: "POST",
         headers,
@@ -959,6 +1012,38 @@ export function App() {
     }
   };
 
+  const handleSeedDemo = async () => {
+    setIsSeedingDemo(true);
+    setStatus("Loading demo corpus...");
+    try {
+      const result = await fetchJson<DemoSeedResponse>("/onboarding/demo/seed", {
+        method: "POST",
+        headers,
+      });
+      setStatus(`Demo corpus ready with ${result.document_count} document(s)`);
+      toast({
+        title: "Demo corpus ready",
+        description: `${result.seeded.length} added, ${result.skipped.length} already present`,
+        variant: "success",
+      });
+      await refreshAll();
+      await refreshOnboarding();
+    } catch (error) {
+      setStatus(`Demo setup failed: ${toMessage(error)}`);
+      toast({ title: "Demo setup failed", description: toMessage(error), variant: "error" });
+    } finally {
+      setIsSeedingDemo(false);
+    }
+  };
+
+  const handleAskExample = (query: string) => {
+    setActiveTab("query");
+    setQuestion(query);
+    if (documents.length > 0 && !isQuerying) {
+      void handleAsk(query);
+    }
+  };
+
   const handleClearCache = async () => {
     const confirmed = window.confirm(
       "Clear all cached indexes and query results? This will require a rebuild on next query."
@@ -1154,55 +1239,88 @@ export function App() {
 
   const docsReady = documents.length > 0;
   const modelsReady = Boolean(config?.provider?.planner_model && config?.provider?.generator_model);
-  const apiReady = isConnected;
+  const apiReady = isConnected || Boolean(config);
+  const securityLevel = securityPosture?.level ?? "needs_attention";
+  const securityReady = securityLevel === "client_ready" || securityLevel === "local_only";
+  const securityLabel = securityLevel.replace("_", " ");
+  const securityBlockers = securityPosture?.checks.filter(check => check.status === "fail").length ?? 0;
+  const readyChecks = [
+    { label: "API", ready: apiReady, detail: apiReady ? "FastAPI reachable" : "Connect local API" },
+    {
+      label: "Models",
+      ready: modelsReady,
+      detail: modelsReady ? "Planner and generator selected" : "Choose local or routed models",
+    },
+    {
+      label: "Corpus",
+      ready: docsReady,
+      detail: docsReady ? `${documents.length} document${documents.length === 1 ? "" : "s"} indexed` : "Ingest client documents",
+    },
+    {
+      label: "Security",
+      ready: securityReady,
+      detail: securityPosture?.summary ?? "Load security posture",
+    },
+  ];
+  const readyPercent = Math.round((readyChecks.filter(check => check.ready).length / readyChecks.length) * 100);
+  const providerName = config?.provider?.name || "No provider selected";
+  const retrievalMode = activePreset.replace("_", " ");
+  const demoMode = onboarding?.demo_mode ?? false;
+  const demoSeeded = Boolean(onboarding?.demo_seeded || onboarding?.demo_document_count || docsReady);
 
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-background transition-colors duration-300">
-      {/* Header */}
-      {/* Header */}
       <header className="flex-none relative z-50 border-b border-border/60 bg-background/95">
-        <div className="mx-auto flex max-w-[1600px] items-center justify-between px-4 py-3">
-          <div className="flex items-center gap-8">
-            <div className="flex items-center gap-3">
+        <div className="mx-auto grid max-w-[1600px] grid-cols-[minmax(0,148px)_minmax(0,1fr)_auto] items-center gap-2 px-3 py-2 sm:grid-cols-[minmax(0,176px)_minmax(0,1fr)_auto] sm:gap-3 sm:px-4">
+          <div className="flex min-w-0 items-center gap-2">
+            <div className="flex min-w-0 items-center gap-2.5">
               <img
                 src="/HWC-Icon.png"
                 alt="JR AutoRAG"
-                className="h-10 w-10 rounded-lg object-cover shadow-sm"
+                className="size-9 shrink-0 rounded-lg object-cover shadow-sm"
               />
-              <div>
-                <h1 className="text-xl font-bold text-foreground">JR AutoRAG</h1>
-                <p className="text-xs text-muted-foreground">Admin Console</p>
+              <div className="min-w-0">
+                <h1 className="truncate text-lg font-bold leading-tight text-foreground sm:text-xl">JR AutoRAG</h1>
+                <p className="hidden truncate text-xs text-muted-foreground sm:block">Local RAG Command Center</p>
               </div>
             </div>
-
-            {/* Top Navigation */}
-            <nav className="flex items-center gap-1 bg-muted/30 p-1 rounded-lg" role="tablist" aria-label="Main navigation">
-              {tabs.map(tab => {
-                const Icon = tab.icon;
-                const isActive = activeTab === tab.id;
-                return (
-                  <button
-                    key={tab.id}
-                    onClick={() => setActiveTab(tab.id)}
-                    role="tab"
-                    aria-selected={isActive}
-                    aria-controls={`tabpanel-${tab.id}`}
-                    className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-all ${isActive
-                      ? "bg-primary text-primary-foreground shadow-sm"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                      }`}
-                  >
-                    <Icon className="h-4 w-4" />
-                    {tab.label}
-                  </button>
-                );
-              })}
-            </nav>
           </div>
 
-          <div className="flex items-center gap-4">
+          {/* Top Navigation */}
+          <nav className="no-scrollbar flex min-w-0 items-center gap-1 overflow-x-auto rounded-lg bg-muted/30 p-1" role="tablist" aria-label="Main navigation">
+            {tabs.map(tab => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+	                  role="tab"
+	                  aria-selected={isActive}
+	                  aria-controls={`tabpanel-${tab.id}`}
+	                  aria-label={tab.label}
+	                  title={tab.label}
+                  className={`flex shrink-0 items-center gap-2 rounded-md px-2.5 py-1.5 text-sm font-medium transition-all ${isActive
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                    }`}
+                >
+                  <Icon className="size-4 shrink-0" />
+                  <span className="hidden sm:inline">{tab.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+
+          <div className="flex min-w-0 items-center justify-end gap-2">
             {/* API URL */}
-            <div className="hidden lg:flex items-center gap-2">
+            <form
+              className="hidden 2xl:flex items-center gap-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void handleTestConnection();
+              }}
+            >
               <Input
                 className="w-48 text-xs"
                 value={baseUrl}
@@ -1219,19 +1337,22 @@ export function App() {
                 placeholder="X-API-Key (session)"
                 aria-label="API key"
               />
-              <Button size="sm" variant="outline" onClick={handleTestConnection}>
+              <Button size="sm" variant="outline" type="submit">
                 {apiReady ? "Connected" : "Connect"}
               </Button>
-            </div>
+            </form>
 
             {/* Checklist items indicator */}
-            <div className="flex items-center gap-1.5 text-xs text-muted-foreground/80 bg-muted/30 px-3 py-1.5 rounded-full">
-              <div className={`h-2 w-2 rounded-full ${apiReady ? "bg-green-500" : "bg-red-500"}`} />
-              <span className="font-medium mr-2">API</span>
-              <div className={`h-2 w-2 rounded-full ${modelsReady ? "bg-green-500" : "bg-yellow-500"}`} />
-              <span className="font-medium mr-2">Models</span>
-              <div className={`h-2 w-2 rounded-full ${docsReady ? "bg-green-500" : "bg-yellow-500"}`} />
-              <span className="font-medium">Knowledge</span>
+            <div
+              className="hidden items-center gap-1.5 rounded-full bg-muted/30 px-2.5 py-1.5 text-xs text-muted-foreground/80 xl:flex"
+              aria-label={`Readiness: API ${apiReady ? "ready" : "needs attention"}, models ${modelsReady ? "ready" : "needs attention"}, knowledge ${docsReady ? "ready" : "needs attention"}, security ${securityReady ? "ready" : "needs attention"}`}
+            >
+              {readyChecks.map(check => (
+                <div key={check.label} className="flex items-center gap-1.5">
+                  <div className={`h-2 w-2 rounded-full ${check.ready ? "bg-primary" : "bg-secondary"}`} />
+                  <span className="font-medium">{check.label === "Corpus" ? "Knowledge" : check.label}</span>
+                </div>
+              ))}
             </div>
 
             {/* Theme Toggle */}
@@ -1252,6 +1373,204 @@ export function App() {
       <main className="flex-1 min-h-0 mx-auto w-full max-w-[1600px]">
         <div className="flex h-full flex-col">
           <div className={`flex-1 bg-background ${activeTab === "query" ? "overflow-hidden p-0" : "overflow-auto p-6"}`}>
+            <div className={`h-full animate-in fade-in slide-in-from-bottom-2 duration-300 ${activeTab !== "home" ? "hidden" : ""}`}>
+              <div className="mx-auto flex max-w-[1500px] flex-col gap-6">
+                <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
+                  <div className="rounded-lg border border-border/60 bg-card p-6 shadow-sm">
+                    <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="max-w-3xl">
+                        <div className="mb-3 flex items-center gap-2 text-sm font-medium text-primary">
+                          <ShieldCheck className="size-4" />
+                          Local-first enterprise install
+                        </div>
+                        <h2 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
+                          Install private AutoRAG for real client knowledge bases.
+                        </h2>
+                        <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">
+                          Connect the local API, choose private model routes, ingest client documents, inspect retrieval evidence, and export the receipts needed for a B2B handoff.
+                        </p>
+                      </div>
+
+                      <div className="grid min-w-[260px] gap-2 rounded-lg border border-border/60 bg-muted/10 p-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-sm font-medium text-muted-foreground">Install readiness</span>
+                          <span className="font-mono text-2xl font-semibold text-foreground">{readyPercent}%</span>
+                        </div>
+                        <div className="h-2 overflow-hidden rounded-full bg-muted">
+                          <div className="h-full rounded-full bg-primary transition-all duration-300" style={{ width: `${readyPercent}%` }} />
+                        </div>
+                        <div className="text-xs leading-relaxed text-muted-foreground">
+                          {demoMode ? "Demo mode is active for this run. Use persistent mode for client installs." : "Persistent local mode is active for client installs."}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border border-border/60 bg-card p-5 shadow-sm">
+                    <div className="mb-4 flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-semibold text-foreground">Install Path</div>
+                        <div className="text-xs text-muted-foreground">Bring a client workspace online.</div>
+                      </div>
+                      <PackageCheck className="size-5 text-primary" />
+                    </div>
+                    <div className="grid gap-2">
+                      <Button onClick={() => setActiveTab("documents")}>
+                        <FileText className="size-4" />
+                        Ingest Client Documents
+                      </Button>
+                      <div className="grid grid-cols-2 gap-2">
+                        <Button variant="outline" onClick={() => setActiveTab("config")}>
+                          <Settings className="size-4" />
+                          Configure
+                        </Button>
+                        <Button variant="outline" onClick={() => setActiveTab("query")}>
+                          <MessageSquare className="size-4" />
+                          Query
+                        </Button>
+                      </div>
+                      <Button variant="secondary" onClick={() => setActiveTab("quality")}>
+                        <FileCheck2 className="size-4" />
+                        Prove Readiness
+                      </Button>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="grid gap-4 lg:grid-cols-4">
+                  {readyChecks.map(check => (
+                    <div key={check.label} className="rounded-lg border border-border/60 bg-card p-5 shadow-sm">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-xs font-semibold uppercase text-muted-foreground">{check.label}</div>
+                          <div className="mt-2 text-lg font-semibold text-foreground">{check.ready ? "Ready" : "Needs attention"}</div>
+                          <div className="mt-1 text-sm leading-6 text-muted-foreground">{check.detail}</div>
+                        </div>
+                        <div className={`rounded-full border p-2 ${check.ready ? "border-primary/30 bg-primary/10 text-primary" : "border-border bg-muted/20 text-muted-foreground"}`}>
+                          {check.label === "API" ? <Activity className="size-4" /> : check.label === "Corpus" ? <FileText className="size-4" /> : <ShieldCheck className="size-4" />}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </section>
+
+                <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
+                  <Suspense fallback={<LoadingSpinner message="Loading onboarding..." />}>
+                    <OnboardingFlow
+                      onboarding={onboarding}
+                      apiReady={apiReady}
+                      docsReady={docsReady}
+                      modelsReady={modelsReady}
+                      isSeedingDemo={isSeedingDemo}
+                      activeMode={onboardingMode}
+                      onModeChange={setOnboardingMode}
+                      onSeedDemo={handleSeedDemo}
+                      onOpenTab={setActiveTab}
+                      onAskExample={handleAskExample}
+                    />
+                  </Suspense>
+
+                  <div className="grid content-start gap-4">
+                    <div className="rounded-lg border border-border/60 bg-card p-5 shadow-sm">
+                      <div className="mb-4 flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-sm font-semibold text-foreground">Delivery Evidence</div>
+                          <div className="text-xs text-muted-foreground">Artifacts an installer can hand to a client.</div>
+                        </div>
+                        <FileCheck2 className="size-5 text-primary" />
+                      </div>
+                      <div className="grid gap-3 text-sm">
+                        <div className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-muted/10 px-3 py-2">
+                          <span className="text-muted-foreground">Install doctor</span>
+                          <code className="rounded bg-muted px-2 py-1 text-xs text-foreground">bun run doctor</code>
+                        </div>
+                        <div className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-muted/10 px-3 py-2">
+                          <span className="text-muted-foreground">Client handoff</span>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => void downloadInstallReport()}
+                            disabled={!apiReady || isExportingInstallReport}
+                          >
+                            {isExportingInstallReport ? "Exporting" : "Export"}
+                            <ArrowRight className="size-4" />
+                          </Button>
+                        </div>
+                        <div className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-muted/10 px-3 py-2">
+                          <span className="text-muted-foreground">Quality receipts</span>
+                          <Button variant="ghost" size="sm" onClick={() => setActiveTab("quality")}>
+                            Open
+                            <ArrowRight className="size-4" />
+                          </Button>
+                        </div>
+                        <div className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-muted/10 px-3 py-2">
+                          <span className="text-muted-foreground">Runtime traces</span>
+                          <Button variant="ghost" size="sm" onClick={() => setActiveTab("metrics")}>
+                            Inspect
+                            <ArrowRight className="size-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-lg border border-border/60 bg-card p-5 shadow-sm">
+                      <div className="mb-4 flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-sm font-semibold text-foreground">Security Posture</div>
+                          <div className="text-xs text-muted-foreground">Pre-exposure checks for client installs.</div>
+                        </div>
+                        <ShieldCheck className={`size-5 ${securityReady ? "text-primary" : "text-destructive"}`} />
+                      </div>
+                      <div className="grid gap-3 text-sm">
+                        <div className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-muted/10 px-3 py-2">
+                          <span className="text-muted-foreground">Posture</span>
+                          <span className={`rounded-full px-2 py-1 text-xs font-semibold capitalize ${securityReady ? "bg-primary/10 text-primary" : "bg-destructive/10 text-destructive"}`}>
+                            {securityLabel}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-muted/10 px-3 py-2">
+                          <span className="text-muted-foreground">Blocking checks</span>
+                          <span className="font-mono text-foreground">{securityBlockers}</span>
+                        </div>
+                        <Button variant="outline" size="sm" onClick={() => setActiveTab("config")}>
+                          Open Configuration
+                          <ArrowRight className="size-4" />
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="rounded-lg border border-border/60 bg-card p-5 shadow-sm">
+                      <div className="mb-4 flex items-center gap-2">
+                        <TerminalSquare className="size-5 text-primary" />
+                        <div>
+                          <div className="text-sm font-semibold text-foreground">Current Runtime</div>
+                          <div className="text-xs text-muted-foreground">Local operator context.</div>
+                        </div>
+                      </div>
+                      <dl className="grid gap-3 text-sm">
+                        <div className="flex items-center justify-between gap-3">
+                          <dt className="text-muted-foreground">Provider</dt>
+                          <dd className="max-w-[220px] truncate font-medium text-foreground">{providerName}</dd>
+                        </div>
+                        <div className="flex items-center justify-between gap-3">
+                          <dt className="text-muted-foreground">Preset</dt>
+                          <dd className="font-medium capitalize text-foreground">{retrievalMode}</dd>
+                        </div>
+                        <div className="flex items-center justify-between gap-3">
+                          <dt className="text-muted-foreground">Documents</dt>
+                          <dd className="font-mono text-foreground">{documents.length}</dd>
+                        </div>
+                        <div className="flex items-center justify-between gap-3">
+                          <dt className="text-muted-foreground">Traces</dt>
+                          <dd className="font-mono text-foreground">{traces.length}</dd>
+                        </div>
+                      </dl>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </div>
+
             <div className={`h-full animate-in fade-in slide-in-from-bottom-2 duration-300 ${activeTab !== "config" ? "hidden" : ""}`}>
               {/* Configuration Panel */}
               <div className="space-y-6 max-w-[1600px] mx-auto">
@@ -1261,6 +1580,21 @@ export function App() {
                 </div>
 
                 <div className="grid gap-6">
+                  <Suspense fallback={<LoadingSpinner message="Loading onboarding..." />}>
+                    <OnboardingFlow
+                      onboarding={onboarding}
+                      apiReady={apiReady}
+                      docsReady={docsReady}
+                      modelsReady={modelsReady}
+                      isSeedingDemo={isSeedingDemo}
+                      activeMode={onboardingMode}
+                      onModeChange={setOnboardingMode}
+                      onSeedDemo={handleSeedDemo}
+                      onOpenTab={setActiveTab}
+                      onAskExample={handleAskExample}
+                    />
+                  </Suspense>
+
                   {/* Provider Carousel - Ollama, LM Studio, OpenRouter */}
                   <Suspense fallback={<LoadingSpinner message="Loading providers..." />}>
                     <ProviderCarousel
@@ -1456,13 +1790,13 @@ export function App() {
                                 <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1">
                                   <span className="bg-muted px-1.5 py-0.5 rounded text-[10px] uppercase">{doc.metadata?.source || "text"}</span>
                                   <span>{formatDateTime(doc.created_at)}</span>
-                                  <span>• {doc.chunk_count} chunks</span>
+                                  <span>- {doc.chunk_count} chunks</span>
                                 </div>
                               </div>
                               <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <div className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${doc.metadata?.processing_status === 'ready' ? 'bg-green-500/10 text-green-600' :
-                                  doc.metadata?.processing_status === 'error' ? 'bg-red-500/10 text-red-600' :
-                                    'bg-yellow-500/10 text-yellow-600'
+                                <div className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${doc.metadata?.processing_status === 'ready' ? 'bg-primary/10 text-primary' :
+                                  doc.metadata?.processing_status === 'error' ? 'bg-destructive/10 text-destructive' :
+                                    'bg-muted text-muted-foreground'
                                   }`}>
                                   {doc.metadata?.processing_status || 'unknown'}
                                 </div>
@@ -1513,6 +1847,8 @@ export function App() {
                   scrollRef={chatEndRef}
                   currentSessionId={currentSessionId}
                   preset={activePreset}
+                  queryMode={queryMode}
+                  onQueryModeChange={setQueryMode}
                   onPresetChange={async (preset) => {
                     setActivePreset(preset);
                     try {

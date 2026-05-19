@@ -237,7 +237,7 @@ class RetrievalQualityGates:
         risk, risk_factors = self.assess_hallucination_risk(chunks, avg_sim)
 
         if risk in (HallucinationRisk.HIGH, HallucinationRisk.CRITICAL):
-            warnings.append(f"⚠️ {risk.value.upper()} hallucination risk")
+            warnings.append(f"{risk.value.upper()} hallucination risk")
 
         # Decision to proceed
         proceed = len(failed) == 0 or risk == HallucinationRisk.LOW

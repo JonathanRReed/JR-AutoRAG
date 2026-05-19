@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from ..core.golden_eval import (
@@ -10,6 +12,7 @@ from ..core.golden_eval import (
     GoldenSetStore,
     GoldenTestCase,
 )
+from ..core.eval_gates import install_builtin_datasets
 from ..schemas.evaluation import (
     AnswerMetricsSchema,
     EvalRunResultSchema,
@@ -140,6 +143,17 @@ async def list_golden_sets():
     return [GoldenSetInfo(**info) for info in store.list_sets()]
 
 
+@router.post("/golden-sets/builtins", response_model=dict[str, Any])
+async def install_builtin_golden_sets():
+    """Install built-in benchmark packs, including the client-readiness suite."""
+    store = get_golden_store()
+    installed = install_builtin_datasets(store)
+    return {
+        "installed": installed,
+        "sets": store.list_sets(),
+    }
+
+
 @router.get("/golden-sets/{set_name}", response_model=list[GoldenTestCaseSchema])
 async def get_golden_set(set_name: str):
     """Get a specific golden set."""
@@ -210,6 +224,9 @@ async def run_batch_evaluation(
             for r in result.individual_results
         ],
         duration_ms=result.duration_ms,
+        audit=result.audit,
+        report_path=result.report_path,
+        report_sha256=result.report_sha256,
     )
 
 
@@ -219,6 +236,16 @@ async def list_eval_runs(limit: int = 50):
     store = get_eval_run_store()
     runs = store.list_runs(limit=limit)
     return [EvalRunSummary(**run) for run in runs]
+
+
+@router.get("/runs/{run_id}/report", response_model=dict[str, Any])
+async def get_eval_run_report(run_id: str):
+    """Get the durable JSON report artifact for an evaluation run."""
+    store = get_eval_run_store()
+    report = store.get_report(run_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail=f"Evaluation report '{run_id}' not found")
+    return report
 
 
 @router.get("/runs/{run_id}/compare/{other_run_id}", response_model=RunComparisonResult)

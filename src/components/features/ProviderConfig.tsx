@@ -30,7 +30,7 @@ function InlineHint({ label, detail }: { label: string; detail: string }) {
       className="inline-flex items-center gap-2 rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium text-muted-foreground"
       title={detail}
     >
-      <Info className="h-3.5 w-3.5 text-secondary-foreground" />
+      <Info className="h-3.5 w-3.5 text-muted-foreground" />
       <span className="truncate">{label}</span>
     </span>
   );
@@ -234,17 +234,18 @@ export function ProviderConfig({
               </div>
             </div>
 
-            <div className="space-y-2">
+            <form className="space-y-2" onSubmit={(event) => event.preventDefault()}>
               <Label htmlFor="apiKey" className="text-xs">API Key (if required)</Label>
               <Input
                 id="apiKey"
                 type="password"
                 value={configProvider?.api_key ?? ""}
                 onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateProvider("api_key", e.target.value)}
+                autoComplete="off"
                 placeholder="sk-..."
                 className="max-w-md"
               />
-            </div>
+            </form>
 
             <div className="space-y-3 rounded-lg border border-border/60 bg-muted/10 p-4">
               <div>
@@ -267,7 +268,7 @@ export function ProviderConfig({
                         className="font-mono text-xs"
                       />
                       <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                        {backend?.capabilities?.mode ?? "local"} · {backend?.capabilities?.requires_network ? "networked" : "offline-capable"}
+                        {backend?.capabilities?.mode ?? "local"} / {backend?.capabilities?.requires_network ? "networked" : "offline-capable"}
                       </p>
                     </div>
                   );

@@ -134,7 +134,7 @@ async def run_tests():
     print(f"Result: {res6 is not None}")
     assert res6 is not None
 
-    print("\n✅ All tests passed!")
+    print("\nAll tests passed!")
 
 if __name__ == "__main__":
     asyncio.run(run_tests())

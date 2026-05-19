@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 from functools import lru_cache
 from pathlib import Path
 
@@ -60,7 +61,13 @@ def _build_retrieval_config(cfg: AppConfig) -> HybridConfig:
 
 class ServiceContainer:
     def __init__(self, base_path: Path | None = None) -> None:
-        data_dir = Path(base_path or os.environ.get("JR_DATA_DIR", Path.cwd() / "data"))
+        self.demo_mode = os.environ.get("JR_DEMO_MODE", "").lower() in {"1", "true", "yes"}
+        self._demo_tmpdir: tempfile.TemporaryDirectory[str] | None = None
+        if base_path is None and self.demo_mode and not os.environ.get("JR_DATA_DIR"):
+            self._demo_tmpdir = tempfile.TemporaryDirectory(prefix="jr-autorag-demo-")
+            data_dir = Path(self._demo_tmpdir.name)
+        else:
+            data_dir = Path(base_path or os.environ.get("JR_DATA_DIR", Path.cwd() / "data"))
         data_dir.mkdir(parents=True, exist_ok=True)
         self.config_store = ConfigStore(data_dir / "config.json")
         self.document_store = DocumentStore(

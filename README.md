@@ -1,261 +1,303 @@
 # JR AutoRAG
 
-**JR AutoRAG** is a 100% local, enterprise-ready Retrieval Augmented Generation workbench. Run your own FastAPI backend and Bun/React admin console to ingest docs, configure local LLMs (Ollama / LM Studio), and inspect the full pipeline with transparent traces.
+JR AutoRAG is a local-first Retrieval-Augmented Generation workbench for document-grounded AI systems. It pairs a Bun and React admin console with a FastAPI backend so you can ingest documents, configure local LLM providers, ask grounded questions, inspect citations, and review pipeline traces.
 
-**v3.0** brings production-grade security, reproducibility features, evaluation gates, and a plugin architecture.
+The product is built for two use cases:
 
----
+- Normal product use: persistent local documents, provider configuration, retrieval, citations, and traces.
+- Evaluator demo use: a disposable local corpus that gets an evaluator to a credible first answer quickly.
 
-## At a glance
+## What It Shows
 
-- **Local-first**: No cloud required; keep data on-device.
-- **Production-ready security**: API key auth, rate limiting, secrets vault, and safe defaults.
-- **Provider auto-detect**: Ollama / LM Studio discovery with one-click config save.
-- **Document ingestion**: Drag/drop PDFs, DOC/DOCX, Markdown, TXT + inline text; OCR fallback for scans.
-- **Presets & profiles**: Fast / Balanced / Thorough retrieval presets; save provider profiles.
-- **Observability**: Per-step traces, tokens, timing, and errors.
-- **Evaluation gates**: Built-in benchmarks with pass/fail thresholds for CI/CD.
-- **Plugin architecture**: Extend with custom retrievers, chunkers, and more.
-
-## What's New in v3.0
-
-| Feature | Description |
-|---------|-------------|
-| **Security Middleware** | API key auth, rate limiting, request size limits, security headers |
-| **Secrets Vault** | OS keychain integration + encrypted vault for API keys |
-| **Config Snapshots** | Immutable configuration snapshots for reproducibility |
-| **Trace Replay & Diff** | Replay past queries and compare traces |
-| **Evaluation Gates** | Hard thresholds that fail builds if quality drops |
-| **Loop Budgets** | Max iterations, tokens, and time limits for iterative loops |
-| **Answerability Calibration** | Multi-dimensional scoring for abstention decisions |
-| **Span-Level Citations** | Character-offset citations with claim extraction |
-| **Document ACLs** | Per-document access control and query-time filtering |
-| **PII Detection** | Detect and redact sensitive information |
-| **Plugin Architecture** | Stable ABCs for custom components |
+- Local-first document ingestion for PDF, DOCX, Markdown, TXT, and pasted text.
+- Provider discovery for Ollama and LM Studio, with manual OpenAI-compatible profiles.
+- Hybrid retrieval with dense vectors, sparse matching, reranking, evidence contracts, and answerability calibration.
+- Visible RAG controls for grounded vs open querying, presets, query scope, and trace inspection.
+- Quality cockpit surfaces for parser preview, recommendations, experiment runs, and evaluation signals.
+- Security defaults for localhost, optional API-key auth, request limits, safe CORS, and local-only deployment policy.
 
 ## Architecture
 
 ```text
-┌────────────────┐      ┌──────────────────┐
-│ Bun + React UI │ ───▶ │ FastAPI Backend │ ──▶ Providers (Ollama / LM Studio / Cloud)
-└────────────────┘      └──────────────────┘
-         │                          │
-         └────── Documents / Traces ─┘ (JSON stores under `data/`)
-```
-
-## Quickstart (5 minutes)
-
-```bash
-# 1) Install deps
-bun install
-cd api && python3 -m pip install -r requirements.txt
-
-# 2) Run everything (from repo root)
-bun run dev:all
-# UI: http://localhost:3000  | API: http://localhost:8000
-
-# 3) In the UI header, click Test next to API Base URL — expect "API reachable"
++----------------+      +------------------+      +-----------------------------+
+| Bun + React UI | ---> | FastAPI Backend  | ---> | Ollama / LM Studio / APIs   |
++----------------+      +------------------+      +-----------------------------+
+         |                         |
+         |                         +--> Documents, indexes, traces, metrics
+         +--> shadcn-based admin console
 ```
 
 ## Requirements
 
-- Bun v1.3+
-- Python 3.11 + pip
-- OCR (for scanned PDFs):
+- Bun 1.3 or newer.
+- Python 3.11 or newer.
+- uv 0.11 or newer for Python dependency sync and locking.
+- Optional local LLM runtime: Ollama on `http://localhost:11434` or LM Studio on `http://localhost:1234`.
+- Optional local ML extras for Docling parsing and local dense embedding models are installed by `bun run api:sync`.
+- Optional OCR tooling for scanned PDFs:
   - macOS: `brew install tesseract poppler`
-  - Ubuntu/Debian: `sudo apt-get install tesseract-ocr poppler-utils`
+  - Ubuntu or Debian: `sudo apt-get install tesseract-ocr poppler-utils`
   - Fedora: `sudo dnf install tesseract poppler-utils`
-- Optional: Docker + Docker Compose
 
-## Security
+## Quickstart
 
-JR AutoRAG ships with **secure defaults**:
+```bash
+bun install
+bun run api:sync
+bun run doctor
+bun run dev:all
+```
 
-- **Localhost-only binding** by default (use `--expose` flag for network access)
-- **Client-safe deployment profile** for local or client-owned consulting runs
-- **API key authentication** (enable via `AUTORAG_AUTH_ENABLED=true`)
-- **Rate limiting** (100 requests/minute default)
-- **Request size limits** (50MB default)
-- **Security headers** (XSS, clickjacking, content-type sniffing protection)
+Default URLs:
 
-See [SECURITY.md](./Public/SECURITY.md) for production deployment guidance including:
-- Client-safe deployment and data policy
-- TLS configuration with Nginx/Caddy
-- Secrets management best practices
-- Reverse proxy recipes
+- Admin console: <http://localhost:3000>
+- API: <http://localhost:8000>
 
-### Environment Variables
+If port 3000 is busy, run the frontend manually on another port:
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `AUTORAG_AUTH_ENABLED` | `false` | Enable API key authentication |
-| `AUTORAG_API_KEYS` | - | Comma-separated API keys |
-| `AUTORAG_ALLOWED_ORIGINS` | `localhost` | CORS allowed origins |
+```bash
+PORT=3001 BUN_PUBLIC_API_BASE_URL=http://127.0.0.1:8000 bun --hot src/index.ts
+```
+
+Run the local install doctor any time an operator changes machines, ports, OCR tooling, auth settings, or model runtimes:
+
+```bash
+bun run doctor
+bun run doctor -- --json
+```
+
+The doctor checks Bun, Python, core API imports, OCR tools, API and web ports, data directory write access, auth environment consistency, security posture, and local Ollama or LM Studio availability. Warnings do not block local document search, but failed checks should be fixed before a client install.
+
+After the API is running, collect the full install evidence bundle:
+
+```bash
+bun run evidence:bundle
+```
+
+The bundle is written under `evidence/install/` by default and includes `doctor.json`, `install-smoke.txt`, `container-manifest.txt`, `secret-scan.txt`, `supply-chain.txt`, `supply-chain-manifest.json`, `python-sbom.cdx.json`, `web-audit.json`, `web-dependencies.txt`, `readyz.json`, `config-policy.json`, `security-posture.json`, `install-report.json`, `evaluation-runs.json`, `client-readiness-report.json`, `research-architecture.md`, `manifest.json`, and `SHA256SUMS`. Set `JR_EVIDENCE_API_BASE_URL` or pass `--api-base-url` when collecting evidence from a non-default API origin. For auth-enabled installs, set `JR_EVIDENCE_API_KEY` so protected evidence endpoints are fetched with `X-API-Key`.
+
+For strict client handoff, run the bundle gate against the generated directory:
+
+```bash
+bun run handoff:gate -- evidence/install/<timestamp>-install-evidence
+```
+
+The handoff gate verifies hashes, required artifacts, ready install status, `client_ready` security posture, and a passing `client_readiness` receipt. That receipt must cover mixed-format evidence, prompt injection, poisoned-document handling, knowledge-extraction refusal, abstention, binary retrieval, agentic retrieval, and graph retrieval. Local-demo or incomplete bundles are expected to fail this gate.
+
+## Normal Product Workflow
+
+Use this path to verify the real product, not only the demo seed:
+
+1. Start the API and UI with `bun run dev:all`.
+2. Open Configuration.
+3. Apply a local provider such as Ollama. The UI should show available models and save planner, gatherer, and generator selections.
+4. Open Documents.
+5. Upload a Markdown, TXT, PDF, or DOCX file.
+6. Confirm the document status becomes ready.
+7. Open Query.
+8. Ask a grounded question about the uploaded document.
+9. Inspect the answer citations, source list, trace, and quality signals.
+10. Open Quality and run Client Readiness before collecting the handoff bundle.
+
+The product can answer without a configured provider by returning a grounded context summary, but provider setup is required for normal generated answers.
+
+## Evaluator Demo Mode
+
+Demo mode uses a temporary local data directory when no explicit data directory is set. It is meant for interviews, walkthroughs, and fast evaluation. Data is disposable after the app exits.
+
+```bash
+JR_DEMO_MODE=1 bun run dev:all
+```
+
+Then use the Configuration onboarding panel:
+
+1. Click Load Demo Corpus.
+2. Ask one of the example questions.
+3. Inspect citations and the Why this answer panel.
+4. Open Quality to review recommendations and experiment surfaces.
+
+Demo mode also relaxes local rate limiting unless `AUTORAG_RATE_LIMIT_ENABLED` is explicitly set, so browser reloads and walkthrough polling do not interrupt the evaluator path.
+
+## Data Storage
+
+Normal runs store local state under ignored data directories:
+
+- `data/`
+- `api/data/`
+
+Set `JR_DATA_DIR` when you want an explicit state location:
+
+```bash
+JR_DATA_DIR=/path/to/local-state bun run dev:all
+```
+
+Do not commit data directories, `.env` files, API keys, provider secrets, traces containing sensitive content, or client documents.
+
+## Configuration
+
+Common environment variables:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `BUN_PUBLIC_API_BASE_URL` | `http://127.0.0.1:8000` on local UI hosts | Frontend API target |
+| `VITE_API_BASE_URL` | Same as above | Vite-compatible API target |
+| `JR_DEMO_MODE` | unset | Use disposable demo storage when set to `1`, `true`, or `yes` |
+| `JR_DATA_DIR` | unset | Explicit local data directory |
+| `AUTORAG_AUTH_ENABLED` | `false` | Require API keys |
+| `AUTORAG_API_KEYS` | unset | Comma-separated API keys |
+| `AUTORAG_ALLOWED_ORIGINS` | localhost defaults | CORS allow list |
 | `AUTORAG_EXPOSE` | `false` | Allow non-localhost binding |
-| `AUTORAG_RATE_LIMIT_ENABLED` | `true` | Enable request rate limiting |
-| `AUTORAG_RATE_LIMIT_RPM` | `100` | Requests per minute limit |
+| `AUTORAG_RATE_LIMIT_ENABLED` | `true`, `false` in demo mode | Enable request rate limiting |
+| `AUTORAG_RATE_LIMIT_RPM` | `100` | Requests per minute |
+| `AUTORAG_RATE_LIMIT_BURST` | `20` | Burst capacity |
 
-## Local development (manual control)
+## Security Defaults
 
-```bash
-# backend (from api/)
-PYTHONPATH=. uvicorn app.main:app --reload --port 8000
+- Binds to localhost by default.
+- Allows only local UI origins unless configured.
+- Supports optional API-key authentication.
+- Reports redacted install posture at `GET /security/posture`.
+- Exports a redacted client handoff report at `GET /install/report`.
+- Blocks `/docs`, `/redoc`, and `/openapi.json` when `AUTORAG_EXPOSE=true`.
+- Applies request size limits, route timeouts, and security headers.
+- Uses local-only deployment policy by default, rejecting public cloud providers unless the deployment profile allows them.
+- Keeps client-adjacent policy fields explicit, including retention, external model calls, PII redaction, and operator review.
 
-# frontend (from repo root)
-bun dev   # http://localhost:3000
-```
+See [Public/SECURITY.md](./Public/SECURITY.md) for production deployment guidance.
 
-Override API target with `BUN_PUBLIC_API_BASE_URL` (or `VITE_API_BASE_URL`).
+## API Surfaces
 
-## Docker Compose
+Useful endpoints:
 
-```bash
-docker compose up --build
-```
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /healthz` | API health |
+| `GET /readyz` | Runtime readiness with degraded states |
+| `GET /security/posture` | Redacted install security posture |
+| `GET /install/report` | Redacted client handoff report with readiness, posture, corpus, evaluation, and artifact evidence |
+| `GET /config` | Current product configuration |
+| `PUT /config` | Save provider, retrieval, and deployment settings |
+| `GET /providers/local` | Discover Ollama and LM Studio |
+| `POST /documents/upload` | Upload PDF, DOCX, Markdown, or TXT |
+| `POST /documents/text` | Ingest pasted text |
+| `POST /query` | Ask a normal non-streaming query |
+| `POST /query/stream` | Ask a streaming query |
+| `POST /query/cancel` | Cancel an in-flight stream |
+| `GET /onboarding` | Read onboarding state and example prompts |
+| `POST /onboarding/demo/seed` | Seed the disposable demo corpus |
+| `DELETE /onboarding/demo` | Remove demo documents |
+| `GET /config/recommendations` | Quality cockpit recommendations |
+| `GET /experiments` | Preset comparison and experiment runs |
+| `GET /evaluation/runs` | Evaluation run history |
 
-- API → <http://localhost:8000>
-- Admin console → <http://localhost:3000>
+## Document Ingestion
 
-## Document ingestion behavior
+| Input type | Handling |
+| --- | --- |
+| PDF | Text extraction with OCR fallback for scans |
+| DOC/DOCX | Native text extraction through a temporary parse path |
+| Markdown | Markdown-aware text extraction |
+| TXT | UTF-8 text extraction with tolerant decoding |
+| Pasted text | Direct ingestion from the Documents panel |
 
-| Input type | How it's handled |
-|------------|------------------|
-| PDF        | `pypdf` for text; OCR fallback via `pdf2image` + `pytesseract` for scans |
-| DOC/DOCX   | `docx2txt` via temp file |
-| Markdown   | UTF-8 decode with light token stripping |
-| TXT        | UTF-8 decode with `errors="ignore"` |
-| Inline text | "Ingest Text" form for quick snippets |
+Uploads trigger indexing and retrieval rebuilds. Deleting a document also rebuilds the index.
 
-The admin console shows upload metadata and allows deletion, which triggers an index rebuild.
+## Retrieval Presets
 
-## Retrieval presets
+| Preset | Best for |
+| --- | --- |
+| Turbo | Lowest-latency checks |
+| Fast | Quick answers with modest context |
+| Balanced | Default workbench setting |
+| Thorough | Deep research and broader recall |
+| Ultra Accurate | Maximum context and stricter quality posture |
 
-| Preset | Top-K | Target Tokens | Coverage | Best for |
-|--------|-------|---------------|----------|----------|
-| Fast | 3 | 800 | 50% | Low-latency answers |
-| Balanced (default) | 5 | 1600 | 70% | General use |
-| Thorough | 10 | 3000 | 90% | Deep research |
+The UI surfaces related controls for hybrid search, reranking, RAPTOR, graph retrieval, evidence contracts, HyDE, and Self-RAG critique where supported by the current backend settings.
 
-Apply via API:
+See [docs/architecture/research-backed-rag-architecture.md](./docs/architecture/research-backed-rag-architecture.md) for the current research-to-implementation matrix used in client evidence bundles.
 
-```bash
-curl -X POST http://localhost:8000/config/presets/balanced
-```
+## Verification
 
-## Evaluation Gates
-
-Run benchmarks with quality thresholds in CI:
-
-```python
-from app.core.eval_gates import GatedEvaluator, EvalThresholds
-
-evaluator = GatedEvaluator(thresholds=EvalThresholds.strict())
-result = await evaluator.evaluate_with_gates(orchestrator, "my_golden_set")
-
-if not result.all_passed:
-    print(f"Build FAILED: {result.failed_gates}")
-    sys.exit(1)
-```
-
-## Plugin Architecture
-
-Extend the system with custom components:
-
-```python
-from app.plugins import RetrieverPlugin, PluginInfo, PluginType
-
-class MyRetriever(RetrieverPlugin):
-    @property
-    def info(self) -> PluginInfo:
-        return PluginInfo(
-            name="my_retriever",
-            plugin_type=PluginType.RETRIEVER,
-            version="1.0.0",
-            description="Custom retriever",
-        )
-    
-    def retrieve(self, query: str, k: int = 10):
-        # Your retrieval logic
-        pass
-
-def create_plugin():  # Required for auto-discovery
-    return MyRetriever()
-```
-
-## Observability (per-query trace)
-
-1. Planning: generated search queries, target tokens, coverage goals
-2. Retrieval: chunks per sub-query, timing, unique sources
-3. Generation: provider, model, context tokens, errors
-4. Configuration snapshot: model, retrieval settings, corpus hash
-
-## Testing & quality checks
+Run the aggregate gate before sharing a branch:
 
 ```bash
-# backend integration tests
-cd api && PYTHONPATH=. pytest
+bun run verify
+```
 
-# frontend tests
-bun test
+The aggregate gate runs API lint, API tests, evidence bundle tests, strict handoff gate tests, research architecture checks, TypeScript checks, frontend tests, and the web build. For deeper release or environment checks, also run:
 
-# production build
-bun run build
+```bash
+bash scripts/release-gate.sh
+```
 
-# run evaluation gates
-python -c "from app.core.eval_gates import run_eval_gates_cli; exit(run_eval_gates_cli('default'))"
+The release gate adds doctor, install smoke, container manifest, secret scan, supply-chain evidence, container build smoke, and whitespace checks. It should be run directly with `bash` because it starts a nested Bun web server for install smoke verification. If Docker is unavailable on a local machine, use `bash scripts/release-gate.sh --skip-container-smoke` and treat the skipped container smoke as a release blocker until CI or a Docker-enabled workstation runs it.
+
+Individual release checks:
+
+```bash
+bun run doctor:test
+bash scripts/install-smoke.test.sh
+bash scripts/container-manifest-check.sh
+bun run research:check
+bun run container:smoke
+bash scripts/secret-scan.sh
+bun run supply-chain
+git diff --check
+```
+
+Manual smoke test:
+
+```bash
+# Start the app first.
+bun run dev:all
+
+# In the UI, apply Ollama or another provider.
+# Upload a real document from the Documents tab.
+# Ask a grounded question from the Query tab.
+# Confirm citations, sources, and traces render.
+```
+
+API smoke test:
+
+```bash
+curl http://127.0.0.1:8000/healthz
+curl http://127.0.0.1:8000/providers/local
+curl http://127.0.0.1:8000/documents
 ```
 
 ## Troubleshooting
 
 | Issue | Fix |
-|-------|-----|
-| PDF uploads return empty text | Ensure `pypdf`, `pdf2image`, `pytesseract` installed and `pdftotext`/`tesseract` on PATH. On macOS: `brew install poppler tesseract`, then restart API. |
-| Provider buttons don't save | Confirm FastAPI running on `:8000`; check UI status badge; ensure CORS not blocked. |
-| Ollama/LM Studio not detected | Click **Rescan**; ensure runtimes listen on `11434` / `1234`; override `JR_OLLAMA_URL` / `JR_LMSTUDIO_URL`. |
-| Authentication errors | Set `AUTORAG_AUTH_ENABLED=true` and `AUTORAG_API_KEYS=your-key`. |
+| --- | --- |
+| UI cannot reach API | Confirm FastAPI is on port 8000 and set `BUN_PUBLIC_API_BASE_URL=http://127.0.0.1:8000`. |
+| Provider list is empty | Start Ollama or LM Studio, then rescan providers. |
+| Query returns context summary only | Apply a provider in Configuration. |
+| PDF upload has no text | Install Poppler and Tesseract, then restart the API. |
+| CORS error on a different local port | Add the origin with `AUTORAG_ALLOWED_ORIGINS`. |
+| 429 responses during local walkthrough | Use `JR_DEMO_MODE=1` or raise `AUTORAG_RATE_LIMIT_RPM` for local testing. |
 
 ## Deployment
 
-1. `bun run build` and serve `dist/` (Bun, nginx, S3+CloudFront, etc.).
-2. Deploy FastAPI (Uvicorn/Gunicorn, Fly.io, Render, etc.). Point frontend `BUN_PUBLIC_API_BASE_URL` to it.
-3. **Enable security**: Set `AUTORAG_AUTH_ENABLED=true` and configure API keys.
-4. **Use TLS**: Put behind Nginx/Caddy with HTTPS (see [SECURITY.md](./Public/SECURITY.md)).
-5. Persist `data/` (config, documents, traces) on shared storage/volume for stateful runs.
+1. Build the UI with `bun run build`.
+2. Serve `dist/` behind a static server.
+3. Deploy the FastAPI app behind HTTPS.
+4. Set `BUN_PUBLIC_API_BASE_URL` to the API origin at build/runtime.
+5. Enable `AUTORAG_AUTH_ENABLED=true`.
+6. Set `AUTORAG_API_KEYS`.
+7. Set exact `AUTORAG_ALLOWED_ORIGINS`.
+8. Run `bun run doctor -- --json` and fix any failed `security_posture` check.
+9. Verify `GET /security/posture` returns no failed checks.
+10. Run the `client_readiness` golden benchmark from the Quality Cockpit, or call `POST /evaluation/golden-sets/builtins` followed by `POST /evaluation/batch/client_readiness`.
+11. Run `JR_EVIDENCE_API_KEY="${AUTORAG_API_KEYS%%,*}" bun run evidence:bundle` and keep the generated directory with the client handoff evidence.
+12. Run `bun run handoff:gate -- evidence/install/<timestamp>-install-evidence`; fix every failure before handoff.
+13. Persist `data/` or set `JR_DATA_DIR` to durable storage.
+14. Review [Public/SECURITY.md](./Public/SECURITY.md) before exposing the API.
 
-### Client-safe consulting deployment
-
-For client-adjacent or regulated document work, set `deployment_profile` to `client_safe`. This profile rejects public cloud provider URLs, cloud backends, managed cloud hosting, external model calls, and cloud OCR fallback. It is intended for localhost, private-network, or client-owned infrastructure only.
-
-Default client data policy:
-
-| Policy | Default |
-|--------|---------|
-| Classification | `client_confidential` |
-| Storage boundary | `client_owned` |
-| Managed cloud hosting | `false` |
-| External model calls | `false` |
-| PII redaction | Required |
-| Document retention | 30 days |
-| Trace retention | 14 days |
-| Report export | `redacted_by_default` |
-
-Verify the active policy before each client run:
-
-```bash
-curl http://localhost:8000/config/policy
-```
-
-## Onboarding
-
-See the checklist in [`Public/onboarding.txt`](./Public/onboarding.txt) for a 5-minute path from clone → first answer.
-
-## Documentation
-
-- [SECURITY.md](./Public/SECURITY.md) - Security configuration and production deployment
-- [Product.md](./Product.md) - Product overview and architecture details
+The API Docker image sets `UV_TORCH_BACKEND=cpu` so default local installs avoid CUDA wheel downloads. Use a GPU-specific image or override only when the client environment explicitly requires GPU acceleration.
+The default API container installs the core backend dependency set. For local workstation installs, `bun run api:sync` includes the `ml` extra for Docling and local sentence-transformer embeddings.
+Run `bun run container:smoke` to build both local images, import the API app inside the image, verify API `/healthz` and `/readyz`, start the web image, and verify the served production shell plus CSS and JavaScript assets.
 
 ## License
 
 Licensed under the Functional Source License, Version 1.1, MIT Future License.
-This repository is source-available today and converts to MIT two years after
-each version is made available. See [`LICENSE`](./LICENSE).
+This repository is source-available today and converts to MIT two years after each version is made available. See [LICENSE](./LICENSE).
