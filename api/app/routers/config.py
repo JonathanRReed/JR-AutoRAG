@@ -78,8 +78,8 @@ def update_config(
                 raise HTTPException(status_code=404, detail=f"Profile '{active_profile}' not found")
             cfg.provider = profile.provider
         sanitized = container.prepare_config_for_storage(cfg)
+        container.apply_config(sanitized)
         stored = container.config_store.write(sanitized)
-        container.apply_config(stored)
         return stored
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
