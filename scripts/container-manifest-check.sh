@@ -60,7 +60,6 @@ for required in (
     "docker network create",
     "/healthz",
     "/readyz",
-    "/__api/healthz",
     "docker build -t \"${WEB_IMAGE}\"",
     "web-assets.txt",
 ):

@@ -1,8 +1,8 @@
-export const API_PROXY_PREFIX = "/__api";
+export const DEFAULT_API_BASE_URL = "http://127.0.0.1:8000";
 
 export function normalizeApiBaseUrl(value?: string) {
   const trimmed = value?.trim().replace(/\/+$/, "");
-  return trimmed || API_PROXY_PREFIX;
+  return trimmed || DEFAULT_API_BASE_URL;
 }
 
 export function buildApiUrl(baseUrl: string | undefined, path: string) {
@@ -16,7 +16,7 @@ export function resolveDefaultApiBaseUrl() {
     (import.meta.env?.BUN_PUBLIC_BROWSER_API_BASE_URL as string | undefined) ||
     (import.meta.env?.VITE_BROWSER_API_BASE_URL as string | undefined);
   if (envBase) {
-    return normalizeApiBaseUrl(envBase.replace("http://localhost:8000", "http://127.0.0.1:8000"));
+    return normalizeApiBaseUrl(envBase.replace("http://localhost:8000", DEFAULT_API_BASE_URL));
   }
-  return API_PROXY_PREFIX;
+  return DEFAULT_API_BASE_URL;
 }
