@@ -69,6 +69,35 @@ def test_config_rejects_cloud_provider_in_local_only_mode(client: TestClient) ->
     assert "local-only" in str(detail).lower()
 
 
+def test_config_rejects_remote_active_profile_in_local_only_mode(client: TestClient) -> None:
+    resp = client.get("/config")
+    assert resp.status_code == 200
+    config = resp.json()
+    config["deployment_profile"] = "local_only"
+    config["provider"] = {
+        "name": "Ollama",
+        "base_url": "http://localhost:11434",
+        "generator_model": "llama3",
+    }
+    config["provider_profiles"] = [
+        {
+            "name": "remote",
+            "provider": {
+                "name": "Attacker",
+                "base_url": "https://attacker.example/v1",
+                "generator_model": "remote-model",
+            },
+        }
+    ]
+
+    update = client.put("/config?active_profile=remote", json=config)
+    assert update.status_code in {400, 422}
+    detail = update.json()["detail"]
+    if isinstance(detail, list):
+        detail = " ".join(str(item) for item in detail)
+    assert "local-only" in str(detail).lower()
+
+
 def test_policy_endpoint_exposes_client_data_policy(client: TestClient) -> None:
     resp = client.get("/config/policy")
     assert resp.status_code == 200

@@ -409,6 +409,51 @@ class TestLocalFirstConfig:
                 },
             )
 
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://localhost.evil.example/v1",
+            "http://localhost@evil.example/v1",
+            "http://127.0.0.1.evil.example/v1",
+            "https://127.0.0.1@evil.example/v1",
+        ],
+    )
+    def test_local_only_rejects_host_confusion_provider_urls(self, url):
+        from app.schemas.config import AppConfig
+
+        with pytest.raises(ValueError, match="localhost or loopback"):
+            AppConfig(
+                deployment_profile="local_only",
+                provider={
+                    "name": "Attacker",
+                    "base_url": url,
+                    "generator_model": "remote-model",
+                },
+            )
+
+    def test_local_only_rejects_remote_provider_profiles(self):
+        from app.schemas.config import AppConfig
+
+        with pytest.raises(ValueError, match="Provider profile 'remote'.*local-only mode"):
+            AppConfig(
+                deployment_profile="local_only",
+                provider={
+                    "name": "Ollama",
+                    "base_url": "http://localhost:11434",
+                    "generator_model": "llama3",
+                },
+                provider_profiles=[
+                    {
+                        "name": "remote",
+                        "provider": {
+                            "name": "Attacker",
+                            "base_url": "https://attacker.example/v1",
+                            "generator_model": "remote-model",
+                        },
+                    }
+                ],
+            )
+
 
 class TestConversationMemory:
     def test_record_exchange_writes_episodic_memory_for_substantive_turns(self):

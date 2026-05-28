@@ -77,6 +77,7 @@ def update_config(
             if not profile:
                 raise HTTPException(status_code=404, detail=f"Profile '{active_profile}' not found")
             cfg.provider = profile.provider
+            cfg = AppConfig.model_validate(cfg.model_dump())
         sanitized = container.prepare_config_for_storage(cfg)
         stored = container.config_store.write(sanitized)
         container.apply_config(stored)
