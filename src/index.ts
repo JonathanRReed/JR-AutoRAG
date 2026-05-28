@@ -1,27 +1,6 @@
 import { serve } from "bun";
 import index from "./index.html";
-
-const apiBaseUrl = (
-  process.env.BUN_PUBLIC_API_BASE_URL ||
-  process.env.VITE_API_BASE_URL ||
-  "http://127.0.0.1:8000"
-).replace(/\/+$/, "");
-
-const proxyApiRequest = async (req: Request, prefix: string) => {
-  const url = new URL(req.url);
-  const path = prefix && url.pathname.startsWith(prefix)
-    ? url.pathname.slice(prefix.length) || "/"
-    : url.pathname;
-  try {
-    return await fetch(apiBaseUrl + path + url.search, {
-      method: req.method,
-      headers: req.headers,
-      body: req.body,
-    });
-  } catch {
-    return new Response("Backend execution failed", { status: 502 });
-  }
-};
+import { proxyApiRequest } from "./lib/api-proxy";
 
 const server = serve({
   idleTimeout: 60,
