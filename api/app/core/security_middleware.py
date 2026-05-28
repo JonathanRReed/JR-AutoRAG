@@ -57,6 +57,7 @@ ROUTE_SCOPES = {
     "/query": "read",
     "/documents": "write",
     "/config": "admin",
+    "/experiments": "admin",
     "/evaluation": "read",
     "/providers": "read",
     "/security": "read",
