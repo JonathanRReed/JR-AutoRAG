@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from app.core.golden_eval import AnswerMetrics, EvalRunResult, EvalRunStore, GoldenSetStore, RetrievalMetrics
 from app.main import app
 from app.routers import evaluation
-from app.core.security_middleware import _resolve_route_timeout
+from app.core.security_middleware import _resolve_required_scope, _resolve_route_timeout
 from app.schemas.query import QueryResponse
 from app.services import ServiceContainer, get_container
 from app.state import get_orchestrator, set_orchestrator
@@ -38,6 +38,12 @@ def client():
         evaluation._golden_store = previous_golden_store
         evaluation._eval_run_store = previous_eval_run_store
         evaluation._evaluator = previous_evaluator
+
+
+def test_sensitive_report_routes_require_admin_scope() -> None:
+    assert _resolve_required_scope("/install/report", "GET") == "admin"
+    assert _resolve_required_scope("/evaluation/runs/run-1/report", "GET") == "admin"
+    assert _resolve_required_scope("/evaluation/runs", "GET") == "read"
 
 
 def test_config_roundtrip(client: TestClient) -> None:
@@ -132,6 +138,9 @@ def test_install_report_collects_redacted_handoff_evidence(client: TestClient) -
     assert body["security"]["settings"]["api_keys_configured"] is False
     assert body["corpus"]["document_count"] == 0
     assert body["redaction"]["secrets"]
+    assert "backends" not in body["policy"]
+    assert "fallbacks" not in body["policy"]
+    assert "backend_count" in body["policy"]
     evidence = {item["id"]: item for item in body["evidence"]}
     assert evidence["security_posture"]["endpoint"] == "/security/posture"
     assert "prompt-injection" in evidence["security_posture"]["detail"]

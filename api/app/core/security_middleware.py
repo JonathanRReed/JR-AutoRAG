@@ -106,7 +106,11 @@ def _resolve_required_scope(path: str, method: str) -> str | None:
     """Resolve required scope based on request path and method."""
     if path.startswith("/documents"):
         return "read" if method.upper() in {"GET", "HEAD", "OPTIONS"} else "write"
-    for prefix, scope in ROUTE_SCOPES.items():
+    if path == "/install/report":
+        return "admin"
+    if path.startswith("/evaluation/runs/") and path.endswith("/report"):
+        return "admin"
+    for prefix, scope in sorted(ROUTE_SCOPES.items(), key=lambda item: len(item[0]), reverse=True):
         if path.startswith(prefix):
             return scope
     return None

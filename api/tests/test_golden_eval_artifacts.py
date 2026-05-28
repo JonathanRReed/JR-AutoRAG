@@ -140,8 +140,14 @@ async def test_eval_run_store_lists_report_artifact_metadata(tmp_path: Path) -> 
     run_id = result.run_id
     [summary] = run_store.list_runs()
     assert summary["run_id"] == run_id
-    assert summary["report_path"]
+    assert "report_path" not in summary
     assert summary["report_sha256"]
+    assert "corpus" not in summary["audit"]
+    assert "config_snapshot" not in summary["audit"]
+
+    [sensitive_summary] = run_store.list_runs(include_sensitive=True)
+    assert sensitive_summary["report_path"]
+    assert sensitive_summary["audit"]["corpus"]["fingerprint"] == "corpus-test-fingerprint"
 
 
 def test_eval_config_redaction_catches_secret_shaped_keys() -> None:
