@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from app.core.golden_eval import AnswerMetrics, EvalRunResult, EvalRunStore, GoldenSetStore, RetrievalMetrics
 from app.main import app
+from app.routers import config as config_router
 from app.routers import evaluation
 from app.core.security_middleware import _resolve_route_timeout
 from app.schemas.query import QueryResponse
@@ -48,6 +49,40 @@ def test_config_roundtrip(client: TestClient) -> None:
     update = client.put("/config", json=config)
     assert update.status_code == 200
     assert update.json()["profile"] == "Smoke"
+
+
+def test_model_download_rejects_unconfigured_model(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    downloaded: list[str] = []
+    monkeypatch.setattr(config_router, "_download_model", downloaded.append)
+
+    resp = client.post(
+        "/config/models/download",
+        json={"kind": "embedding", "model": "bigscience/bloom"},
+    )
+
+    assert resp.status_code == 403
+    assert downloaded == []
+    assert "configured model" in resp.json()["detail"]
+
+
+def test_model_download_allows_configured_model(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    downloaded: list[str] = []
+    monkeypatch.setattr(config_router, "_download_model", downloaded.append)
+
+    resp = client.post(
+        "/config/models/download",
+        json={"kind": "embedding", "model": "BAAI/bge-base-en-v1.5"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "ok", "model": "BAAI/bge-base-en-v1.5"}
+    assert downloaded == ["BAAI/bge-base-en-v1.5"]
 
 
 def test_config_rejects_cloud_provider_in_local_only_mode(client: TestClient) -> None:
