@@ -300,7 +300,7 @@ class DiskQueryCache:
     """SQLite-backed query result cache with versioned keys.
 
     Implements P0.3: Cache keys include corpus version, retrieval mode,
-    preset ID, model IDs, and normalized query.
+    preset ID, model IDs, request scope, and normalized query.
 
     Cache persists across sessions to disk.
     """
