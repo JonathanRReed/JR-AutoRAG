@@ -114,6 +114,7 @@ STRICT FORMATTING RULES:
         self.entities: dict[str, Entity] = {}
         self.relationships: list[Relationship] = []
         self.communities: list[Community] = []
+        self.chunk_documents: dict[str, str] = {}
         self._graph: Any = None  # NetworkX graph
 
     @property
@@ -270,6 +271,9 @@ STRICT FORMATTING RULES:
         async def process_chunk(chunk: EvidenceChunk) -> None:
             nonlocal processed_chunks
             chunk_id = getattr(chunk, 'id', str(id(chunk)))
+            chunk_doc_id = getattr(chunk, 'doc_id', None)
+            if chunk_doc_id is not None:
+                self.chunk_documents[chunk_id] = chunk_doc_id
             chunk_text = getattr(chunk, 'snippet', '') or getattr(chunk, 'text', '')
 
             if not chunk_text:
@@ -591,6 +595,7 @@ Write a 1-2 sentence summary describing the main theme or topic of this cluster.
                 }
                 for r in self.relationships
             ],
+            "chunk_documents": self.chunk_documents,
             "communities": [
                 {
                     "id": c.id,
@@ -614,6 +619,8 @@ Write a 1-2 sentence summary describing the main theme or topic of this cluster.
                 mentions=e_data.get("mentions", []),
             )
             graph.entities[name] = entity
+
+        graph.chunk_documents = data.get("chunk_documents", {})
 
         for r_data in data.get("relationships", []):
             relationship = Relationship(

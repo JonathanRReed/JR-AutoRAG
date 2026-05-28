@@ -131,6 +131,7 @@ class Orchestrator:
         self._document_trees: dict[str, DocumentTree] = {}
         self._graph_rag: GraphRAG | None = None
         self._graph_ready = False
+        self._graph_scope_document_ids: tuple[str, ...] | None = None
         self._hierarchy_ready = False
         self._learned_router = LearnedRouter()
         self._conflict_detector = ConflictDetector()
@@ -184,6 +185,7 @@ class Orchestrator:
         if hasattr(self._retrieval, "_graph_rag") and self._retrieval._graph_rag:
             self._graph_rag = self._retrieval._graph_rag
             self._graph_ready = self._retrieval._graph_ready
+            self._graph_scope_document_ids = None
 
         # Update compressor with config settings
         self._compressor = ContextCompressor(
@@ -192,6 +194,7 @@ class Orchestrator:
         if not getattr(config.retrieval, "graph", False):
             self._graph_rag = None
             self._graph_ready = False
+            self._graph_scope_document_ids = None
 
         # Sync artifact status with builder for UI (G4)
         if self._hierarchy_ready:
@@ -251,6 +254,22 @@ class Orchestrator:
 
         return enhanced_chunks
 
+    @staticmethod
+    def _normalize_graph_scope(document_ids: list[str] | None) -> tuple[str, ...] | None:
+        """Return a stable GraphRAG document scope, or None for all documents."""
+        return tuple(sorted(set(document_ids))) if document_ids else None
+
+    def _graph_scope_matches(self, document_ids: list[str] | None) -> bool:
+        """Check that the loaded GraphRAG context was built for this request scope."""
+        return self._graph_scope_document_ids == self._normalize_graph_scope(document_ids)
+
+    def _graph_entity_in_scope(self, entity: Any, allowed_document_ids: set[str]) -> bool:
+        """Return whether an entity has at least one mention in an allowed document."""
+        if self._graph_rag is None:
+            return False
+        chunk_documents = getattr(self._graph_rag, "chunk_documents", {})
+        return any(chunk_documents.get(chunk_id) in allowed_document_ids for chunk_id in getattr(entity, "mentions", []))
+
     async def _retrieve_with_graph(
         self,
         query: str,
@@ -265,16 +284,27 @@ class Orchestrator:
 
         if not self._graph_rag or not self._graph_rag.graph:
             return []
+        if not self._graph_scope_matches(document_ids):
+            return []
 
         chunks = []
+        allowed_document_ids = set(document_ids) if document_ids else None
 
         # Find relevant entities via query
         relevant_entities = self._graph_rag.query_entities(query, top_k=5)
+        relevant_entity_names: set[str] = set()
+        for entity in relevant_entities:
+            if allowed_document_ids and not self._graph_entity_in_scope(entity, allowed_document_ids):
+                continue
+            relevant_entity_names.add(self._graph_rag._normalize_name(entity.name))
+
+        if not relevant_entity_names:
+            return []
 
         # Get community summaries for matched entities
         for community in self._graph_rag.communities:
-            entity_names = [e for e, _ in relevant_entities]
-            if any(e in community.entities for e in entity_names) and community.summary:
+            community_entity_names = set(community.entities)
+            if relevant_entity_names & community_entity_names and community.summary:
                 chunks.append(EvidenceChunk(
                     id=f"community_{community.id}",
                     title=f"Topic: {', '.join(community.entities[:3])}",
@@ -287,13 +317,15 @@ class Orchestrator:
     async def _ensure_graph_context(
         self,
         force: bool = False,
+        document_ids: list[str] | None = None,
         on_progress: Callable[[str, int, int, str | None], None] | None = None,
     ) -> None:
-        """Build GraphRAG context on demand."""
+        """Build GraphRAG context on demand for the current document scope."""
+        target_scope = self._normalize_graph_scope(document_ids)
         if (
             not self._config
             or (not force and not getattr(self._config.retrieval, "graph", False))
-            or self._graph_ready
+            or (self._graph_ready and self._graph_scope_document_ids == target_scope)
         ):
             return
         if self._provider is None or not self._chunk_records:
@@ -301,9 +333,15 @@ class Orchestrator:
         try:
             graph_builder = GraphRAG()
             evidence_chunks: list[EvidenceChunk] = []
+            scoped_document_ids = set(target_scope) if target_scope is not None else None
+            scoped_records = [
+                (doc_id, chunk)
+                for doc_id, chunk in self._chunk_records
+                if scoped_document_ids is None or doc_id in scoped_document_ids
+            ]
             # Tighten limit to 100 for faster builds as requested by user
-            max_chunks = min(len(self._chunk_records), 100)
-            for doc_id, chunk in self._chunk_records[:max_chunks]:
+            max_chunks = min(len(scoped_records), 100)
+            for doc_id, chunk in scoped_records[:max_chunks]:
                 tree = self._document_trees.get(doc_id)
                 title = ""
                 if tree:
@@ -316,8 +354,12 @@ class Orchestrator:
                     title=title,
                     snippet=chunk.text,
                     score=0.8,
+                    doc_id=doc_id,
                 ))
             if not evidence_chunks:
+                self._graph_rag = None
+                self._graph_ready = False
+                self._graph_scope_document_ids = target_scope
                 return
 
             await graph_builder.build_from_chunks(
@@ -332,6 +374,7 @@ class Orchestrator:
             )
             self._graph_rag = graph_builder
             self._graph_ready = True
+            self._graph_scope_document_ids = target_scope
         except Exception:
             self._graph_ready = False
 
@@ -1056,7 +1099,7 @@ class Orchestrator:
                 "already_ready": self._graph_ready,
                 "chunks_available": len(self._chunk_records),
             }
-            if self._graph_ready:
+            if self._graph_ready and self._graph_scope_matches(document_ids):
                 record_step(PipelineStep(
                     name="graph_build",
                     started_at=datetime.now(UTC),
@@ -1083,6 +1126,7 @@ class Orchestrator:
                 graph_build_start = time.perf_counter()
                 await self._ensure_graph_context(
                     force=False,
+                    document_ids=document_ids,
                     on_progress=lambda s, c, t: emit_progress(s, items_done=c, items_total=t)
                 )
                 graph_build_details["graph_ready"] = self._graph_ready

@@ -11,11 +11,13 @@ Tests for:
 from __future__ import annotations
 
 import pytest
+from types import SimpleNamespace
 
 from app.core.cache import CacheManager, LRUCache, QueryCache, RetrievalMode
 from app.core.flare import FLAREConfig, FLAREGenerator, FLAREStep
 from app.core.gatherer import EvidenceChunk
-from app.core.graph_rag import Entity, EntityType, GraphRAG, Relationship
+from app.core.graph_rag import Community, Entity, EntityType, GraphRAG, Relationship
+from app.core.orchestrator import Orchestrator
 from app.core.hallucination_firewall import FirewallResult, HallucinationFirewall
 
 # ============================================================================
@@ -178,6 +180,83 @@ class TestGraphRAGIntegration:
         matches = graph.query_entities("Apple and Microsoft are competing in AI", top_k=3)
 
         assert len(matches) > 0
+
+
+    def test_graph_serialization_preserves_chunk_document_scope(self):
+        """Graph serialization preserves chunk-to-document ownership for scoped retrieval."""
+        graph = GraphRAG()
+        graph.entities["apple"] = Entity(
+            name="Apple",
+            type=EntityType.ORGANIZATION,
+            mentions=["allowed-0"],
+        )
+        graph.chunk_documents["allowed-0"] = "allowed"
+
+        restored = GraphRAG.from_dict(graph.to_dict())
+
+        assert restored.chunk_documents == {"allowed-0": "allowed"}
+
+    @pytest.mark.asyncio
+    async def test_orchestrator_graph_build_only_uses_scoped_documents(self):
+        """Scoped GraphRAG builds must not send out-of-scope chunks to the LLM provider."""
+
+        class RecordingProvider:
+            def __init__(self):
+                self.prompts = []
+
+            async def chat(self, messages):
+                self.prompts.append("\n".join(message["content"] for message in messages))
+                return '{"entities": [{"name": "Allowed", "type": "CONCEPT", "description": "allowed"}], "relationships": []}'
+
+        orchestrator = Orchestrator.__new__(Orchestrator)
+        orchestrator._config = SimpleNamespace(retrieval=SimpleNamespace(graph=True))
+        orchestrator._provider = RecordingProvider()
+        orchestrator._chunk_records = [
+            ("allowed", SimpleNamespace(index=0, text="allowed public content")),
+            ("secret", SimpleNamespace(index=0, text="secret confidential content")),
+        ]
+        orchestrator._document_trees = {}
+        orchestrator._graph_rag = None
+        orchestrator._graph_ready = False
+        orchestrator._graph_scope_document_ids = None
+
+        await orchestrator._ensure_graph_context(document_ids=["allowed"])
+
+        prompt_text = "\n".join(orchestrator._provider.prompts)
+        assert "allowed public content" in prompt_text
+        assert "secret confidential content" not in prompt_text
+        assert orchestrator._graph_scope_document_ids == ("allowed",)
+
+    @pytest.mark.asyncio
+    async def test_orchestrator_graph_retrieval_respects_scope_and_entity_api(self):
+        """Graph retrieval should use Entity objects and omit out-of-scope communities."""
+        graph = GraphRAG()
+        graph._graph = object()
+        graph.entities["allowed"] = Entity(
+            name="Allowed",
+            type=EntityType.CONCEPT,
+            description="allowed project",
+            mentions=["allowed-0"],
+        )
+        graph.entities["secret"] = Entity(
+            name="Secret",
+            type=EntityType.CONCEPT,
+            description="secret project",
+            mentions=["secret-0"],
+        )
+        graph.chunk_documents = {"allowed-0": "allowed", "secret-0": "secret"}
+        graph.communities = [
+            Community(id=1, entities=["allowed"], summary="allowed summary"),
+            Community(id=2, entities=["secret"], summary="secret summary"),
+        ]
+
+        orchestrator = Orchestrator.__new__(Orchestrator)
+        orchestrator._graph_rag = graph
+        orchestrator._graph_scope_document_ids = ("allowed",)
+
+        chunks = await orchestrator._retrieve_with_graph("allowed secret project", ["allowed"])
+
+        assert [chunk.snippet for chunk in chunks] == ["allowed summary"]
 
     def test_relationship_creation(self):
         """Test relationship dataclass."""
