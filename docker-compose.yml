@@ -6,6 +6,9 @@ services:
       - "8000:8000"
     environment:
       JR_DATA_DIR: /data
+      AUTORAG_EXPOSE: "true"
+      AUTORAG_AUTH_ENABLED: "true"
+      AUTORAG_API_KEYS: ${AUTORAG_API_KEYS:?Set AUTORAG_API_KEYS before starting the exposed API}
     volumes:
       - api-data:/data
   web:
@@ -18,6 +21,7 @@ services:
       - api
     environment:
       BUN_PUBLIC_API_BASE_URL: http://api:8000
+      BUN_PUBLIC_BROWSER_API_BASE_URL: http://127.0.0.1:8000
 
 volumes:
   api-data:

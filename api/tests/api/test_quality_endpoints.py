@@ -8,7 +8,9 @@ from fastapi.testclient import TestClient
 from app.core.config_store import ConfigStore
 from app.core.documents import Document, DocumentStore
 from app.core.experiments import ExperimentConfig, ExperimentRunStore, LocalExperimentRunner
+from app.core.auth import APIKeyAuth
 from app.core.ingest import IngestPipeline
+from app.core.security_middleware import _resolve_required_scope
 from app.main import app
 from app.routers.config import quality_recommendations
 from app.services import get_container
@@ -75,6 +77,19 @@ def test_quality_endpoints_without_retrieval_startup(tmp_path: Path) -> None:
         assert container.applied is True
     finally:
         app.dependency_overrides.clear()
+
+
+def test_experiments_endpoints_require_admin_scope() -> None:
+    auth = APIKeyAuth(enabled=True)
+    read_key, _ = auth.generate_key("reader", scopes=["read"])
+    admin_key, _ = auth.generate_key("admin", scopes=["admin"])
+
+    assert _resolve_required_scope("/experiments", "GET") == "admin"
+    assert _resolve_required_scope("/experiments", "POST") == "admin"
+    assert _resolve_required_scope("/experiments/run-1", "GET") == "admin"
+    assert _resolve_required_scope("/experiments/run-1/promote", "POST") == "admin"
+    assert auth.verify(read_key, required_scope=_resolve_required_scope("/experiments/run-1/promote", "POST")) is False
+    assert auth.verify(admin_key, required_scope=_resolve_required_scope("/experiments/run-1/promote", "POST")) is True
 
 
 def test_document_preview_falls_back_from_stored_text(tmp_path: Path) -> None:

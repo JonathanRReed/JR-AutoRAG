@@ -53,18 +53,23 @@ ROUTE_SCOPES = {
     "/api/artifacts/build": "admin",
     "/api/cache/clear": "admin",
     "/api/cache/rebuild": "admin",
+    "/api/metrics/presets/clear": "admin",
+    "/monitoring/cache/clear": "admin",
     "/rag/audit": "admin",
     "/query": "read",
     "/documents": "write",
     "/config": "admin",
+    "/experiments": "admin",
     "/evaluation": "read",
     "/providers": "read",
     "/security": "read",
     "/install": "read",
+    "/onboarding": "read",
     "/monitoring": "read",
     "/api/traces": "read",
     "/api/artifacts": "read",
     "/api/cache": "read",
+    "/api/metrics": "read",
     "/admin": "admin",
     "/api/keys": "admin",
 }
@@ -110,7 +115,7 @@ def _resolve_required_scope(path: str, method: str) -> str | None:
         return "read" if method in read_methods else "write"
     if path.startswith("/onboarding"):
         return "read" if method in read_methods else "write"
-    for prefix, scope in ROUTE_SCOPES.items():
+    for prefix, scope in sorted(ROUTE_SCOPES.items(), key=lambda item: len(item[0]), reverse=True):
         if path.startswith(prefix):
             return scope
     return None
@@ -191,6 +196,18 @@ async def verify_api_key(
         )
 
     required_scope = _resolve_required_scope(path, request.method)
+
+    if required_scope is None:
+        audit_log = get_audit_log()
+        audit_log.log_auth(
+            success=False,
+            ip_address=request.client.host if request.client else None,
+            reason=f"No scope mapping for protected route: {path}",
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="Protected route is not configured with an authorization scope.",
+        )
 
     if not auth.verify(api_key, required_scope=required_scope):
         audit_log = get_audit_log()
