@@ -61,7 +61,6 @@ ROUTE_SCOPES = {
     "/config": "admin",
     "/experiments": "admin",
     "/evaluation": "read",
-    "/experiments": "write",
     "/providers": "read",
     "/security": "read",
     "/install": "read",
