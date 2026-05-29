@@ -43,6 +43,12 @@ def client():
         evaluation._evaluator = previous_evaluator
 
 
+def test_sensitive_report_routes_require_admin_scope() -> None:
+    assert _resolve_required_scope("/install/report", "GET") == "admin"
+    assert _resolve_required_scope("/evaluation/runs/run-1/report", "GET") == "admin"
+    assert _resolve_required_scope("/evaluation/runs", "GET") == "read"
+
+
 def test_config_roundtrip(client: TestClient) -> None:
     resp = client.get("/config")
     assert resp.status_code == 200
@@ -198,6 +204,9 @@ def test_install_report_collects_redacted_handoff_evidence(client: TestClient) -
     assert body["security"]["settings"]["api_keys_configured"] is False
     assert body["corpus"]["document_count"] == 0
     assert body["redaction"]["secrets"]
+    assert "backends" not in body["policy"]
+    assert "fallbacks" not in body["policy"]
+    assert "backend_count" in body["policy"]
     evidence = {item["id"]: item for item in body["evidence"]}
     assert evidence["security_posture"]["endpoint"] == "/security/posture"
     assert "prompt-injection" in evidence["security_posture"]["detail"]
