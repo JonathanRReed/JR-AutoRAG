@@ -56,7 +56,7 @@ Default URLs:
 If port 3000 is busy, run the frontend manually on another port:
 
 ```bash
-PORT=3001 BUN_PUBLIC_API_BASE_URL=http://127.0.0.1:8000 bun --hot src/index.ts
+PORT=3001 BUN_PUBLIC_BROWSER_API_BASE_URL=http://127.0.0.1:8000 bun --hot src/index.ts
 ```
 
 Run the local install doctor any time an operator changes machines, ports, OCR tooling, auth settings, or model runtimes:
@@ -139,8 +139,10 @@ Common environment variables:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `BUN_PUBLIC_API_BASE_URL` | `http://127.0.0.1:8000` on local UI hosts | Frontend API target |
-| `VITE_API_BASE_URL` | Same as above | Vite-compatible API target |
+| `BUN_PUBLIC_BROWSER_API_BASE_URL` | `http://127.0.0.1:8000` on local UI hosts | Browser API target for UI requests |
+| `VITE_BROWSER_API_BASE_URL` | Same as above | Vite-compatible browser API target |
+| `BUN_PUBLIC_API_BASE_URL` | `http://127.0.0.1:8000` on local UI hosts | Server-side target for the limited legacy `/api/*` proxy |
+| `VITE_API_BASE_URL` | Same as above | Vite-compatible server-side proxy target |
 | `JR_DEMO_MODE` | unset | Use disposable demo storage when set to `1`, `true`, or `yes` |
 | `JR_DATA_DIR` | unset | Explicit local data directory |
 | `AUTORAG_AUTH_ENABLED` | `false` | Require API keys |
@@ -269,7 +271,7 @@ curl http://127.0.0.1:8000/documents
 
 | Issue | Fix |
 | --- | --- |
-| UI cannot reach API | Confirm FastAPI is on port 8000 and set `BUN_PUBLIC_API_BASE_URL=http://127.0.0.1:8000`. |
+| UI cannot reach API | Confirm FastAPI is on port 8000 and set `BUN_PUBLIC_BROWSER_API_BASE_URL=http://127.0.0.1:8000`. |
 | Provider list is empty | Start Ollama or LM Studio, then rescan providers. |
 | Query returns context summary only | Apply a provider in Configuration. |
 | PDF upload has no text | Install Poppler and Tesseract, then restart the API. |
@@ -281,7 +283,7 @@ curl http://127.0.0.1:8000/documents
 1. Build the UI with `bun run build`.
 2. Serve `dist/` behind a static server.
 3. Deploy the FastAPI app behind HTTPS.
-4. Set `BUN_PUBLIC_API_BASE_URL` to the API origin at build/runtime.
+4. Set `BUN_PUBLIC_BROWSER_API_BASE_URL` to the public API origin at build/runtime.
 5. Enable `AUTORAG_AUTH_ENABLED=true`.
 6. Set `AUTORAG_API_KEYS`.
 7. Set exact `AUTORAG_ALLOWED_ORIGINS`.
