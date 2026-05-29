@@ -6,6 +6,9 @@ services:
       - "8000:8000"
     environment:
       JR_DATA_DIR: /data
+      AUTORAG_EXPOSE: "true"
+      AUTORAG_AUTH_ENABLED: "true"
+      AUTORAG_API_KEYS: ${AUTORAG_API_KEYS:?Set AUTORAG_API_KEYS before starting the exposed API}
     volumes:
       - api-data:/data
   web:
