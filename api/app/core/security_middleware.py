@@ -109,8 +109,12 @@ def is_exposed_mode() -> bool:
 
 def _resolve_required_scope(path: str, method: str) -> str | None:
     """Resolve required scope based on request path and method."""
+    read_methods = {"GET", "HEAD", "OPTIONS"}
+    method = method.upper()
     if path.startswith("/documents"):
-        return "read" if method.upper() in {"GET", "HEAD", "OPTIONS"} else "write"
+        return "read" if method in read_methods else "write"
+    if path.startswith("/onboarding"):
+        return "read" if method in read_methods else "write"
     for prefix, scope in sorted(ROUTE_SCOPES.items(), key=lambda item: len(item[0]), reverse=True):
         if path.startswith(prefix):
             return scope
