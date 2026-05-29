@@ -51,16 +51,17 @@ class OCRPolicy(str, Enum):
 
 
 def _is_local_url(value: str) -> bool:
-    lowered = value.strip().lower()
-    return (
-        lowered.startswith("http://localhost")
-        or lowered.startswith("http://127.0.0.1")
-        or lowered.startswith("http://0.0.0.0")
-        or lowered.startswith("http://[::1]")
-        or lowered.startswith("https://localhost")
-        or lowered.startswith("https://127.0.0.1")
-        or lowered.startswith("https://[::1]")
-    )
+    parsed = urlparse(value.strip())
+    host = (parsed.hostname or "").strip().lower()
+    if not host:
+        return False
+    if host == "localhost":
+        return True
+    try:
+        parsed_ip = ip_address(host)
+    except ValueError:
+        return False
+    return parsed_ip.is_loopback or parsed_ip.is_unspecified
 
 
 def _is_client_owned_url(value: str) -> bool:
@@ -676,6 +677,12 @@ class AppConfig(BaseModel):
         if self.deployment_profile == DeploymentProfile.LOCAL_ONLY:
             if self.provider and not _is_local_url(str(self.provider.base_url)):
                 raise ValueError("Local-only mode requires a localhost or loopback provider URL.")
+            for profile in self.provider_profiles:
+                if not _is_local_url(str(profile.provider.base_url)):
+                    raise ValueError(
+                        f"Provider profile '{profile.name}' is not compatible with local-only mode: "
+                        "provider URL must be localhost or loopback."
+                    )
 
             for name, backend in self.backends.items():
                 if not backend.enabled:

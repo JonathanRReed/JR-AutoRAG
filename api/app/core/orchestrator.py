@@ -596,6 +596,32 @@ class Orchestrator:
             status=status,
         )
 
+    def _query_cache_scope(
+        self,
+        document_ids: list[str] | None = None,
+        history: list[dict[str, str]] | None = None,
+        conversation_id: str | None = None,
+        cache_scope: str | None = None,
+    ) -> str | None:
+        """Create a request-scope fingerprint for full-answer cache entries.
+
+        Full query results include generated text and source snippets, so the cache
+        must vary on request-local inputs that can change authorization or model
+        context.  Routers may pass an already-hashed user/ACL scope in
+        ``cache_scope``; direct callers are still protected by folding document
+        filters, chat history, and memory conversation IDs into this fingerprint.
+        """
+        scope_payload = {
+            "cache_scope": cache_scope or "",
+            "document_ids": sorted(document_ids or []),
+            "history": history or [],
+            "conversation_id": conversation_id or "",
+        }
+        if not any(scope_payload.values()):
+            return None
+        encoded = json.dumps(scope_payload, sort_keys=True, default=str)
+        return hashlib.sha256(encoded.encode()).hexdigest()[:16]
+
     def _cache_config_hash(
         self,
         document_ids: list[str] | None,
@@ -766,7 +792,13 @@ class Orchestrator:
             return list(seen.values())
 
         cache_manager = get_cache_manager()
-        cache_hash = self._cache_config_hash(document_ids, cache_scope)
+        query_cache_scope = self._query_cache_scope(
+            document_ids=document_ids,
+            history=history,
+            conversation_id=conversation_id,
+            cache_scope=cache_scope,
+        )
+        cache_hash = self._cache_config_hash(document_ids, query_cache_scope)
 
         # G3: Get corpus version and retrieval mode for versioned cache keys
         cache_corpus_version = ""
@@ -810,7 +842,7 @@ class Orchestrator:
             retrieval_mode=int(cache_retrieval_mode),
             preset_id=current_preset_id,
             model_ids=model_ids,
-            scope_key=cache_scope,
+            scope_key=query_cache_scope,
         )
         cache_event = disk_cache.get_last_event()
 
@@ -2435,7 +2467,7 @@ The retrieved evidence contains some conflicting information. When you encounter
             retrieval_mode=int(retrieval_mode_flags),
             preset_id=current_preset_id,
             model_ids=model_ids,
-            scope_key=cache_scope,
+            scope_key=query_cache_scope,
         )
 
         return result

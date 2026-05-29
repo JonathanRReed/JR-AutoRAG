@@ -13,7 +13,9 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --locked --no-dev --no-install-project
 
-ENV PATH="/app/.venv/bin:${PATH}"
+ENV PATH="/app/.venv/bin:${PATH}" \
+    AUTORAG_EXPOSE=true \
+    AUTORAG_AUTH_ENABLED=true
 
 COPY app ./app
 
