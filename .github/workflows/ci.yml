@@ -103,7 +103,6 @@ jobs:
 
   release-evidence:
     name: Release Evidence
-    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -135,7 +134,7 @@ jobs:
   ci-ok:
     name: CI Passed (PR gated)
     if: always()
-    needs: [api, web, install-smoke, container-manifest, research-architecture, evidence-handoff]
+    needs: [api, web, install-smoke, container-manifest, research-architecture, release-evidence, evidence-handoff]
     runs-on: ubuntu-latest
     steps:
       - run: |
