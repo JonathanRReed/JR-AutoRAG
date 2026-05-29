@@ -79,8 +79,8 @@ def update_config(
             cfg.provider = profile.provider
             cfg = AppConfig.model_validate(cfg.model_dump())
         sanitized = container.prepare_config_for_storage(cfg)
+        container.apply_config(sanitized)
         stored = container.config_store.write(sanitized)
-        container.apply_config(stored)
         return stored
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
