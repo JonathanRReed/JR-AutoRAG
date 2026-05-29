@@ -1,27 +1,6 @@
 import { serve } from "bun";
 import index from "./index.html";
-
-const apiBaseUrl = (
-  process.env.BUN_PUBLIC_API_BASE_URL ||
-  process.env.VITE_API_BASE_URL ||
-  "http://127.0.0.1:8000"
-).replace(/\/+$/, "");
-
-const proxyApiRequest = async (req: Request, prefix: string) => {
-  const url = new URL(req.url);
-  const path = prefix && url.pathname.startsWith(prefix)
-    ? url.pathname.slice(prefix.length) || "/"
-    : url.pathname;
-  try {
-    return await fetch(apiBaseUrl + path + url.search, {
-      method: req.method,
-      headers: req.headers,
-      body: req.body,
-    });
-  } catch {
-    return new Response("Backend execution failed", { status: 502 });
-  }
-};
+import { proxyApiRequest } from "./lib/api-proxy";
 
 const server = serve({
   idleTimeout: 60,
@@ -31,12 +10,14 @@ const server = serve({
 
     "/HWC-Icon.png": Bun.file(new URL("./HWC-Icon.png", import.meta.url)),
 
-    // Same-origin proxy for browser clients. The prefix is stripped before the
-    // request reaches FastAPI, so /__api/config maps to /config.
-    "/__api/*": (req) => proxyApiRequest(req, "/__api"),
+    // Do not expose bare FastAPI routes through the web server. The UI should
+    // call the configured browser API origin directly instead.
+    "/__api/*": () => new Response("API proxy disabled", { status: 404 }),
 
-    // Preserve the legacy /api proxy for backend routes that already live under
-    // FastAPI's /api prefix, such as /api/artifacts/status.
+    // Preserve the legacy /api proxy only for backend routes that already live
+    // under FastAPI's /api prefix, such as /api/artifacts/status. Bare backend
+    // routes must be reached through the configured browser API origin instead
+    // of being exposed through the web server.
     "/api/*": (req) => proxyApiRequest(req, ""),
 
     "/api/hello": {

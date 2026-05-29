@@ -109,6 +109,8 @@ API_PID="$!"
     HOME="${HOME}" \
     BUN_PUBLIC_API_BASE_URL="http://127.0.0.1:${API_PORT}" \
     VITE_API_BASE_URL="http://127.0.0.1:${API_PORT}" \
+    BUN_PUBLIC_BROWSER_API_BASE_URL="http://127.0.0.1:${API_PORT}" \
+    VITE_BROWSER_API_BASE_URL="http://127.0.0.1:${API_PORT}" \
     PORT="${WEB_PORT}" \
     bun --hot src/index.ts
 ) > "${TMP_DIR}/web.log" 2>&1 &
@@ -125,9 +127,8 @@ for _ in {1..80}; do
   api_code="$(curl -sS -o "${TMP_DIR}/api-health.json" -w '%{http_code}' "http://127.0.0.1:${API_PORT}/healthz" 2>/dev/null || true)"
   web_code="$(curl -sS -o "${TMP_DIR}/web.html" -w '%{http_code}' "http://127.0.0.1:${WEB_PORT}/" 2>/dev/null || true)"
   proxy_body="$(curl -sS "http://127.0.0.1:${WEB_PORT}/api/install-smoke?check=proxy" 2>/dev/null || true)"
-  same_origin_body="$(curl -sS "http://127.0.0.1:${WEB_PORT}/__api/config" 2>/dev/null || true)"
-  if [[ "${api_code}" == "200" && "${web_code}" == "200" && "${proxy_body}" == *'"ok": true'* && "${proxy_body}" == *'/api/install-smoke?check=proxy'* && "${same_origin_body}" == *'"profile": "Default"'* ]]; then
-    printf 'install_smoke=pass api=%s web=%s proxy=%s same_origin=%s\n' "${api_code}" "${web_code}" "${proxy_body}" "${same_origin_body}"
+  if [[ "${api_code}" == "200" && "${web_code}" == "200" && "${proxy_body}" == *'"ok": true'* && "${proxy_body}" == *'/api/install-smoke?check=proxy'* ]]; then
+    printf 'install_smoke=pass api=%s web=%s proxy=%s\n' "${api_code}" "${web_code}" "${proxy_body}"
     exit 0
   fi
   sleep 0.25

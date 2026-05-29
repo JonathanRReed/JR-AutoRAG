@@ -60,6 +60,29 @@ def _delete_model_cache(model_id: str) -> None:
         raise HTTPException(status_code=500, detail=f"Delete failed: {exc}") from exc
 
 
+def _resolve_managed_model(payload: ModelDownloadRequest, container: ServiceContainer) -> str:
+    kind = payload.kind.lower().strip()
+    if kind not in {"embedding", "reranker"}:
+        raise HTTPException(status_code=400, detail="kind must be 'embedding' or 'reranker'")
+
+    model = payload.model.strip()
+    if not model:
+        raise HTTPException(status_code=400, detail="model is required")
+
+    cfg = container.config_store.read()
+    expected_model = (
+        cfg.retrieval.embedding_model
+        if kind == "embedding"
+        else cfg.retrieval.reranker_model
+    )
+    if model != expected_model:
+        raise HTTPException(
+            status_code=403,
+            detail=f"{kind} model management is limited to the configured model",
+        )
+    return model
+
+
 @router.get("", response_model=AppConfig)
 def read_config(container: ServiceContainer = Depends(get_container)):
     return container.config_store.read()
@@ -77,9 +100,10 @@ def update_config(
             if not profile:
                 raise HTTPException(status_code=404, detail=f"Profile '{active_profile}' not found")
             cfg.provider = profile.provider
+            cfg = AppConfig.model_validate(cfg.model_dump())
         sanitized = container.prepare_config_for_storage(cfg)
+        container.apply_config(sanitized)
         stored = container.config_store.write(sanitized)
-        container.apply_config(stored)
         return stored
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -228,25 +252,23 @@ def quality_recommendations(
 
 
 @router.post("/models/download")
-def download_model(payload: ModelDownloadRequest):
-    kind = payload.kind.lower().strip()
-    if kind not in {"embedding", "reranker"}:
-        raise HTTPException(status_code=400, detail="kind must be 'embedding' or 'reranker'")
-    if not payload.model:
-        raise HTTPException(status_code=400, detail="model is required")
-    _download_model(payload.model)
-    return {"status": "ok", "model": payload.model}
+def download_model(
+    payload: ModelDownloadRequest,
+    container: ServiceContainer = Depends(get_container),
+):
+    model = _resolve_managed_model(payload, container)
+    _download_model(model)
+    return {"status": "ok", "model": model}
 
 
 @router.post("/models/delete")
-def delete_model(payload: ModelDownloadRequest):
-    kind = payload.kind.lower().strip()
-    if kind not in {"embedding", "reranker"}:
-        raise HTTPException(status_code=400, detail="kind must be 'embedding' or 'reranker'")
-    if not payload.model:
-        raise HTTPException(status_code=400, detail="model is required")
-    _delete_model_cache(payload.model)
-    return {"status": "ok", "model": payload.model}
+def delete_model(
+    payload: ModelDownloadRequest,
+    container: ServiceContainer = Depends(get_container),
+):
+    model = _resolve_managed_model(payload, container)
+    _delete_model_cache(model)
+    return {"status": "ok", "model": model}
 
 
 @router.get("/presets", response_model=dict[str, RetrievalDefaults])

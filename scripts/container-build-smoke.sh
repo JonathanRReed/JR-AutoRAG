@@ -75,10 +75,11 @@ docker run -d --rm \
   --name "${WEB_CONTAINER}" \
   -e "BUN_PUBLIC_API_BASE_URL=http://${API_CONTAINER}:8000" \
   -e "VITE_API_BASE_URL=http://${API_CONTAINER}:8000" \
+  -e "BUN_PUBLIC_BROWSER_API_BASE_URL=http://127.0.0.1:${API_PORT}" \
+  -e "VITE_BROWSER_API_BASE_URL=http://127.0.0.1:${API_PORT}" \
   -p "127.0.0.1:${WEB_PORT}:3000" \
   "${WEB_IMAGE}" >/dev/null
 wait_for_url "http://127.0.0.1:${WEB_PORT}/" "${TMP_DIR}/web.html" "Web"
-wait_for_url "http://127.0.0.1:${WEB_PORT}/__api/healthz" "${TMP_DIR}/web-proxy-healthz.json" "Web API proxy"
 
 if ! grep -q '<div id="root"></div>' "${TMP_DIR}/web.html"; then
   echo "web root container was not served" >&2

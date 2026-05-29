@@ -9,8 +9,11 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core import auth as auth_module
+from app.core.auth import APIKeyAuth
 from app.core.golden_eval import AnswerMetrics, EvalRunResult, EvalRunStore, GoldenSetStore, RetrievalMetrics
 from app.main import app
+from app.routers import config as config_router
 from app.routers import evaluation
 from app.core.security_middleware import _resolve_required_scope, _resolve_route_timeout
 from app.schemas.query import QueryResponse
@@ -56,6 +59,40 @@ def test_config_roundtrip(client: TestClient) -> None:
     assert update.json()["profile"] == "Smoke"
 
 
+def test_model_download_rejects_unconfigured_model(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    downloaded: list[str] = []
+    monkeypatch.setattr(config_router, "_download_model", downloaded.append)
+
+    resp = client.post(
+        "/config/models/download",
+        json={"kind": "embedding", "model": "bigscience/bloom"},
+    )
+
+    assert resp.status_code == 403
+    assert downloaded == []
+    assert "configured model" in resp.json()["detail"]
+
+
+def test_model_download_allows_configured_model(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    downloaded: list[str] = []
+    monkeypatch.setattr(config_router, "_download_model", downloaded.append)
+
+    resp = client.post(
+        "/config/models/download",
+        json={"kind": "embedding", "model": "BAAI/bge-base-en-v1.5"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "ok", "model": "BAAI/bge-base-en-v1.5"}
+    assert downloaded == ["BAAI/bge-base-en-v1.5"]
+
+
 def test_config_rejects_cloud_provider_in_local_only_mode(client: TestClient) -> None:
     resp = client.get("/config")
     assert resp.status_code == 200
@@ -68,6 +105,35 @@ def test_config_rejects_cloud_provider_in_local_only_mode(client: TestClient) ->
     }
 
     update = client.put("/config", json=config)
+    assert update.status_code in {400, 422}
+    detail = update.json()["detail"]
+    if isinstance(detail, list):
+        detail = " ".join(str(item) for item in detail)
+    assert "local-only" in str(detail).lower()
+
+
+def test_config_rejects_remote_active_profile_in_local_only_mode(client: TestClient) -> None:
+    resp = client.get("/config")
+    assert resp.status_code == 200
+    config = resp.json()
+    config["deployment_profile"] = "local_only"
+    config["provider"] = {
+        "name": "Ollama",
+        "base_url": "http://localhost:11434",
+        "generator_model": "llama3",
+    }
+    config["provider_profiles"] = [
+        {
+            "name": "remote",
+            "provider": {
+                "name": "Attacker",
+                "base_url": "https://attacker.example/v1",
+                "generator_model": "remote-model",
+            },
+        }
+    ]
+
+    update = client.put("/config?active_profile=remote", json=config)
     assert update.status_code in {400, 422}
     detail = update.json()["detail"]
     if isinstance(detail, list):
@@ -387,6 +453,41 @@ def test_document_ingest_query_and_evaluation(client: TestClient) -> None:
     eval_data = eval_resp.json()
     assert eval_data["responses"], "evaluation should include responses"
     assert eval_data["average_coverage"] >= 0
+
+
+def test_onboarding_scope_resolution_is_method_specific() -> None:
+    assert _resolve_required_scope("/onboarding", "GET") == "read"
+    assert _resolve_required_scope("/onboarding/demo/seed", "POST") == "write"
+    assert _resolve_required_scope("/onboarding/demo", "DELETE") == "write"
+
+
+def test_onboarding_demo_mutations_require_write_scope(
+    monkeypatch: pytest.MonkeyPatch, client: TestClient
+) -> None:
+    auth = APIKeyAuth(enabled=True)
+    read_key, _ = auth.generate_key("read-only", scopes=["read"])
+    write_key, _ = auth.generate_key("writer", scopes=["write"])
+    monkeypatch.setattr(auth_module, "_auth_instance", auth)
+
+    read_headers = {"X-API-Key": read_key}
+    write_headers = {"X-API-Key": write_key}
+
+    onboarding = client.get("/onboarding", headers=read_headers)
+    assert onboarding.status_code == 200
+
+    seed_denied = client.post("/onboarding/demo/seed", headers=read_headers)
+    assert seed_denied.status_code == 403
+
+    seed_allowed = client.post("/onboarding/demo/seed", headers=write_headers)
+    assert seed_allowed.status_code == 200
+    assert seed_allowed.json()["seeded"]
+
+    clear_denied = client.delete("/onboarding/demo", headers=read_headers)
+    assert clear_denied.status_code == 403
+
+    clear_allowed = client.delete("/onboarding/demo", headers=write_headers)
+    assert clear_allowed.status_code == 200
+    assert clear_allowed.json()["deleted"] > 0
 
 
 def test_onboarding_demo_seed_query_and_clear(client: TestClient) -> None:
