@@ -42,6 +42,8 @@ echo "Starting web UI on http://localhost:${WEB_PORT}..."
 cd "${ROOT_DIR}"
 BUN_PUBLIC_API_BASE_URL="${BUN_PUBLIC_API_BASE_URL:-http://${API_HOST}:${API_PORT}}" \
   VITE_API_BASE_URL="${VITE_API_BASE_URL:-http://${API_HOST}:${API_PORT}}" \
+  BUN_PUBLIC_BROWSER_API_BASE_URL="${BUN_PUBLIC_BROWSER_API_BASE_URL:-http://${API_HOST}:${API_PORT}}" \
+  VITE_BROWSER_API_BASE_URL="${VITE_BROWSER_API_BASE_URL:-http://${API_HOST}:${API_PORT}}" \
   PORT="${WEB_PORT}" \
   env \
     -u npm_command \
