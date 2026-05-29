@@ -113,6 +113,10 @@ def _resolve_required_scope(path: str, method: str) -> str | None:
     method = method.upper()
     if path.startswith("/documents"):
         return "read" if method in read_methods else "write"
+    if path == "/install/report":
+        return "admin"
+    if path.startswith("/evaluation/runs/") and path.endswith("/report"):
+        return "admin"
     if path.startswith("/onboarding"):
         return "read" if method in read_methods else "write"
     for prefix, scope in sorted(ROUTE_SCOPES.items(), key=lambda item: len(item[0]), reverse=True):

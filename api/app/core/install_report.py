@@ -47,6 +47,29 @@ def _safe_float(value: Any) -> float:
         return 0.0
 
 
+def _summarize_policy(policy: dict[str, Any]) -> dict[str, Any]:
+    """Keep install reports free of backend IDs, URLs, and fallback topology."""
+    guardrails = _safe_mapping(policy.get("guardrails"))
+    backends = _safe_mapping(policy.get("backends"))
+    fallbacks = _safe_mapping(policy.get("fallbacks"))
+    data_policy = _safe_mapping(policy.get("data_policy"))
+    return {
+        "guardrails": guardrails,
+        "data_policy": {
+            key: data_policy[key]
+            for key in (
+                "external_model_calls_allowed",
+                "managed_cloud_hosting_allowed",
+                "pii_redaction_required",
+                "report_export_mode",
+            )
+            if key in data_policy
+        },
+        "backend_count": len(backends),
+        "fallback_count": len(fallbacks),
+    }
+
+
 def _client_readiness_state(evaluations: list[dict[str, Any]]) -> dict[str, Any]:
     client_eval = next(
         (item for item in evaluations if item.get("golden_set_name") == CLIENT_READINESS_SET),
@@ -274,7 +297,7 @@ def build_install_report(
 ) -> InstallReportResponse:
     """Build a single redacted report for client install evidence."""
     corpus = _collect_corpus(container)
-    policy = container.local_first.describe()
+    policy = _summarize_policy(container.local_first.describe())
     evidence = _build_evidence(corpus, evaluations, artifacts)
     actions = _build_actions(readiness, security, corpus, evaluations)
 
@@ -303,6 +326,6 @@ def build_install_report(
         actions=actions,
         redaction={
             "secrets": "API keys, tokens, passwords, credentials, and secret-shaped config keys are omitted or redacted.",
-            "scope": "Report includes operational metadata only; ingested document text and retrieved chunks are not embedded.",
+            "scope": "Report excludes backend definitions, fallback topology, local artifact paths, and operator audit snapshots.",
         },
     )

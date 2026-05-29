@@ -299,27 +299,48 @@ class EvalRunStore:
         except json.JSONDecodeError:
             return None
 
-    def list_runs(self, limit: int = 50) -> list[dict[str, Any]]:
-        """List recent runs (summary only)."""
+    def list_runs(self, limit: int = 50, *, include_sensitive: bool = False) -> list[dict[str, Any]]:
+        """List recent runs, omitting operator-only audit metadata by default."""
         runs = sorted(
             self._runs.values(),
             key=lambda r: r["timestamp"],
             reverse=True
         )[:limit]
-        return [
-            {
+        summaries = []
+        for r in runs:
+            audit = r.get("audit", {})
+            summary = {
                 "run_id": r["run_id"],
                 "golden_set_name": r["golden_set_name"],
                 "timestamp": r["timestamp"],
                 "retrieval_metrics": r["retrieval_metrics"],
                 "answer_metrics": r["answer_metrics"],
                 "duration_ms": r.get("duration_ms", 0),
-                "report_path": r.get("report_path", ""),
                 "report_sha256": r.get("report_sha256", ""),
-                "audit": r.get("audit", {}),
+                "audit": audit if include_sensitive else self._public_audit_summary(audit),
             }
-            for r in runs
-        ]
+            if include_sensitive:
+                summary["report_path"] = r.get("report_path", "")
+            summaries.append(summary)
+        return summaries
+
+    @staticmethod
+    def _public_audit_summary(audit: dict[str, Any]) -> dict[str, Any]:
+        """Return the audit fields safe for read-scoped summaries."""
+        if not isinstance(audit, dict):
+            return {}
+        golden_set = audit.get("golden_set")
+        safe_golden_set = {}
+        if isinstance(golden_set, dict):
+            for key in ("name", "case_count", "tag_counts", "fingerprint"):
+                if key in golden_set:
+                    safe_golden_set[key] = golden_set[key]
+        safe = {}
+        if audit.get("schema_version"):
+            safe["schema_version"] = audit["schema_version"]
+        if safe_golden_set:
+            safe["golden_set"] = safe_golden_set
+        return safe
 
 
 # ============================================================================
