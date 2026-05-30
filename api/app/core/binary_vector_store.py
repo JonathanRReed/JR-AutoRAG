@@ -322,6 +322,24 @@ class MilvusVectorStore:
         # Sum across bytes to get total Hamming distance
         return bit_counts.sum(axis=1)
 
+
+    def _document_filter_indices(
+        self,
+        document_ids: list[str] | set[str] | None = None,
+        filter_expr: str | None = None,
+    ) -> np.ndarray:
+        """Return chunk indices matching the supported document filter."""
+        if document_ids:
+            allowed_ids = set(document_ids)
+        elif filter_expr and 'doc_id ==' in filter_expr:
+            allowed_ids = {filter_expr.split('==')[1].strip().strip('"\'')}
+        else:
+            return np.arange(len(self._chunks))
+
+        return np.array([
+            i for i, chunk in enumerate(self._chunks) if chunk.doc_id in allowed_ids
+        ])
+
     def search(
         self,
         query_embedding: list[float] | np.ndarray,
@@ -350,23 +368,14 @@ class MilvusVectorStore:
         if self._vectors is None:
             return []
 
-        # Quantize query embedding
+        valid_indices = self._document_filter_indices(filter_expr=filter_expr)
+        if len(valid_indices) == 0:
+            return []
+
+        # Quantize query embedding and compute Hamming distances only for the scoped vectors.
         query_bq = float32_to_binary(query_embedding, self._bq_config)
         query_arr = np.frombuffer(query_bq, dtype=np.uint8)
-
-        # Compute Hamming distances
-        distances = self._hamming_distance_batch(query_arr, self._vectors)
-
-        # Apply filter if specified
-        valid_indices = np.arange(len(self._chunks))
-        if filter_expr and 'doc_id ==' in filter_expr:
-                doc_id = filter_expr.split('==')[1].strip().strip('"\'')
-                valid_indices = np.array([
-                    i for i, c in enumerate(self._chunks) if c.doc_id == doc_id
-                ])
-                if len(valid_indices) == 0:
-                    return []
-                distances = distances[valid_indices]
+        distances = self._hamming_distance_batch(query_arr, self._vectors[valid_indices])
 
         # Get top-k indices
         if len(distances) <= top_k:
@@ -379,7 +388,7 @@ class MilvusVectorStore:
         # Build results
         results = []
         for idx in sorted_indices[:top_k]:
-            chunk_idx = valid_indices[idx] if filter_expr else idx
+            chunk_idx = valid_indices[idx]
             chunk = self._chunks[chunk_idx]
             results.append(MilvusSearchResult(
                 id=chunk.id,
@@ -398,6 +407,7 @@ class MilvusVectorStore:
         query_bq: bytes,
         top_k: int = 5,
         filter_expr: str | None = None,
+        document_ids: list[str] | None = None,
     ) -> list[MilvusSearchResult]:
         """Search using pre-quantized binary query vector."""
         self._ensure_connected()
@@ -411,18 +421,12 @@ class MilvusVectorStore:
         if self._vectors is None:
             return []
 
-        query_arr = np.frombuffer(query_bq, dtype=np.uint8)
-        distances = self._hamming_distance_batch(query_arr, self._vectors)
+        valid_indices = self._document_filter_indices(document_ids, filter_expr)
+        if len(valid_indices) == 0:
+            return []
 
-        valid_indices = np.arange(len(self._chunks))
-        if filter_expr and 'doc_id ==' in filter_expr:
-            doc_id = filter_expr.split('==')[1].strip().strip('"\'')
-            valid_indices = np.array([
-                i for i, c in enumerate(self._chunks) if c.doc_id == doc_id
-            ])
-            if len(valid_indices) == 0:
-                return []
-            distances = distances[valid_indices]
+        query_arr = np.frombuffer(query_bq, dtype=np.uint8)
+        distances = self._hamming_distance_batch(query_arr, self._vectors[valid_indices])
 
         if len(distances) <= top_k:
             sorted_indices = np.argsort(distances)
@@ -432,7 +436,7 @@ class MilvusVectorStore:
 
         results = []
         for idx in sorted_indices[:top_k]:
-            chunk_idx = valid_indices[idx] if filter_expr else idx
+            chunk_idx = valid_indices[idx]
             chunk = self._chunks[chunk_idx]
             results.append(MilvusSearchResult(
                 id=chunk.id,

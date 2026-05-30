@@ -457,19 +457,7 @@ class BQHybridRetrievalEngine(HybridRetrievalEngine):
         document_ids: list[str] | None,
     ) -> list[MilvusSearchResult]:
         store = self._ensure_bq_store(self._bq_embedding_dim)
-        if document_ids and len(document_ids) == 1:
-            doc_id = document_ids[0]
-            return store.search_binary(query_bq, top_k=top_k, filter_expr=f'doc_id == "{doc_id}"')
-
-        if document_ids and len(document_ids) > 1:
-            combined: list[MilvusSearchResult] = []
-            for doc_id in document_ids:
-                combined.extend(
-                    store.search_binary(query_bq, top_k=top_k, filter_expr=f'doc_id == "{doc_id}"')
-                )
-            return self._dedupe_by_chunk(combined)[:top_k]
-
-        return store.search_binary(query_bq, top_k=top_k)
+        return store.search_binary(query_bq, top_k=top_k, document_ids=document_ids)
 
     def _dedupe_by_chunk(self, results: list[MilvusSearchResult]) -> list[MilvusSearchResult]:
         by_id: dict[str, MilvusSearchResult] = {}
