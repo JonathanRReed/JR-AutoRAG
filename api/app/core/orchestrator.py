@@ -78,6 +78,23 @@ from .uncertainty_monitor import UncertaintyMonitor
 logger = logging.getLogger("autorag.pipeline")
 
 
+def _pipeline_step_log_record(trace_id: str, step: PipelineStep) -> dict[str, Any]:
+    """Build a safe pipeline-step log record without step details.
+
+    Pipeline step details can contain user prompts, retrieved document text,
+    generated outlines, or other sensitive data. Those details remain available
+    through the in-process callback and telemetry trace store, but application
+    logs should only receive non-sensitive execution metadata.
+    """
+    return {
+        "event": "pipeline_step",
+        "trace_id": trace_id,
+        "name": step.name,
+        "duration_ms": step.duration_ms,
+        "status": step.status,
+    }
+
+
 class Orchestrator:
     """Agentic RAG orchestrator with iterative retrieval and self-correction.
 
@@ -813,14 +830,7 @@ class Orchestrator:
             if on_step:
                 on_step(step)
             try:
-                logger.info(json.dumps({
-                    "event": "pipeline_step",
-                    "trace_id": trace_id,
-                    "name": step.name,
-                    "duration_ms": step.duration_ms,
-                    "status": step.status,
-                    "details": step.details,
-                }))
+                logger.info(json.dumps(_pipeline_step_log_record(trace_id, step)))
             except Exception:
                 logger.info("pipeline_step trace_id=%s name=%s", trace_id, step.name)
 
