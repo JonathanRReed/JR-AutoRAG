@@ -268,6 +268,51 @@ class TestBinaryVectorStoreSearch:
         assert len(results) == 1
         assert results[0].doc_id == "doc2"
 
+
+    def test_search_binary_filters_before_distance_for_missing_doc(self, monkeypatch):
+        store = MilvusVectorStore(embedding_dim=8)
+        store.connect()
+        store.create_collection()
+        store.insert([
+            MilvusChunk(doc_id="doc1", chunk_id="c1", source="", text="", embedding=[1.0] * 8),
+        ])
+        store.build_index()
+
+        def fail_if_called(*args, **kwargs):
+            raise AssertionError("distance calculation should be skipped when no documents match")
+
+        monkeypatch.setattr(store, "_hamming_distance_batch", fail_if_called)
+
+        results = store.search_binary(b"\xff", top_k=5, document_ids=["missing"])
+
+        assert results == []
+
+    def test_search_binary_scans_matching_documents_once(self, monkeypatch):
+        store = MilvusVectorStore(embedding_dim=8)
+        store.connect()
+        store.create_collection()
+        store.insert([
+            MilvusChunk(doc_id="doc1", chunk_id="c1", source="", text="", embedding=[1.0] * 8),
+            MilvusChunk(doc_id="doc2", chunk_id="c2", source="", text="", embedding=[-1.0] * 8),
+            MilvusChunk(doc_id="doc3", chunk_id="c3", source="", text="", embedding=[1.0] * 8),
+        ])
+        store.build_index()
+
+        calls = []
+        original = store._hamming_distance_batch
+
+        def count_call(query, vectors):
+            calls.append(vectors.shape[0])
+            return original(query, vectors)
+
+        monkeypatch.setattr(store, "_hamming_distance_batch", count_call)
+
+        results = store.search_binary(b"\xff", top_k=5, document_ids=["doc1", "doc2", "missing"])
+
+        assert len(results) == 2
+        assert {result.doc_id for result in results} == {"doc1", "doc2"}
+        assert calls == [2]
+
     def test_delete_by_doc_id(self):
         store = MilvusVectorStore(embedding_dim=8)
         store.connect()

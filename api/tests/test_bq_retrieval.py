@@ -297,3 +297,16 @@ class TestGetBQRetrievalService:
         config = BQRetrievalConfig(top_k=15)
         service = get_bq_retrieval_service(config=config)
         assert service._config.top_k == 15
+
+
+class TestQueryRequestDocumentIds:
+    def test_document_ids_have_max_length(self):
+        from pydantic import ValidationError
+
+        from app.schemas.query import MAX_DOCUMENT_IDS, QueryRequest
+
+        with pytest.raises(ValidationError):
+            QueryRequest(
+                question="What changed?",
+                document_ids=[str(i) for i in range(MAX_DOCUMENT_IDS + 1)],
+            )
