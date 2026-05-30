@@ -263,9 +263,11 @@ class OllamaCloudProvider(OllamaProvider):
         self,
         api_key: str | None = None,
         default_model: str | None = None,
+        base_url: str | None = None,
     ) -> None:
-        resolved_key = resolve_provider_api_key("ollama cloud", self.OLLAMA_CLOUD_URL, api_key)
-        super().__init__(self.OLLAMA_CLOUD_URL, default_model or "llama3", resolved_key)
+        resolved_url = base_url or self.OLLAMA_CLOUD_URL
+        resolved_key = resolve_provider_api_key("ollama cloud", resolved_url, api_key)
+        super().__init__(resolved_url, default_model or "llama3", resolved_key)
         if not self.api_key:
             raise ProviderError("Ollama Cloud requires an API key. Set OLLAMA_API_KEY or provide api_key parameter.")
 
@@ -348,9 +350,11 @@ class OpenRouterProvider(_HTTPProvider):
         self,
         api_key: str | None = None,
         default_model: str | None = None,
+        base_url: str | None = None,
     ) -> None:
-        super().__init__(self.OPENROUTER_BASE_URL, default_model or "openai/gpt-4o-mini")
-        self.api_key = resolve_provider_api_key("openrouter", self.OPENROUTER_BASE_URL, api_key)
+        resolved_url = base_url or self.OPENROUTER_BASE_URL
+        super().__init__(resolved_url, default_model or "openai/gpt-4o-mini")
+        self.api_key = resolve_provider_api_key("openrouter", resolved_url, api_key)
 
     def _get_headers(self) -> dict[str, str]:
         headers = {}
@@ -456,6 +460,7 @@ class ProviderFactory:
             return OllamaCloudProvider(
                 api_key=resolved_key,
                 default_model=cfg.planner_model or cfg.generator_model,
+                base_url=str(cfg.base_url),
             )
         # Local Ollama
         if "ollama" in name:
@@ -466,6 +471,7 @@ class ProviderFactory:
             return OpenRouterProvider(
                 api_key=resolved_key,
                 default_model=cfg.generator_model,
+                base_url=str(cfg.base_url),
             )
         return CloudProvider(str(cfg.base_url), cfg.generator_model, api_key=resolved_key)
 

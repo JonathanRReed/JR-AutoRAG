@@ -668,6 +668,39 @@ class TestGenerationStage:
         provider = factory.build(config)
         assert isinstance(provider, LMStudioProvider)
 
+    def test_provider_factory_openrouter_uses_configured_base_url(self):
+        """OpenRouter selection must not override a validated configured endpoint."""
+        from app.core.providers import OpenRouterProvider, ProviderFactory
+        from app.schemas.config import ProviderConfig
+
+        factory = ProviderFactory()
+        config = ProviderConfig(
+            name="OpenRouter",
+            base_url="http://10.0.0.5:11434",
+            generator_model="openai/gpt-4o-mini",
+        )
+
+        provider = factory.build(config)
+        assert isinstance(provider, OpenRouterProvider)
+        assert provider.base_url == "http://10.0.0.5:11434"
+
+    def test_provider_factory_ollama_cloud_uses_configured_base_url(self):
+        """Ollama Cloud selection must not override a validated configured endpoint."""
+        from app.core.providers import OllamaCloudProvider, ProviderFactory
+        from app.schemas.config import ProviderConfig
+
+        factory = ProviderFactory()
+        config = ProviderConfig(
+            name="Ollama Cloud",
+            base_url="http://10.0.0.6:11434",
+            generator_model="llama3",
+            api_key="test-key",
+        )
+
+        provider = factory.build(config)
+        assert isinstance(provider, OllamaCloudProvider)
+        assert provider.base_url == "http://10.0.0.6:11434"
+
 
 # ============================================================================
 # 7. REFLECTION STAGE TESTS
