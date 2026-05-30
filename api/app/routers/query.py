@@ -13,7 +13,7 @@ from fastapi.responses import StreamingResponse
 from ..core.auth import get_auth
 from ..core.document_acl import get_acl_enforcer, resolve_acl_defaults
 from ..core.query_mode import QueryMode
-from ..core.telemetry import PipelineStep
+from ..core.telemetry import PipelineStep, pipeline_step_to_public_dict
 from ..schemas.query import MAX_QUESTION_LENGTH, QueryRequest, QueryResponse, TraceOut, TraceStepOut
 from ..services import ServiceContainer, get_container
 
@@ -130,14 +130,7 @@ async def ask_stream(
     queue: asyncio.Queue[dict | None] = asyncio.Queue()
 
     def serialize_step(step: PipelineStep) -> dict:
-        return {
-            "name": step.name,
-            "duration_ms": step.duration_ms,
-            "details": step.details,
-            "status": step.status,
-            "started_at": step.started_at.isoformat(),
-            "completed_at": step.completed_at.isoformat(),
-        }
+        return pipeline_step_to_public_dict(step)
 
     def on_step(step: PipelineStep) -> None:
         queue.put_nowait({"type": "step", "data": serialize_step(step)})
@@ -202,14 +195,7 @@ def list_traces(container: ServiceContainer = Depends(get_container)):
             answer=trace.answer,
             metrics=trace.metrics,
             steps=[
-                TraceStepOut(
-                    name=s.name,
-                    duration_ms=s.duration_ms,
-                    details=s.details,
-                    status=s.status,
-                    started_at=s.started_at.isoformat(),
-                    completed_at=s.completed_at.isoformat(),
-                )
+                TraceStepOut(**pipeline_step_to_public_dict(s))
                 for s in trace.steps
             ],
         )
