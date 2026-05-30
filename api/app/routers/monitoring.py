@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 
 from ..core.cache import get_cache_manager
+from ..core.telemetry import pipeline_step_to_public_dict
 from ..schemas.query import TraceOut, TraceStepOut
 from ..services import ServiceContainer, get_container
 
@@ -21,14 +22,7 @@ def traces(container: ServiceContainer = Depends(get_container)):
             answer=trace.answer,
             metrics=trace.metrics,
             steps=[
-                TraceStepOut(
-                    name=s.name,
-                    duration_ms=s.duration_ms,
-                    details=s.details,
-                    status=s.status,
-                    started_at=s.started_at.isoformat(),
-                    completed_at=s.completed_at.isoformat(),
-                )
+                TraceStepOut(**pipeline_step_to_public_dict(s))
                 for s in trace.steps
             ],
         )

@@ -69,7 +69,12 @@ from .self_rag import get_self_rag_critic
 # Web search disabled for offline-only operation
 # from .web_search import WebSearch, get_web_search
 from .smart_planner import compute_marginal_gain
-from .telemetry import PipelineStep, TelemetryStore
+from .telemetry import (
+    PUBLIC_PROVIDER_ERROR_MESSAGE,
+    PipelineStep,
+    TelemetryStore,
+    pipeline_step_to_public_dict,
+)
 from .trace_export import TraceBundle, create_trace_bundle
 
 # Confidence monitoring
@@ -918,17 +923,7 @@ class Orchestrator:
             )
             record_step(cache_step)
             # Return cached result with updated trace
-            cached_result["steps"] = [
-                {
-                    "name": s.name,
-                    "duration_ms": s.duration_ms,
-                    "details": s.details,
-                    "status": s.status,
-                    "started_at": s.started_at.isoformat(),
-                    "completed_at": s.completed_at.isoformat(),
-                }
-                for s in pipeline_steps
-            ]
+            cached_result["steps"] = [pipeline_step_to_public_dict(s) for s in pipeline_steps]
             cached_result["from_cache"] = True
             return cached_result
 
@@ -1819,8 +1814,8 @@ class Orchestrator:
             gen_start = time.perf_counter()
             provider = self._provider
             gen_details: dict[str, Any] = {
-                "provider": getattr(provider, "base_url", "unknown") if provider else "none",
-                "model": getattr(provider, "default_model", "unknown") if provider else None,
+                "provider": "configured" if provider else "none",
+                "model": "configured" if provider else None,
                 "context_tokens": len(context_text.split()) if context_text else 0,
                 "num_citations": len(citation_payload),
                 "mode": "standard",
@@ -1959,10 +1954,10 @@ For each question:
                             else:
                                 answer = await provider.chat(messages)
                         gen_details["status"] = "success"
-                except ProviderError as exc:
-                    answer = f"Provider error: {exc}"
+                except ProviderError:
+                    answer = PUBLIC_PROVIDER_ERROR_MESSAGE
                     gen_details["status"] = "error"
-                    gen_details["error"] = str(exc)
+                    gen_details["error"] = PUBLIC_PROVIDER_ERROR_MESSAGE
 
             record_step(self._make_step(step_name, gen_start, gen_start_time, gen_details))
             return answer, gen_details
@@ -2408,17 +2403,7 @@ The retrieved evidence contains some conflicting information. When you encounter
         )
 
         # Build step summaries for response
-        steps_out = [
-            {
-                "name": s.name,
-                "duration_ms": s.duration_ms,
-                "details": s.details,
-                "status": s.status,
-                "started_at": s.started_at.isoformat(),
-                "completed_at": s.completed_at.isoformat(),
-            }
-            for s in pipeline_steps
-        ]
+        steps_out = [pipeline_step_to_public_dict(s) for s in pipeline_steps]
 
         result = {
             "answer": answer,
@@ -2589,8 +2574,8 @@ Be helpful, accurate, and concise."""
                 messages.append({"role": "system", "content": memory_context})
             messages.append({"role": "user", "content": query})
 
-            gen_details["provider"] = getattr(provider, "base_url", "unknown")
-            gen_details["model"] = getattr(provider, "default_model", "unknown")
+            gen_details["provider"] = "configured"
+            gen_details["model"] = "configured"
 
             try:
                 if on_token is not None:
@@ -2609,10 +2594,10 @@ Be helpful, accurate, and concise."""
                 else:
                     answer = await provider.chat(messages)
                 gen_details["status"] = "success"
-            except ProviderError as exc:
-                answer = f"Provider error: {exc}"
+            except ProviderError:
+                answer = PUBLIC_PROVIDER_ERROR_MESSAGE
                 gen_details["status"] = "error"
-                gen_details["error"] = str(exc)
+                gen_details["error"] = PUBLIC_PROVIDER_ERROR_MESSAGE
 
         record_step(self._make_step("generation", gen_start, gen_start_time, gen_details))
 
@@ -2648,17 +2633,7 @@ Be helpful, accurate, and concise."""
             started_at=pipeline_start,
         )
 
-        steps_out = [
-            {
-                "name": s.name,
-                "duration_ms": s.duration_ms,
-                "details": s.details,
-                "status": s.status,
-                "started_at": s.started_at.isoformat(),
-                "completed_at": s.completed_at.isoformat(),
-            }
-            for s in pipeline_steps
-        ]
+        steps_out = [pipeline_step_to_public_dict(s) for s in pipeline_steps]
 
         result = {
             "answer": answer,
@@ -2720,17 +2695,7 @@ Be helpful, accurate, and concise."""
             started_at=pipeline_start,
         )
 
-        steps_out = [
-            {
-                "name": s.name,
-                "duration_ms": s.duration_ms,
-                "details": s.details,
-                "status": s.status,
-                "started_at": s.started_at.isoformat(),
-                "completed_at": s.completed_at.isoformat(),
-            }
-            for s in pipeline_steps
-        ]
+        steps_out = [pipeline_step_to_public_dict(s) for s in pipeline_steps]
 
         return {
             "answer": answer,
@@ -2797,17 +2762,7 @@ Be helpful, accurate, and concise."""
             started_at=pipeline_start,
         )
 
-        steps_out = [
-            {
-                "name": s.name,
-                "duration_ms": s.duration_ms,
-                "details": s.details,
-                "status": s.status,
-                "started_at": s.started_at.isoformat(),
-                "completed_at": s.completed_at.isoformat(),
-            }
-            for s in pipeline_steps
-        ]
+        steps_out = [pipeline_step_to_public_dict(s) for s in pipeline_steps]
 
         # Include partial sources even when abstaining
         sources = [
