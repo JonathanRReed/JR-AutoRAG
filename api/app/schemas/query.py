@@ -8,11 +8,16 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 MAX_QUESTION_LENGTH = 10000
+MAX_DOCUMENT_IDS = 100
 
 
 class QueryRequest(BaseModel):
     question: str = Field(..., max_length=MAX_QUESTION_LENGTH, description="The question to answer")
-    document_ids: list[str] | None = None
+    document_ids: list[str] | None = Field(
+        default=None,
+        max_length=MAX_DOCUMENT_IDS,
+        description="Optional document scope for retrieval.",
+    )
     history: list[dict[str, str]] | None = None
     conversation_id: str | None = None
     query_mode: Literal["grounded", "open_domain"] | None = None
