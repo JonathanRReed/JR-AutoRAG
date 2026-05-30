@@ -30,6 +30,31 @@ def test_sensitive_protected_routes_resolve_expected_scopes(path: str, method: s
     assert _resolve_required_scope(path, method) == scope
 
 
+def test_evaluation_scope_resolution_is_method_specific() -> None:
+    assert _resolve_required_scope("/evaluation/golden-sets", "GET") == "read"
+    assert _resolve_required_scope("/evaluation/runs", "GET") == "read"
+    assert _resolve_required_scope("/evaluation/runs/run-1/report", "GET") == "admin"
+    assert _resolve_required_scope("/evaluation", "POST") == "eval"
+    assert _resolve_required_scope("/evaluation/golden-sets", "POST") == "eval"
+    assert _resolve_required_scope("/evaluation/golden-sets/demo", "DELETE") == "eval"
+    assert _resolve_required_scope("/evaluation/batch/demo", "POST") == "eval"
+
+
+def test_evaluation_mutations_require_eval_or_admin_scope() -> None:
+    auth = APIKeyAuth(enabled=True)
+    read_key, _ = auth.generate_key("reader", scopes=["read"])
+    write_key, _ = auth.generate_key("writer", scopes=["write"])
+    eval_key, _ = auth.generate_key("evaluator", scopes=["eval"])
+    admin_key, _ = auth.generate_key("admin", scopes=["admin"])
+
+    required_scope = _resolve_required_scope("/evaluation/golden-sets", "POST")
+
+    assert not auth.verify(read_key, required_scope=required_scope)
+    assert not auth.verify(write_key, required_scope=required_scope)
+    assert auth.verify(eval_key, required_scope=required_scope)
+    assert auth.verify(admin_key, required_scope=required_scope)
+
+
 def test_more_specific_scope_mapping_wins_for_mutating_routes() -> None:
     read_key_auth = APIKeyAuth(enabled=True)
     read_key, _ = read_key_auth.generate_key("reader", scopes=["read"])
