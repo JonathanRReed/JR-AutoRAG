@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -95,6 +96,22 @@ def test_synthetic_sections_are_deterministic_and_capped() -> None:
     assert rendered.count("- ") == 2
     assert "## LangExtract Entities" in rendered
 
+
+def test_run_with_timeout_returns_without_waiting_for_worker_completion(tmp_path: Path) -> None:
+    enricher = LangExtractEnricher(data_dir=tmp_path)
+
+    def slow_extract() -> None:
+        time.sleep(2)
+
+    started = time.monotonic()
+    try:
+        enricher._run_with_timeout(slow_extract, timeout=1)
+    except TimeoutError as exc:
+        elapsed = time.monotonic() - started
+        assert "LangExtract timed out after 1s" in str(exc)
+        assert elapsed < 1.5
+    else:  # pragma: no cover - defensive assertion
+        raise AssertionError("expected LangExtract timeout")
 
 def test_ingest_fail_open_when_extraction_fails(tmp_path: Path) -> None:
     store = DocumentStore(path=tmp_path / "docs.db")
