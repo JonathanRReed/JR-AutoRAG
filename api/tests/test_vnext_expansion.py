@@ -454,6 +454,24 @@ class TestLocalFirstConfig:
                 ],
             )
 
+    def test_client_safe_openrouter_uses_validated_private_endpoint(self):
+        from app.core.providers import OpenRouterProvider, ProviderFactory
+        from app.schemas.config import AppConfig
+
+        config = AppConfig(
+            deployment_profile="client_safe",
+            provider={
+                "name": "OpenRouter",
+                "base_url": "http://10.0.0.5:11434",
+                "generator_model": "openai/gpt-4o-mini",
+            },
+        )
+
+        provider = ProviderFactory().build(config.provider)
+
+        assert isinstance(provider, OpenRouterProvider)
+        assert provider.base_url == "http://10.0.0.5:11434"
+
 
 class TestConversationMemory:
     def test_record_exchange_writes_episodic_memory_for_substantive_turns(self):
