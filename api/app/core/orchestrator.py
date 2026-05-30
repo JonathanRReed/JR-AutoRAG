@@ -2338,7 +2338,8 @@ The retrieved evidence contains some conflicting information. When you encounter
         total_tokens = len(context.split()) if context else 0
         coverage = 0.0
         if plan.steps:
-            coverage = len(chunks) / plan.steps[0].dense_k
+            dense_k = max(1, plan.steps[0].dense_k)
+            coverage = len(chunks) / dense_k
 
         total_duration_ms = sum(s.duration_ms for s in pipeline_steps)
         retrieval_mode = "standard"

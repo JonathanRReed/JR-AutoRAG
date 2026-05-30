@@ -320,7 +320,7 @@ class RetrievalDefaults(BaseModel):
     """Retrieval configuration optimized for hybrid retrieval."""
 
     hybrid: bool = True
-    dense_k: int = 5
+    dense_k: int = Field(default=5, ge=1)
     sparse_k: int = 10
     dense_weight: float = 0.6
     sparse_weight: float = 0.4
