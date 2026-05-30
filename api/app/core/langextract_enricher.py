@@ -339,13 +339,15 @@ class LangExtractEnricher:
         return examples
 
     def _run_with_timeout(self, fn: Any, timeout: int) -> Any:
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(fn)
-            try:
-                return future.result(timeout=timeout)
-            except FutureTimeoutError as exc:
-                future.cancel()
-                raise TimeoutError(f"LangExtract timed out after {timeout}s") from exc
+        executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="langextract")
+        future = executor.submit(fn)
+        try:
+            return future.result(timeout=timeout)
+        except FutureTimeoutError as exc:
+            future.cancel()
+            raise TimeoutError(f"LangExtract timed out after {timeout}s") from exc
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
 
     def _normalize_attributes(self, attributes: Any) -> dict[str, str]:
         if not isinstance(attributes, dict):
