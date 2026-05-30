@@ -34,6 +34,47 @@ class Trace:
     steps: list[PipelineStep] = field(default_factory=list)
 
 
+PUBLIC_PROVIDER_ERROR_MESSAGE = "Provider request failed; check server logs for details."
+
+
+def sanitize_step_details(step_name: str, details: dict[str, Any] | None) -> dict[str, Any]:
+    """Return step details safe to persist or expose through public APIs.
+
+    Generation steps can otherwise carry provider endpoints, deployment/model IDs,
+    or raw upstream exception text. Keep operational status fields while replacing
+    sensitive connection metadata with coarse, non-identifying values.
+    """
+    safe_details = dict(details or {})
+    if not step_name.startswith("generation"):
+        return safe_details
+
+    provider = safe_details.get("provider")
+    if provider not in (None, "none", "unknown"):
+        safe_details["provider"] = "configured"
+
+    model = safe_details.get("model")
+    if model not in (None, "unknown"):
+        safe_details["model"] = "configured"
+
+    for key in list(safe_details):
+        if "error" in key.lower():
+            safe_details[key] = PUBLIC_PROVIDER_ERROR_MESSAGE
+
+    return safe_details
+
+
+def pipeline_step_to_public_dict(step: PipelineStep) -> dict[str, Any]:
+    """Serialize a pipeline step with sanitized details for responses/traces."""
+    return {
+        "name": step.name,
+        "duration_ms": step.duration_ms,
+        "details": sanitize_step_details(step.name, step.details),
+        "status": step.status,
+        "started_at": step.started_at.isoformat(),
+        "completed_at": step.completed_at.isoformat(),
+    }
+
+
 class TelemetryStore:
     def __init__(self, path: Path | None = None) -> None:
         self._path = Path(path or Path.cwd() / "data" / "traces.json")
@@ -50,7 +91,7 @@ class TelemetryStore:
             started_at=datetime.fromisoformat(data["started_at"]),
             completed_at=datetime.fromisoformat(data["completed_at"]),
             duration_ms=data.get("duration_ms", 0.0),
-            details=data.get("details", {}),
+            details=sanitize_step_details(data["name"], data.get("details", {})),
             status=data.get("status", "completed"),
         )
 
@@ -76,6 +117,7 @@ class TelemetryStore:
             data["steps"] = []
             for step in trace.steps:
                 step_data = asdict(step)
+                step_data["details"] = sanitize_step_details(step.name, step.details)
                 step_data["started_at"] = step.started_at.isoformat()
                 step_data["completed_at"] = step.completed_at.isoformat()
                 data["steps"].append(step_data)
@@ -92,6 +134,17 @@ class TelemetryStore:
     ) -> Trace:
         with self._lock:
             now = datetime.now(UTC)
+            safe_steps = [
+                PipelineStep(
+                    name=step.name,
+                    started_at=step.started_at,
+                    completed_at=step.completed_at,
+                    duration_ms=step.duration_ms,
+                    details=sanitize_step_details(step.name, step.details),
+                    status=step.status,
+                )
+                for step in (steps or [])
+            ]
             trace = Trace(
                 id=str(uuid.uuid4()),
                 started_at=started_at or now,
@@ -99,7 +152,7 @@ class TelemetryStore:
                 prompt=prompt,
                 answer=answer,
                 metrics=metrics or {},
-                steps=steps or [],
+                steps=safe_steps,
             )
             self._traces.append(trace)
             self._persist()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,12 @@ from starlette.requests import Request
 
 from app.core import auth as auth_module
 from app.core.security_middleware import verify_api_key
+from app.core.telemetry import (
+    PUBLIC_PROVIDER_ERROR_MESSAGE,
+    PipelineStep,
+    TelemetryStore,
+    pipeline_step_to_public_dict,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -76,3 +83,43 @@ async def test_exposed_mode_fails_closed_without_auth(monkeypatch: pytest.Monkey
     assert exc_info.value.status_code == 503
 
     _reset_auth()
+
+
+def test_generation_step_details_redact_provider_metadata_before_exposure(tmp_path: Path) -> None:
+    step = PipelineStep(
+        name="generation",
+        started_at=datetime.now(UTC),
+        completed_at=datetime.now(UTC),
+        duration_ms=12.0,
+        details={
+            "provider": "http://alice:secretpass@internal-provider.local:8080/private",
+            "model": "private-deployment/gpt-4o-prod",
+            "status": "error",
+            "error": (
+                "Provider error 503 for url "
+                "http://alice:secretpass@internal-provider.local:8080/private"
+            ),
+            "uncertainty_fallback_error": "retry failed against internal-provider.local",
+        },
+        status="error",
+    )
+
+    public_step = pipeline_step_to_public_dict(step)
+
+    assert public_step["details"]["provider"] == "configured"
+    assert public_step["details"]["model"] == "configured"
+    assert public_step["details"]["error"] == PUBLIC_PROVIDER_ERROR_MESSAGE
+    assert public_step["details"]["uncertainty_fallback_error"] == PUBLIC_PROVIDER_ERROR_MESSAGE
+    assert "secretpass" not in str(public_step)
+    assert "internal-provider.local" not in str(public_step)
+    assert "private-deployment" not in str(public_step)
+
+    trace_path = tmp_path / "traces.json"
+    store = TelemetryStore(trace_path)
+    trace = store.record("prompt", "answer", steps=[step])
+
+    assert trace.steps[0].details == public_step["details"]
+    persisted = trace_path.read_text(encoding="utf-8")
+    assert "secretpass" not in persisted
+    assert "internal-provider.local" not in persisted
+    assert "private-deployment" not in persisted
