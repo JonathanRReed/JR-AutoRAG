@@ -59,6 +59,19 @@ def test_config_roundtrip(client: TestClient) -> None:
     assert update.json()["profile"] == "Smoke"
 
 
+def test_config_rejects_zero_dense_k(client: TestClient) -> None:
+    resp = client.get("/config")
+    assert resp.status_code == 200
+    config = resp.json()
+    config["retrieval"]["dense_k"] = 0
+
+    update = client.put("/config", json=config)
+
+    assert update.status_code == 422
+    detail = str(update.json()["detail"]).lower()
+    assert "dense_k" in detail
+
+
 def test_model_download_rejects_unconfigured_model(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,

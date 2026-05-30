@@ -30,7 +30,16 @@ class ConfigStore:
     def read(self) -> AppConfig:
         with self._lock:
             data = json.loads(self._path.read_text(encoding="utf-8"))
-            return AppConfig.model_validate(data)
+            repaired = False
+            retrieval = data.get("retrieval") if isinstance(data, dict) else None
+            if isinstance(retrieval, dict) and retrieval.get("dense_k") == 0:
+                retrieval["dense_k"] = 1
+                repaired = True
+            cfg = AppConfig.model_validate(data)
+            if repaired:
+                payload = cfg.model_dump(mode="json")
+                self._path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            return cfg
 
     def write(self, cfg: AppConfig) -> AppConfig:
         payload = cfg.model_dump(mode="json")
