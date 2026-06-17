@@ -49,7 +49,12 @@ fi
   uv run python - <<'PY'
 from app.main import app
 
-routes = {getattr(route, "path", "") for route in app.routes}
+# Use the OpenAPI schema as the source of truth for registered paths. Starlette
+# 1.0 / FastAPI 0.137 wrap included routers in _IncludedRouter objects, so the
+# old shallow scan of app.routes (via the `.path` attribute) no longer sees
+# routes added with include_router. The OpenAPI paths reflect every route
+# regardless of router nesting.
+routes = set(app.openapi().get("paths", {}).keys())
 required = {"/healthz", "/readyz", "/install/report", "/security/posture"}
 missing = sorted(required - routes)
 if missing:
