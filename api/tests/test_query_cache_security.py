@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from app.core.orchestrator import Orchestrator
 from app.core.persistence import DiskQueryCache, QueryCacheConfig
+from app.core.query_mode import QueryMode
 
 
 def test_disk_query_cache_varies_by_scope_key(tmp_path):
@@ -61,5 +62,17 @@ def test_orchestrator_cache_scope_includes_request_context():
     assert base_scope == same_scope
     assert base_scope != other_doc_scope
     assert base_scope != history_scope
+    grounded_scope = orchestrator._query_cache_scope(
+        document_ids=["doc-a"],
+        cache_scope="user-a",
+        query_mode=QueryMode.GROUNDED,
+    )
+    open_domain_scope = orchestrator._query_cache_scope(
+        document_ids=["doc-a"],
+        cache_scope="user-a",
+        query_mode=QueryMode.OPEN_DOMAIN,
+    )
+
     assert history_scope != other_history_scope
+    assert grounded_scope != open_domain_scope
     assert orchestrator._query_cache_scope() is None
