@@ -96,6 +96,7 @@ class IngestPipeline:
         sync: bool = False,
         langextract_profile_override: str | None = None,
         langextract_prompt_override: str | None = None,
+        on_duplicate: str = "reject",
     ) -> IngestResult:
         """Ingest text with content hash tracking for change detection."""
         meta = self._prepare_metadata(metadata)
@@ -130,7 +131,7 @@ class IngestPipeline:
         contextualized = self._contextualize_chunks(chunks, title, meta)
         combined = "\n\n".join(contextualized)
 
-        doc = self._store.add(title=title, text=combined, metadata=meta)
+        doc = self._store.add(title=title, text=combined, metadata=meta, on_duplicate=on_duplicate)
 
         self._persist_langextract_artifact(doc.id, title, langextract_result, doc)
         self._log_langextract_audit(doc.id, title, langextract_result)
@@ -174,6 +175,7 @@ class IngestPipeline:
         sync: bool = False,
         langextract_profile_override: str | None = None,
         langextract_prompt_override: str | None = None,
+        on_duplicate: str = "reject",
     ) -> IngestResult:
         meta = {**(metadata or {})}
         meta.setdefault("filename", title)
@@ -224,6 +226,7 @@ class IngestPipeline:
             sync=sync,
             langextract_profile_override=langextract_profile_override,
             langextract_prompt_override=langextract_prompt_override,
+            on_duplicate=on_duplicate,
         )
 
     def ingest_incremental(
@@ -258,8 +261,8 @@ class IngestPipeline:
                     content_hash=content_hash,
                 )
 
-        # Proceed with full ingest (duplicate titles handled in store)
-        return self.ingest_text(title=title, text=text, metadata=metadata)
+        # Proceed with full ingest and intentionally replace the existing title when changed.
+        return self.ingest_text(title=title, text=text, metadata=metadata, on_duplicate="replace")
 
     def _run_langextract(
         self,
