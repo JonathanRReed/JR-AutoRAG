@@ -97,19 +97,20 @@ def test_synthetic_sections_are_deterministic_and_capped() -> None:
     assert "## LangExtract Entities" in rendered
 
 
-def test_run_with_timeout_returns_without_waiting_for_worker_completion(tmp_path: Path) -> None:
+def test_run_with_timeout_waits_for_running_worker_after_timeout(tmp_path: Path) -> None:
     enricher = LangExtractEnricher(data_dir=tmp_path)
 
     def slow_extract() -> None:
-        time.sleep(2)
+        time.sleep(0.2)
 
     started = time.monotonic()
     try:
-        enricher._run_with_timeout(slow_extract, timeout=1)
+        enricher._run_with_timeout(slow_extract, timeout=0.01)
     except TimeoutError as exc:
         elapsed = time.monotonic() - started
-        assert "LangExtract timed out after 1s" in str(exc)
-        assert elapsed < 1.5
+        assert "LangExtract timed out after 0.01s" in str(exc)
+        assert elapsed >= 0.2
+        assert elapsed < 1.0
     else:  # pragma: no cover - defensive assertion
         raise AssertionError("expected LangExtract timeout")
 
