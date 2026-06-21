@@ -18,7 +18,7 @@ from app.core.security_middleware import _resolve_required_scope, verify_api_key
         ("/api/artifacts/graph", "GET", "read"),
         ("/api/cache/status", "GET", "read"),
         ("/api/metrics/presets/estimates", "GET", "read"),
-        ("/providers/local", "GET", "read"),
+        ("/providers/local", "GET", "admin"),
         ("/api/artifacts/build", "POST", "admin"),
         ("/api/cache/clear", "DELETE", "admin"),
         ("/api/cache/rebuild", "POST", "admin"),
@@ -28,6 +28,20 @@ from app.core.security_middleware import _resolve_required_scope, verify_api_key
 )
 def test_sensitive_protected_routes_resolve_expected_scopes(path: str, method: str, scope: str) -> None:
     assert _resolve_required_scope(path, method) == scope
+
+
+def test_provider_helpers_require_admin_scope_to_use_configured_credentials() -> None:
+    auth = APIKeyAuth(enabled=True)
+    read_key, _ = auth.generate_key("reader", scopes=["read"])
+    write_key, _ = auth.generate_key("writer", scopes=["write"])
+    admin_key, _ = auth.generate_key("admin", scopes=["admin"])
+
+    required_scope = _resolve_required_scope("/providers/openrouter/test", "POST")
+
+    assert required_scope == "admin"
+    assert not auth.verify(read_key, required_scope=required_scope)
+    assert not auth.verify(write_key, required_scope=required_scope)
+    assert auth.verify(admin_key, required_scope=required_scope)
 
 
 def test_evaluation_scope_resolution_is_method_specific() -> None:

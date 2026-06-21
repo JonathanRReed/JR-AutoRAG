@@ -566,6 +566,8 @@ INCORRECT means the context is irrelevant to the query."""
         if not slots:
             # Fall back to term-based coverage
             query_terms = {w.lower() for w in query.split() if len(w) > 4}
+            if not query_terms:
+                return RetrievalVerdict.CORRECT, 1.0, []
             chunk_text = " ".join(c.snippet.lower() for c in chunks if hasattr(c, 'snippet'))
             covered = sum(1 for t in query_terms if t in chunk_text)
             coverage = covered / max(len(query_terms), 1)

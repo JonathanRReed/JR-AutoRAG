@@ -28,14 +28,24 @@ describe("API proxy management-route guard", () => {
   test("allows status APIs and unrelated application APIs", () => {
     expect(isSensitiveManagementApiPath("/api/artifacts/status")).toBe(false);
     expect(isSensitiveManagementApiPath("/api/cache/status")).toBe(false);
+    expect(isSensitiveManagementApiPath("/api/%63ache/status")).toBe(false);
     expect(isSensitiveManagementApiPath("/query")).toBe(false);
+  });
+
+  test("identifies sensitive management APIs with percent-encoded prefixes", () => {
+    expect(isSensitiveManagementApiPath("/api/%74races/download")).toBe(true);
+    expect(isSensitiveManagementApiPath("/api/%61rtifacts/graph")).toBe(true);
+    expect(isSensitiveManagementApiPath("/api/%63ache/clear")).toBe(true);
+    expect(isSensitiveManagementApiPath("/api/cache%2fclear")).toBe(true);
   });
 
   test("blocks sensitive APIs while backend API-key auth is disabled", () => {
     process.env.AUTORAG_AUTH_ENABLED = "false";
 
     expect(isProxyRequestAllowed("/api/traces/last")).toBe(false);
+    expect(isProxyRequestAllowed("/api/%74races/last")).toBe(false);
     expect(isProxyRequestAllowed("/api/cache/clear")).toBe(false);
+    expect(isProxyRequestAllowed("/api/%63ache/clear")).toBe(false);
     expect(isProxyRequestAllowed("/api/artifacts/status")).toBe(true);
   });
 
@@ -61,7 +71,13 @@ describe("API proxy management-route guard", () => {
       "/__api",
     );
 
+    const encodedProxyResponse = await proxyApiRequest(
+      new Request("http://ui.example/api/%63ache/clear?include_disk=true", { method: "DELETE" }),
+      "",
+    );
+
     expect(legacyProxyResponse.status).toBe(403);
     expect(prefixedProxyResponse.status).toBe(403);
+    expect(encodedProxyResponse.status).toBe(403);
   });
 });

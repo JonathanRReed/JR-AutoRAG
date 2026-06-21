@@ -14,10 +14,33 @@ from ..core.auth import get_auth
 from ..core.document_acl import get_acl_enforcer, resolve_acl_defaults
 from ..core.query_mode import QueryMode
 from ..core.telemetry import PipelineStep, pipeline_step_to_public_dict
-from ..schemas.query import MAX_QUESTION_LENGTH, QueryRequest, QueryResponse, TraceOut, TraceStepOut
+from ..schemas.query import (
+    MAX_QUESTION_LENGTH,
+    QueryRequest,
+    QueryResponse,
+    TraceOut,
+    TraceStepOut,
+)
 from ..services import ServiceContainer, get_container
 
 router = APIRouter(prefix="/query", tags=["query"])
+
+
+def _scoped_conversation_id(
+    user_id: str | None, conversation_id: str | None
+) -> str | None:
+    """Return an internal, principal-bound key for conversation memory.
+
+    Clients can choose human-readable conversation IDs, but the shared in-process
+    memory store must never use that value directly.  Hash the authenticated
+    principal (or the public namespace when auth is disabled) with the client ID
+    so collisions across users cannot read or poison each other's memory.
+    """
+    if not conversation_id:
+        return None
+    principal = user_id or "public"
+    digest = hashlib.sha256(f"{principal}:{conversation_id}".encode()).hexdigest()
+    return f"conversation:{digest}"
 
 
 def _make_cache_scope(
@@ -46,20 +69,28 @@ def _resolve_query_access(
     payload: QueryRequest,
     request: Request,
     container: ServiceContainer,
-) -> tuple[list[str] | None, str | None]:
+) -> tuple[list[str] | None, str | None, str | None]:
     user_id = getattr(request.state, "user_id", None)
     scopes = getattr(request.state, "scopes", [])
     auth_enabled = get_auth().require_auth()
 
     if not auth_enabled:
         document_ids = payload.document_ids
-        return document_ids, _make_cache_scope(None, document_ids, payload.conversation_id)
+        return (
+            document_ids,
+            _make_cache_scope(None, document_ids, payload.conversation_id),
+            _scoped_conversation_id(None, payload.conversation_id),
+        )
 
     default_public, _ = resolve_acl_defaults(auth_enabled)
     enforcer = get_acl_enforcer(default_public=default_public)
 
     if "admin" in scopes:
-        return payload.document_ids, _make_cache_scope(user_id, payload.document_ids, payload.conversation_id)
+        return (
+            payload.document_ids,
+            _make_cache_scope(user_id, payload.document_ids, payload.conversation_id),
+            _scoped_conversation_id(user_id, payload.conversation_id),
+        )
 
     docs = container.document_store.list()
 
@@ -70,11 +101,21 @@ def _resolve_query_access(
             if enforcer.check_access(doc_id, user_id, "read")[0]
         ]
         if not allowed:
-            raise HTTPException(status_code=403, detail="No access to requested documents")
-        return allowed, _make_cache_scope(user_id, allowed, payload.conversation_id)
+            raise HTTPException(
+                status_code=403, detail="No access to requested documents"
+            )
+        return (
+            allowed,
+            _make_cache_scope(user_id, allowed, payload.conversation_id),
+            _scoped_conversation_id(user_id, payload.conversation_id),
+        )
 
     if not docs:
-        return None, _make_cache_scope(user_id, None, payload.conversation_id)
+        return (
+            None,
+            _make_cache_scope(user_id, None, payload.conversation_id),
+            _scoped_conversation_id(user_id, payload.conversation_id),
+        )
 
     allowed_ids = [
         doc.id for doc in docs if enforcer.check_access(doc.id, user_id, "read")[0]
@@ -83,8 +124,16 @@ def _resolve_query_access(
         raise HTTPException(status_code=403, detail="No accessible documents")
 
     if len(allowed_ids) == len(docs):
-        return None, _make_cache_scope(user_id, None, payload.conversation_id)
-    return allowed_ids, _make_cache_scope(user_id, allowed_ids, payload.conversation_id)
+        return (
+            None,
+            _make_cache_scope(user_id, None, payload.conversation_id),
+            _scoped_conversation_id(user_id, payload.conversation_id),
+        )
+    return (
+        allowed_ids,
+        _make_cache_scope(user_id, allowed_ids, payload.conversation_id),
+        _scoped_conversation_id(user_id, payload.conversation_id),
+    )
 
 
 @router.post("", response_model=QueryResponse)
@@ -100,15 +149,19 @@ async def ask(
             status_code=400,
             detail=f"Question exceeds maximum length of {MAX_QUESTION_LENGTH} characters",
         )
-    document_ids, cache_scope = _resolve_query_access(payload, request, container)
+    document_ids, cache_scope, memory_conversation_id = _resolve_query_access(
+        payload, request, container
+    )
     result = await container.orchestrator.answer(
         payload.question,
         document_ids=document_ids,
         history=payload.history,
-        conversation_id=payload.conversation_id,
+        conversation_id=memory_conversation_id,
         query_mode=QueryMode(payload.query_mode) if payload.query_mode else None,
         cache_scope=cache_scope,
     )
+    if payload.conversation_id:
+        result.setdefault("metrics", {})["conversation_id"] = payload.conversation_id
     return QueryResponse(**result)
 
 
@@ -126,7 +179,9 @@ async def ask_stream(
             detail=f"Question exceeds maximum length of {MAX_QUESTION_LENGTH} characters",
         )
 
-    document_ids, cache_scope = _resolve_query_access(payload, request, container)
+    document_ids, cache_scope, memory_conversation_id = _resolve_query_access(
+        payload, request, container
+    )
     queue: asyncio.Queue[dict | None] = asyncio.Queue()
 
     def serialize_step(step: PipelineStep) -> dict:
@@ -155,10 +210,16 @@ async def ask_stream(
                 on_stage=on_stage,
                 on_progress=on_progress,
                 history=payload.history,
-                conversation_id=payload.conversation_id,
-                query_mode=QueryMode(payload.query_mode) if payload.query_mode else None,
+                conversation_id=memory_conversation_id,
+                query_mode=(
+                    QueryMode(payload.query_mode) if payload.query_mode else None
+                ),
                 cache_scope=cache_scope,
             )
+            if payload.conversation_id:
+                result.setdefault("metrics", {})[
+                    "conversation_id"
+                ] = payload.conversation_id
             await queue.put({"type": "result", "data": result})
         except Exception as exc:
             await queue.put({"type": "error", "data": {"message": str(exc)}})
@@ -176,13 +237,15 @@ async def ask_stream(
                 payload = json.dumps(item, default=_json_default)
             except Exception as exc:
                 payload = json.dumps(
-                    {"type": "error", "data": {"message": f"Stream serialization error: {exc}"}},
+                    {
+                        "type": "error",
+                        "data": {"message": f"Stream serialization error: {exc}"},
+                    },
                     default=_json_default,
                 )
             yield f"data: {payload}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
-
 
 
 @router.get("/traces", response_model=list[TraceOut])
@@ -195,13 +258,16 @@ def list_traces(container: ServiceContainer = Depends(get_container)):
             answer=trace.answer,
             metrics=trace.metrics,
             steps=[
-                TraceStepOut(**pipeline_step_to_public_dict(s))
-                for s in trace.steps
+                TraceStepOut(**pipeline_step_to_public_dict(s)) for s in trace.steps
             ],
         )
         for trace in traces
     ]
+
+
 @router.post("/cancel")
-async def cancel_trace(trace_id: str, container: ServiceContainer = Depends(get_container)):
+async def cancel_trace(
+    trace_id: str, container: ServiceContainer = Depends(get_container)
+):
     container.orchestrator.cancel_trace(trace_id)
     return {"status": "cancelled", "trace_id": trace_id}

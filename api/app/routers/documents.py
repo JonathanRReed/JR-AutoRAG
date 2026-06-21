@@ -5,12 +5,20 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 
 from ..core.auth import get_auth
+from ..core.cache import get_cache_manager
 from ..core.document_acl import get_acl_enforcer, get_acl_store, resolve_acl_defaults
 from ..core.document_parser import build_preview_from_document_metadata
+from ..core.persistence import get_disk_query_cache
 from ..schemas.documents import DocumentOut, DocumentPreviewResponse, IngestResponse, IngestTextRequest
 from ..services import ServiceContainer, get_container
 
 router = APIRouter(prefix="/documents", tags=["documents"])
+
+
+def _invalidate_query_caches_after_document_mutation() -> None:
+    """Prevent stale query responses from exposing deleted document content."""
+    get_cache_manager().queries.invalidate_all()
+    get_disk_query_cache().clear()
 
 
 def _ensure_document_read_access(document_id: str, request: Request) -> None:
@@ -141,6 +149,7 @@ def delete_document(
     container.document_store.delete(document_id)
     get_acl_store().delete(document_id)
     container.retrieval_engine.build()
+    _invalidate_query_caches_after_document_mutation()
 
 
 @router.delete("", status_code=204)
@@ -156,6 +165,7 @@ def delete_all_documents(
     container.document_store.clear()
     get_acl_store().clear()
     container.retrieval_engine.build()
+    _invalidate_query_caches_after_document_mutation()
 
 
 @router.post("/upload", response_model=IngestResponse)

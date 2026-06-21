@@ -667,6 +667,7 @@ class Orchestrator:
         history: list[dict[str, str]] | None = None,
         conversation_id: str | None = None,
         cache_scope: str | None = None,
+        query_mode: QueryMode | None = None,
     ) -> str | None:
         """Create a request-scope fingerprint for full-answer cache entries.
 
@@ -674,13 +675,15 @@ class Orchestrator:
         must vary on request-local inputs that can change authorization or model
         context.  Routers may pass an already-hashed user/ACL scope in
         ``cache_scope``; direct callers are still protected by folding document
-        filters, chat history, and memory conversation IDs into this fingerprint.
+        filters, chat history, memory conversation IDs, and query mode into this
+        fingerprint.
         """
         scope_payload = {
             "cache_scope": cache_scope or "",
             "document_ids": sorted(document_ids or []),
             "history": history or [],
             "conversation_id": conversation_id or "",
+            "query_mode": query_mode.value if query_mode else "",
         }
         if not any(scope_payload.values()):
             return None
@@ -850,11 +853,20 @@ class Orchestrator:
             return list(seen.values())
 
         cache_manager = get_cache_manager()
+
+        # P0.1: Resolve query mode from parameter or config before cache lookup so
+        # grounded and open-domain answers cannot share a full-answer cache entry.
+        effective_query_mode = query_mode
+        if effective_query_mode is None:
+            config_mode = getattr(self._config, "query_mode", "grounded")
+            effective_query_mode = QueryMode(config_mode) if config_mode in ("grounded", "open_domain") else QueryMode.GROUNDED
+
         query_cache_scope = self._query_cache_scope(
             document_ids=document_ids,
             history=history,
             conversation_id=conversation_id,
             cache_scope=cache_scope,
+            query_mode=effective_query_mode,
         )
         cache_hash = self._cache_config_hash(document_ids, query_cache_scope)
 
@@ -865,12 +877,6 @@ class Orchestrator:
             cache_corpus_version = self._retrieval.get_corpus_version()
         if hasattr(self._retrieval, 'get_retrieval_mode_flags'):
             cache_retrieval_mode = self._retrieval.get_retrieval_mode_flags()
-
-        # P0.1: Resolve query mode from parameter or config
-        effective_query_mode = query_mode
-        if effective_query_mode is None:
-            config_mode = getattr(self._config, "query_mode", "grounded")
-            effective_query_mode = QueryMode(config_mode) if config_mode in ("grounded", "open_domain") else QueryMode.GROUNDED
 
         # P0.3: Get current preset ID for cache key
         current_preset_id = getattr(self._config.retrieval, "_preset_level", "balanced") if self._config else "balanced"
@@ -2339,7 +2345,7 @@ The retrieved evidence contains some conflicting information. When you encounter
         coverage = 0.0
         if plan.steps:
             dense_k = max(1, plan.steps[0].dense_k)
-            coverage = len(chunks) / dense_k
+            coverage = min(1.0, len(chunks) / dense_k)
 
         total_duration_ms = sum(s.duration_ms for s in pipeline_steps)
         retrieval_mode = "standard"

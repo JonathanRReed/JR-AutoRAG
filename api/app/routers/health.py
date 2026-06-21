@@ -10,7 +10,7 @@ import logging
 from fastapi import APIRouter, status
 from fastapi.responses import JSONResponse
 
-from ..schemas.health import ReadinessResponse
+from ..schemas.health import ReadinessCheck, ReadinessResponse
 from ..state import get_orchestrator
 
 logger = logging.getLogger("autorag.health")
@@ -24,18 +24,25 @@ def healthz() -> dict[str, str]:
     return {"status": "ok"}
 
 
+def _public_readiness_response(response: ReadinessResponse) -> ReadinessResponse:
+    """Strip operator-only diagnostics from the unauthenticated readiness response."""
+    return ReadinessResponse(
+        ready=response.ready,
+        level=response.level,
+        checks={
+            name: ReadinessCheck(status=check.status)
+            for name, check in response.checks.items()
+        },
+    )
+
+
 @router.get("/readyz", response_model=ReadinessResponse)
 def readyz() -> JSONResponse:
     """Readiness probe - is the service ready to accept traffic?
 
-    Checks:
-    - Orchestrator initialized
-    - Document store accessible
-    - Vector index loaded
-    - Embedding model available
-    - At least one LLM provider configured
-
-    Returns 200 if all checks pass, 503 if any critical check fails.
+    Returns a minimal public contract suitable for unauthenticated Kubernetes
+    and load-balancer probes. Detailed operator diagnostics are intentionally
+    omitted from this endpoint.
     """
     try:
         orchestrator = get_orchestrator()
@@ -43,27 +50,17 @@ def readyz() -> JSONResponse:
             response = ReadinessResponse(
                 ready=False,
                 level="not_ready",
-                checks={
-                    "orchestrator": {
-                        "status": "fail",
-                        "message": "Orchestrator not initialized",
-                        "details": {},
-                    }
-                },
+                checks={"orchestrator": ReadinessCheck(status="fail")},
             )
         else:
-            response = ReadinessResponse.model_validate(orchestrator.get_readiness_status())
-    except Exception as exc:
+            internal_response = ReadinessResponse.model_validate(orchestrator.get_readiness_status())
+            response = _public_readiness_response(internal_response)
+    except Exception:
+        logger.exception("Failed to build readiness report")
         response = ReadinessResponse(
             ready=False,
             level="not_ready",
-            checks={
-                "orchestrator": {
-                    "status": "fail",
-                    "message": f"Error building readiness report: {exc}",
-                    "details": {},
-                }
-            },
+            checks={"orchestrator": ReadinessCheck(status="fail")},
         )
 
     status_code = status.HTTP_200_OK if response.ready else status.HTTP_503_SERVICE_UNAVAILABLE

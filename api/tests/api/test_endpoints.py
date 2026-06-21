@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 import tempfile
 from pathlib import Path
 
@@ -11,6 +12,8 @@ from fastapi.testclient import TestClient
 
 from app.core import auth as auth_module
 from app.core.auth import APIKeyAuth
+from app.core.document_acl import DocumentACL, get_acl_store
+from app.core.documents import Document
 from app.core.golden_eval import AnswerMetrics, EvalRunResult, EvalRunStore, GoldenSetStore, RetrievalMetrics
 from app.main import app
 from app.routers import config as config_router
@@ -172,8 +175,10 @@ def test_readyz_uses_runtime_status_contract(client: TestClient) -> None:
     assert body["ready"] is True
     assert body["level"] in {"ready", "degraded"}
     assert body["checks"]["orchestrator"]["status"] == "ok"
-    assert body["checks"]["document_store"]["details"]["document_count"] == 0
+    assert body["checks"]["document_store"]["details"] == {}
+    assert body["checks"]["document_store"]["message"] is None
     assert body["checks"]["retrieval_index"]["status"] == "ok"
+    assert body["checks"]["retrieval_index"]["details"] == {}
 
 
 def test_readyz_returns_503_without_orchestrator(client: TestClient) -> None:
@@ -190,6 +195,8 @@ def test_readyz_returns_503_without_orchestrator(client: TestClient) -> None:
     assert body["ready"] is False
     assert body["level"] == "not_ready"
     assert body["checks"]["orchestrator"]["status"] == "fail"
+    assert body["checks"]["orchestrator"]["message"] is None
+    assert body["checks"]["orchestrator"]["details"] == {}
 
 
 def test_security_posture_reports_local_install_defaults(client: TestClient) -> None:
@@ -503,6 +510,71 @@ def test_onboarding_demo_mutations_require_write_scope(
     assert clear_allowed.json()["deleted"] > 0
 
 
+def test_onboarding_demo_respects_document_write_acl(
+    monkeypatch: pytest.MonkeyPatch, client: TestClient
+) -> None:
+    auth = APIKeyAuth(enabled=True)
+    write_key, _ = auth.generate_key("writer", scopes=["write"])
+    monkeypatch.setattr(auth_module, "_auth_instance", auth)
+    get_acl_store().clear()
+
+    container = app.dependency_overrides[get_container]()
+    protected_doc = Document(
+        id="protected-demo-title",
+        title="JR AutoRAG Evaluation Brief",
+        text="Private admin-owned content",
+        metadata={"demo_corpus": "false"},
+    )
+    container.document_store.upsert(protected_doc)
+    get_acl_store().set(DocumentACL.create_private(protected_doc.id, owner="admin-user"))
+
+    response = client.post("/onboarding/demo/seed", headers={"X-API-Key": write_key})
+
+    assert response.status_code == 403
+    assert container.document_store.get(protected_doc.id).metadata["demo_corpus"] == "false"
+
+    writer_id = hashlib.sha256(write_key.encode()).hexdigest()[:16]
+    get_acl_store().set(DocumentACL.create_private(protected_doc.id, owner=writer_id))
+
+    allowed = client.post("/onboarding/demo/seed", headers={"X-API-Key": write_key})
+
+    assert allowed.status_code == 200
+    assert container.document_store.get(protected_doc.id).metadata["demo_corpus"] == "true"
+
+
+def test_onboarding_demo_clear_respects_document_write_acl(
+    monkeypatch: pytest.MonkeyPatch, client: TestClient
+) -> None:
+    auth = APIKeyAuth(enabled=True)
+    write_key, _ = auth.generate_key("writer", scopes=["write"])
+    monkeypatch.setattr(auth_module, "_auth_instance", auth)
+    get_acl_store().clear()
+
+    container = app.dependency_overrides[get_container]()
+    protected_doc = Document(
+        id="protected-demo-doc",
+        title="Protected Demo",
+        text="Private demo-tagged content",
+        metadata={"demo_corpus": "true"},
+    )
+    container.document_store.upsert(protected_doc)
+    get_acl_store().set(DocumentACL.create_private(protected_doc.id, owner="admin-user"))
+
+    response = client.delete("/onboarding/demo", headers={"X-API-Key": write_key})
+
+    assert response.status_code == 403
+    assert container.document_store.get(protected_doc.id) is not None
+
+    writer_id = hashlib.sha256(write_key.encode()).hexdigest()[:16]
+    get_acl_store().set(DocumentACL.create_private(protected_doc.id, owner=writer_id))
+
+    allowed = client.delete("/onboarding/demo", headers={"X-API-Key": write_key})
+
+    assert allowed.status_code == 200
+    assert allowed.json()["deleted"] == 1
+    assert container.document_store.get(protected_doc.id) is None
+
+
 def test_onboarding_demo_seed_query_and_clear(client: TestClient) -> None:
     initial = client.get("/onboarding")
     assert initial.status_code == 200
@@ -638,3 +710,16 @@ def test_upload_accepts_langextract_override_fields(client: TestClient) -> None:
     docs = client.get("/documents")
     assert docs.status_code == 200
     assert docs.json()[0]["metadata"]["ocr_policy"] == "dedicated_ocr"
+
+
+def test_scoped_conversation_id_is_bound_to_principal() -> None:
+    from app.routers.query import _scoped_conversation_id
+
+    alice_key = _scoped_conversation_id("alice", "shared-session")
+    bob_key = _scoped_conversation_id("bob", "shared-session")
+
+    assert alice_key is not None
+    assert bob_key is not None
+    assert alice_key != bob_key
+    assert "shared-session" not in alice_key
+    assert _scoped_conversation_id("alice", None) is None

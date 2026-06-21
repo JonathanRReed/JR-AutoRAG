@@ -27,8 +27,14 @@ export const getBackendPath = (requestPath: string, prefix: string): string => (
     : requestPath
 );
 
+const decodePercentEncodedPath = (path: string): string => (
+  path.replace(/%([0-9a-fA-F]{2})/g, (_, hex: string) => (
+    String.fromCharCode(Number.parseInt(hex, 16))
+  ))
+);
+
 export const isSensitiveManagementApiPath = (path: string): boolean => {
-  const normalizedPath = path.replace(/\/+$/, "") || "/";
+  const normalizedPath = decodePercentEncodedPath(path).replace(/\/+$/, "") || "/";
 
   if (PUBLIC_MANAGEMENT_STATUS_PATHS.has(normalizedPath)) {
     return false;
