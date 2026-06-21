@@ -187,7 +187,7 @@ class DocumentStore:
         title: str,
         text: str,
         metadata: dict[str, str] | None = None,
-        on_duplicate: str = "replace",
+        on_duplicate: str = "reject",
     ) -> Document:
         normalized = self._normalize_title(title)
         if not normalized:
