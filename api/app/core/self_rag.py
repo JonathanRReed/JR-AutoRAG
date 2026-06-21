@@ -262,12 +262,20 @@ SUGGESTIONS: [comma-separated improvements]"""
             sugg_text = sugg_match.group(1).strip()
             suggestions = [s.strip() for s in sugg_text.split(",") if s.strip()]
 
+
         # Override regeneration decision based on thresholds
         if not should_regenerate:
-            if support.value > self.config.min_support_for_accept.value:
+            support_levels = {
+                SupportScore.FULLY_SUPPORTED: 4,
+                SupportScore.PARTIALLY_SUPPORTED: 3,
+                SupportScore.NO_SUPPORT: 2,
+                SupportScore.CONTRADICTS: 1,
+            }
+            if support_levels[support] < support_levels[self.config.min_support_for_accept]:
                 should_regenerate = True
-            if utility.value < self.config.min_utility_for_accept.value:
+            if utility < self.config.min_utility_for_accept:
                 should_regenerate = True
+
 
         return CriticResult(
             relevance=relevance,

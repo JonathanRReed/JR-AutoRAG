@@ -2238,7 +2238,7 @@ The retrieved evidence contains some conflicting information. When you encounter
                     "critique": critic_result.critique[:200] if critic_result.critique else "",
                 }
                 # Override retry decision if critic strongly recommends regeneration
-                if critic_result.should_regenerate and critic_result.utility.value <= 2:
+                if critic_result.should_regenerate and critic_result.utility <= 2:
                     reflection_result.should_retry = True
             except Exception as e:
                 reflection_details["self_rag_error"] = str(e)
