@@ -175,8 +175,10 @@ def test_readyz_uses_runtime_status_contract(client: TestClient) -> None:
     assert body["ready"] is True
     assert body["level"] in {"ready", "degraded"}
     assert body["checks"]["orchestrator"]["status"] == "ok"
-    assert body["checks"]["document_store"]["details"]["document_count"] == 0
+    assert body["checks"]["document_store"]["details"] == {}
+    assert body["checks"]["document_store"]["message"] is None
     assert body["checks"]["retrieval_index"]["status"] == "ok"
+    assert body["checks"]["retrieval_index"]["details"] == {}
 
 
 def test_readyz_returns_503_without_orchestrator(client: TestClient) -> None:
@@ -193,6 +195,8 @@ def test_readyz_returns_503_without_orchestrator(client: TestClient) -> None:
     assert body["ready"] is False
     assert body["level"] == "not_ready"
     assert body["checks"]["orchestrator"]["status"] == "fail"
+    assert body["checks"]["orchestrator"]["message"] is None
+    assert body["checks"]["orchestrator"]["details"] == {}
 
 
 def test_security_posture_reports_local_install_defaults(client: TestClient) -> None:
