@@ -394,8 +394,17 @@ class HybridRetrievalEngine:
         return False
 
     def _tokenize(self, text: str) -> list[str]:
-        """Simple tokenization for BM25."""
-        return text.lower().split()
+        """Tokenize text for BM25 and sparse matching.
+
+        Splits on non-alphanumeric boundaries so punctuation does not stay
+        attached to terms. Without this, a query like "What is AutoRAG?"
+        tokenizes the final term as "autorag?" and fails to match the indexed
+        corpus token "autorag", which silently breaks BM25/sparse retrieval
+        when dense (sentence-transformers) retrieval is unavailable. The same
+        tokenizer is used for both corpus indexing and query parsing, so
+        normalizing here keeps the two sides aligned.
+        """
+        return [t for t in re.findall(r"[a-z0-9]+", text.lower()) if t]
 
     def _tokenize_terms(self, text: str) -> list[str]:
         """Tokenize text into alphanumeric terms for scoring boosts."""
