@@ -20,7 +20,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from ..core.audit import AuditAction, AuditEntry, get_audit_log
@@ -172,6 +172,7 @@ async def ragfuzz_health(
 @router.post("/poison", response_model=PoisonDocumentResponse)
 async def inject_poison_document(
     request: PoisonDocumentRequest,
+    background_tasks: BackgroundTasks,
     container: ServiceContainer = Depends(get_container),
     _: None = Depends(_verify_ragfuzz_secret),
 ) -> PoisonDocumentResponse:
@@ -207,16 +208,19 @@ async def inject_poison_document(
         raise HTTPException(status_code=500, detail=f"Failed to inject document: {exc}") from exc
 
     audit_log = get_audit_log()
-    audit_log.log(AuditEntry(
-        timestamp=datetime.now(UTC),
-        action=AuditAction.INGEST,
-        details={
-            "ragfuzz": True,
-            "poison_type": request.poison_type,
-            "document_id": doc_id,
-            "canary_token": canary,
-        },
-    ))
+    background_tasks.add_task(
+        audit_log.log,
+        AuditEntry(
+            timestamp=datetime.now(UTC),
+            action=AuditAction.INGEST,
+            details={
+                "ragfuzz": True,
+                "poison_type": request.poison_type,
+                "document_id": doc_id,
+                "canary_token": canary,
+            },
+        )
+    )
 
     return PoisonDocumentResponse(
         document_id=doc_id,
@@ -229,6 +233,7 @@ async def inject_poison_document(
 @router.post("/canary-check", response_model=CanaryCheckResponse)
 async def check_canary_leak(
     request: CanaryCheckRequest,
+    background_tasks: BackgroundTasks,
     container: ServiceContainer = Depends(get_container),
     _: None = Depends(_verify_ragfuzz_secret),
 ) -> CanaryCheckResponse:
@@ -267,16 +272,19 @@ async def check_canary_leak(
         leak_score = partial_matches / max(len(canary_parts), 1) * 0.5
 
     audit_log = get_audit_log()
-    audit_log.log(AuditEntry(
-        timestamp=datetime.now(UTC),
-        action=AuditAction.QUERY,
-        details={
-            "ragfuzz": True,
-            "test_type": "canary_check",
-            "leaked": leaked,
-            "leak_score": leak_score,
-        },
-    ))
+    background_tasks.add_task(
+        audit_log.log,
+        AuditEntry(
+            timestamp=datetime.now(UTC),
+            action=AuditAction.QUERY,
+            details={
+                "ragfuzz": True,
+                "test_type": "canary_check",
+                "leaked": leaked,
+                "leak_score": leak_score,
+            },
+        )
+    )
 
     return CanaryCheckResponse(
         leaked=leaked,
@@ -351,6 +359,7 @@ async def trace_pipeline(
 @router.delete("/poison/{document_id}")
 async def remove_poison_document(
     document_id: str,
+    background_tasks: BackgroundTasks,
     container: ServiceContainer = Depends(get_container),
     _: None = Depends(_verify_ragfuzz_secret),
 ) -> dict[str, str]:
@@ -364,14 +373,17 @@ async def remove_poison_document(
         raise HTTPException(status_code=500, detail=f"Failed to remove document: {exc}") from exc
 
     audit_log = get_audit_log()
-    audit_log.log(AuditEntry(
-        timestamp=datetime.now(UTC),
-        action=AuditAction.DELETE,
-        details={
-            "ragfuzz": True,
-            "document_id": document_id,
-        },
-    ))
+    background_tasks.add_task(
+        audit_log.log,
+        AuditEntry(
+            timestamp=datetime.now(UTC),
+            action=AuditAction.DELETE,
+            details={
+                "ragfuzz": True,
+                "document_id": document_id,
+            },
+        )
+    )
 
     return {"status": "deleted", "document_id": document_id}
 
