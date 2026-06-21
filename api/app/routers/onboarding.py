@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..core.auth import get_auth
 from ..core.document_acl import get_acl_enforcer, get_acl_store, resolve_acl_defaults
@@ -30,6 +30,21 @@ def _create_acl(document_id: str, request: Request) -> None:
     if enforcer.store.get(document_id) is None:
         public = new_doc_public if (auth_enabled and user_id) else True
         enforcer.create_acl_for_document(document_id, owner=user_id or "anonymous", public=public)
+
+
+def _ensure_document_write_access(document_id: str, request: Request) -> None:
+    auth_enabled = get_auth().require_auth()
+    if not auth_enabled:
+        return
+    scopes = getattr(request.state, "scopes", [])
+    if "admin" in scopes:
+        return
+    default_public, _ = resolve_acl_defaults(auth_enabled)
+    enforcer = get_acl_enforcer(default_public=default_public)
+    user_id = getattr(request.state, "user_id", None)
+    allowed, _ = enforcer.check_access(document_id, user_id, "write")
+    if not allowed:
+        raise HTTPException(status_code=403, detail="Insufficient permissions to update this document")
 
 
 @router.get("")
@@ -68,6 +83,7 @@ def seed_demo_corpus(
         title = str(item["title"])
         existing = container.document_store.get_by_title(title)
         if existing:
+            _ensure_document_write_access(existing.id, request)
             existing.metadata.update(_demo_metadata(list(item.get("tags", [])), index))
             container.document_store.upsert(existing)
             _create_acl(existing.id, request)
@@ -93,14 +109,23 @@ def seed_demo_corpus(
 
 
 @router.delete("/demo")
-def clear_demo_corpus(container: ServiceContainer = Depends(get_container)) -> dict:
+def clear_demo_corpus(
+    request: Request,
+    container: ServiceContainer = Depends(get_container),
+) -> dict:
     """Remove only demo-tagged documents."""
+    demo_docs = [
+        doc for doc in list(container.document_store.list())
+        if doc.metadata.get("demo_corpus") == "true"
+    ]
+    for doc in demo_docs:
+        _ensure_document_write_access(doc.id, request)
+
     deleted = 0
-    for doc in list(container.document_store.list()):
-        if doc.metadata.get("demo_corpus") == "true":
-            container.document_store.delete(doc.id)
-            get_acl_store().delete(doc.id)
-            deleted += 1
+    for doc in demo_docs:
+        container.document_store.delete(doc.id)
+        get_acl_store().delete(doc.id)
+        deleted += 1
     if deleted:
         container.retrieval_engine.build()
     return {"deleted": deleted, "document_count": len(container.document_store.list())}
