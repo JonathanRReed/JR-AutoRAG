@@ -710,3 +710,16 @@ def test_upload_accepts_langextract_override_fields(client: TestClient) -> None:
     docs = client.get("/documents")
     assert docs.status_code == 200
     assert docs.json()[0]["metadata"]["ocr_policy"] == "dedicated_ocr"
+
+
+def test_scoped_conversation_id_is_bound_to_principal() -> None:
+    from app.routers.query import _scoped_conversation_id
+
+    alice_key = _scoped_conversation_id("alice", "shared-session")
+    bob_key = _scoped_conversation_id("bob", "shared-session")
+
+    assert alice_key is not None
+    assert bob_key is not None
+    assert alice_key != bob_key
+    assert "shared-session" not in alice_key
+    assert _scoped_conversation_id("alice", None) is None
