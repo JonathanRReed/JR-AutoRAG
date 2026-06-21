@@ -7,6 +7,7 @@ that uses the in-process Milvus-compatible store for memory-efficient search.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import time
 from collections.abc import Callable
 from typing import Any
@@ -22,6 +23,10 @@ from .bq_retrieval import BQRetrievalConfig, RetrievalDebug, RetrievalModeV2, Re
 from .chunking import Chunk
 from .documents import Document
 from .hybrid_retrieval import HybridConfig, HybridRetrievalEngine, RetrievalResult
+
+_last_bq_debug: contextvars.ContextVar[RetrievalDebug | None] = contextvars.ContextVar(
+    "last_bq_debug", default=None
+)
 
 
 class BQHybridRetrievalEngine(HybridRetrievalEngine):
@@ -47,7 +52,6 @@ class BQHybridRetrievalEngine(HybridRetrievalEngine):
         self._bq_initialized = False
         self._bq_ready = False
         self._bq_embedding_dim = int(self._bq_config.embedding_dim or 0)
-        self._last_bq_debug: RetrievalDebug | None = None
         self._last_bq_error: str | None = None
 
     def set_bq_config(
@@ -76,7 +80,8 @@ class BQHybridRetrievalEngine(HybridRetrievalEngine):
 
     def get_last_bq_debug(self) -> dict[str, Any]:
         """Return the last binary retrieval debug payload (if any)."""
-        return self._last_bq_debug.to_dict() if self._last_bq_debug else {}
+        debug = _last_bq_debug.get()
+        return debug.to_dict() if debug else {}
 
     def get_retrieval_mode_flags(self) -> int:
         mode = super().get_retrieval_mode_flags()
@@ -280,10 +285,11 @@ class BQHybridRetrievalEngine(HybridRetrievalEngine):
         on_progress: Callable[[str, float], None] | None = None,
     ) -> list[RetrievalResult]:
         if not text.strip():
+            _last_bq_debug.set(None)
             return []
 
         if not self._should_use_binary(routing_params):
-            self._last_bq_debug = None
+            _last_bq_debug.set(None)
             return await super().query(
                 text,
                 top_k=top_k,
@@ -299,7 +305,7 @@ class BQHybridRetrievalEngine(HybridRetrievalEngine):
             self._build_bq_index()
 
         if not self._bq_ready:
-            self._last_bq_debug = RetrievalDebug(
+            _last_bq_debug.set(RetrievalDebug(
                 mode="binary->float32",
                 top_k=top_k,
                 candidates_searched=0,
@@ -309,7 +315,7 @@ class BQHybridRetrievalEngine(HybridRetrievalEngine):
                 fallback_reason=self._last_bq_error or "Binary index unavailable",
                 embedding_version=self._bq_config.embedding_model,
                 quantization_version=self._bq_config.bq_config.version,
-            )
+            ))
             return await super().query(
                 text,
                 top_k=top_k,
@@ -319,7 +325,7 @@ class BQHybridRetrievalEngine(HybridRetrievalEngine):
             )
 
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
+        results, debug = await loop.run_in_executor(
             None,
             self._query_binary_sync,
             text,
@@ -327,6 +333,8 @@ class BQHybridRetrievalEngine(HybridRetrievalEngine):
             document_ids,
             routing_params,
         )
+        _last_bq_debug.set(debug)
+        return results
 
     def _should_use_binary(self, routing_params: dict[str, Any] | None) -> bool:
         if not self._bq_enabled:
@@ -355,7 +363,7 @@ class BQHybridRetrievalEngine(HybridRetrievalEngine):
         top_k: int,
         document_ids: list[str] | None,
         routing_params: dict[str, Any] | None,
-    ) -> list[RetrievalResult]:
+    ) -> tuple[list[RetrievalResult], RetrievalDebug]:
         total_start = time.perf_counter()
         timings = RetrievalTimings()
 
@@ -364,24 +372,24 @@ class BQHybridRetrievalEngine(HybridRetrievalEngine):
         timings.t_embed_query_ms = (time.perf_counter() - embed_start) * 1000
 
         if embedding is None:
-            self._last_bq_debug = self._fallback_debug(
+            debug = self._fallback_debug(
                 top_k,
                 timings,
                 "Embedding model unavailable",
             )
-            return self._fallback_float32(query, top_k, document_ids, routing_params)
+            return self._fallback_float32(query, top_k, document_ids, routing_params), debug
 
         quant_start = time.perf_counter()
         try:
             query_bq = float32_to_binary(embedding, self._bq_config.bq_config)
         except Exception as exc:
             timings.t_quantize_query_ms = (time.perf_counter() - quant_start) * 1000
-            self._last_bq_debug = self._fallback_debug(
+            debug = self._fallback_debug(
                 top_k,
                 timings,
                 f"Quantization failed: {exc}",
             )
-            return self._fallback_float32(query, top_k, document_ids, routing_params)
+            return self._fallback_float32(query, top_k, document_ids, routing_params), debug
 
         timings.t_quantize_query_ms = (time.perf_counter() - quant_start) * 1000
 
@@ -394,29 +402,29 @@ class BQHybridRetrievalEngine(HybridRetrievalEngine):
             results = self._search_binary(query_bq, search_k, document_ids)
         except Exception as exc:
             timings.t_milvus_search_ms = (time.perf_counter() - search_start) * 1000
-            self._last_bq_debug = self._fallback_debug(
+            debug = self._fallback_debug(
                 top_k,
                 timings,
                 f"Binary search failed: {exc}",
             )
-            return self._fallback_float32(query, top_k, document_ids, routing_params)
+            return self._fallback_float32(query, top_k, document_ids, routing_params), debug
         timings.t_milvus_search_ms = (time.perf_counter() - search_start) * 1000
 
         if self._bq_config.fallback_enabled:
             if len(results) < self._bq_config.fallback_min_results:
-                self._last_bq_debug = self._fallback_debug(
+                debug = self._fallback_debug(
                     top_k,
                     timings,
                     f"Insufficient results: {len(results)}",
                 )
-                return self._fallback_float32(query, top_k, document_ids, routing_params)
+                return self._fallback_float32(query, top_k, document_ids, routing_params), debug
             if results and results[0].distance > self._bq_config.fallback_distance_threshold:
-                self._last_bq_debug = self._fallback_debug(
+                debug = self._fallback_debug(
                     top_k,
                     timings,
                     f"High distance: {results[0].distance}",
                 )
-                return self._fallback_float32(query, top_k, document_ids, routing_params)
+                return self._fallback_float32(query, top_k, document_ids, routing_params), debug
 
         reranked_scores: dict[str, float] | None = None
         if self._bq_config.two_stage_enabled and self._reranker and len(results) > top_k:
@@ -436,7 +444,7 @@ class BQHybridRetrievalEngine(HybridRetrievalEngine):
         timings.t_context_build_ms = (time.perf_counter() - context_start) * 1000
         timings.t_total_ms = (time.perf_counter() - total_start) * 1000
 
-        self._last_bq_debug = RetrievalDebug(
+        debug = RetrievalDebug(
             mode="binary",
             top_k=top_k,
             candidates_searched=search_k,
@@ -448,7 +456,7 @@ class BQHybridRetrievalEngine(HybridRetrievalEngine):
             quantization_version=self._bq_config.bq_config.version or BQ_VERSION,
         )
 
-        return retrieval_results
+        return retrieval_results, debug
 
     def _search_binary(
         self,
