@@ -144,6 +144,12 @@ async def ragfuzz_health(
     default_enabled = not _is_production_env()
     enabled = _flag_enabled(os.environ.get("AUTORAG_RAGFUZZ_ENABLED"), default_enabled)
 
+    try:
+        # Simple read from audit log to verify db connection
+        get_audit_log().query(limit=1)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Ragfuzz audit storage unavailable")
+
     corpus_size = 0
     try:
         if container.orchestrator and hasattr(container.orchestrator, "doc_store"):

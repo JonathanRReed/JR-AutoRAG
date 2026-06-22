@@ -84,3 +84,24 @@ async def test_ragfuzz_delete_audit_write_failure_prevents_success_response(
 
     assert container.orchestrator.calls == [("delete", "poison_doc")]
     assert len(audit_log.entries) == 1
+
+@pytest.mark.asyncio
+async def test_ragfuzz_health_audit_storage_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Health check should return 500 if audit storage is unavailable."""
+    class FailingQueryAuditLog:
+        def query(self, *args, **kwargs):
+            raise OSError("audit read failed")
+
+    audit_log = FailingQueryAuditLog()
+    container = FakeContainer()
+    monkeypatch.setattr(ragfuzz_audit, "get_audit_log", lambda: audit_log)
+    monkeypatch.setattr(ragfuzz_audit, "_is_production_env", lambda: False)
+
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as exc_info:
+        await ragfuzz_audit.ragfuzz_health(container=container)
+
+    assert exc_info.value.status_code == 500
+    assert exc_info.value.detail == "Ragfuzz audit storage unavailable"
