@@ -45,7 +45,7 @@ from .hallucination_firewall import HallucinationFirewall
 # Advanced retrieval modes
 from .hierarchy import DocumentTree, HierarchicalRetriever, HierarchyBuilder
 from .hyde import get_hyde_generator
-from .learned_router import LearnedRouter, RouteDecision
+from .learned_router import LearnedRouter, RouteDecision, RoutingOutcome
 from .local_first import LocalFirstRegistry
 from .memory import ConversationMemory
 from .persistence import get_disk_query_cache
@@ -2287,13 +2287,15 @@ The retrieved evidence contains some conflicting information. When you encounter
                 current_duration_ms = sum(s.duration_ms for s in pipeline_steps)
                 success = ragas_metrics.overall_score >= 0.65
                 self._learned_router.record_outcome(
-                    query=query,
-                    features=learned_route.features,
-                    decision=learned_route.decision,
-                    success=success,
-                    answer_quality=ragas_metrics.overall_score,
-                    latency_ms=current_duration_ms,
-                    chunks_used=len(chunks),
+                    RoutingOutcome(
+                        query=query,
+                        features=learned_route.features,
+                        decision=learned_route.decision,
+                        success=success,
+                        answer_quality=ragas_metrics.overall_score,
+                        latency_ms=current_duration_ms,
+                        chunks_used=len(chunks),
+                    )
                 )
             except Exception:
                 # Training signal is best-effort and should not block responses

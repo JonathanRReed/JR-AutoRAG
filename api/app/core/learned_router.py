@@ -369,34 +369,13 @@ class LearnedRouter:
 
     def record_outcome(
         self,
-        query: str,
-        features: RouterFeatures,
-        decision: RouteDecision,
-        success: bool,
-        answer_quality: float = 0.5,
-        latency_ms: float = 0.0,
-        chunks_used: int = 0,
+        outcome: RoutingOutcome,
     ) -> None:
         """Record routing outcome for future learning.
 
         Args:
-            query: Original query
-            features: Extracted features
-            decision: Decision that was made
-            success: Whether the outcome was successful
-            answer_quality: Quality score 0-1
-            latency_ms: Response latency
-            chunks_used: Number of chunks used
+            outcome: RoutingOutcome instance containing the details of the routing outcome.
         """
-        outcome = RoutingOutcome(
-            query=query,
-            features=features,
-            decision=decision,
-            success=success,
-            answer_quality=answer_quality,
-            latency_ms=latency_ms,
-            chunks_used=chunks_used,
-        )
         self._history.append(outcome)
 
         # Auto-save periodically
