@@ -8,6 +8,7 @@ This module implements P2.12: Evaluation Harness
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -217,9 +218,9 @@ class EvalHarness:
             config_snapshot=config or {},
         )
 
-        for case in cases:
-            result = await self._evaluate_case(case)
-            run.results.append(result)
+        tasks = [self._evaluate_case(case) for case in cases]
+        results = await asyncio.gather(*tasks)
+        run.results.extend(results)
 
         self._runs[run_id] = run
         self._save_run(run)
