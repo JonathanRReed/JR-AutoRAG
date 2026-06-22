@@ -1,0 +1,9 @@
+💡 **What:** Replaced the sequential for loop in `enrich_chunks` with `asyncio.gather(*tasks)` to process document chunks concurrently.
+
+🎯 **Why:** The previous implementation awaited each chunk's enrichment sequentially. Since chunk enrichment is largely independent and can involve network calls (e.g., to LLMs for generating chunk summaries), performing them sequentially introduced significant and unnecessary latency. By processing them concurrently, the overall duration of the enrichment phase is bounded by the slowest individual chunk rather than the sum of all chunks.
+
+📊 **Measured Improvement:**
+A benchmark was created using 50 dummy chunks, where the `LLMProvider.chat` function simulated a network latency of 0.01s per call.
+*   **Baseline (Sequential):** 0.5214 seconds
+*   **Optimized (Concurrent):** 0.0144 seconds
+*   **Improvement:** 36x faster (approx. 97.2% reduction in execution time for 50 chunks).

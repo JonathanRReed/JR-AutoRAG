@@ -11,6 +11,7 @@ to be understood and matched independently.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import re
 from dataclasses import dataclass, field
@@ -338,9 +339,8 @@ Summary:"""
         # Extract document title
         document_title = self.extract_document_title(document_text, filename)
 
-        enriched = []
-        for i, chunk in enumerate(chunks):
-            enriched_chunk = await self.enrich_chunk(
+        tasks = [
+            self.enrich_chunk(
                 chunk=chunk,
                 chunk_index=i,
                 all_chunks=chunks,
@@ -349,7 +349,9 @@ Summary:"""
                 document_summary=document_summary,
                 provider=provider,
             )
-            enriched.append(enriched_chunk)
+            for i, chunk in enumerate(chunks)
+        ]
+        enriched = list(await asyncio.gather(*tasks))
 
         return enriched
 
