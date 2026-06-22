@@ -12,13 +12,14 @@ These bundles enable:
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
+from app.core.mixins import ToDictMixin
 from datetime import UTC, datetime
 from typing import Any
 
 
 @dataclass
-class TraceBundle:
+class TraceBundle(ToDictMixin):
     """Complete trace bundle for reproducibility.
 
     Contains all information needed to understand and reproduce
@@ -51,9 +52,6 @@ class TraceBundle:
         if not self.created_at:
             self.created_at = datetime.now(UTC).isoformat()
 
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for serialization."""
-        return asdict(self)
 
     def to_json(self, indent: int = 2) -> str:
         """Export as formatted JSON string."""
