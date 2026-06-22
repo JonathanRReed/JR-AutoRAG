@@ -1,6 +1,5 @@
 """LangExtract adapter for optional ingestion-time enrichment."""
 
-from __future__ import annotations
 
 import json
 from concurrent.futures import ThreadPoolExecutor
