@@ -15,6 +15,7 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
+from .utils import count_matches
 
 if TYPE_CHECKING:
     from .providers import LLMProvider
@@ -110,10 +111,6 @@ CLARIFICATION: [question to ask user, only if CLARIFY, else "none"]"""
         self._complex_re = [re.compile(p, re.IGNORECASE) for p in self.COMPLEX_PATTERNS]
         self._ambiguous_re = [re.compile(p, re.IGNORECASE) for p in self.AMBIGUOUS_PATTERNS]
 
-    def _count_matches(self, patterns: list, text: str) -> int:
-        """Count pattern matches."""
-        return sum(1 for p in patterns if p.search(text))
-
     def _estimate_complexity(self, query: str) -> float:
         """Estimate query complexity (0-1)."""
         score = 0.5  # Base
@@ -126,11 +123,11 @@ CLARIFICATION: [question to ask user, only if CLARIFY, else "none"]"""
             score -= 0.2
 
         # Complexity patterns
-        complex_matches = self._count_matches(self._complex_re, query)
+        complex_matches = count_matches(self._complex_re, query)
         score += 0.15 * complex_matches
 
         # Simple patterns reduce complexity
-        simple_matches = self._count_matches(self._simple_re, query)
+        simple_matches = count_matches(self._simple_re, query)
         score -= 0.1 * simple_matches
 
         return max(0.0, min(1.0, score))

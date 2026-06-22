@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any
+from .utils import count_matches
 
 if TYPE_CHECKING:
     from .smart_planner import QueryType
@@ -70,10 +71,6 @@ class QueryRouter:
         self._keyword_re = [re.compile(p, re.IGNORECASE) for p in self.KEYWORD_HEAVY_PATTERNS]
         self._conceptual_re = [re.compile(p, re.IGNORECASE) for p in self.CONCEPTUAL_PATTERNS]
 
-    def _count_matches(self, patterns: list, text: str) -> int:
-        """Count pattern matches in text."""
-        return sum(1 for p in patterns if p.search(text))
-
     def _is_direct_query(self, query: str) -> bool:
         """Check if query should skip retrieval."""
         return any(p.match(query) for p in self._direct_re)
@@ -113,8 +110,8 @@ class QueryRouter:
             )
 
         # Count pattern matches
-        keyword_score = self._count_matches(self._keyword_re, query)
-        conceptual_score = self._count_matches(self._conceptual_re, query)
+        keyword_score = count_matches(self._keyword_re, query)
+        conceptual_score = count_matches(self._conceptual_re, query)
 
         # Route based on query characteristics
         if keyword_score > conceptual_score and keyword_score >= 2:
