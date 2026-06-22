@@ -17,7 +17,8 @@ import contextlib
 import hashlib
 import importlib.metadata
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
+from app.core.mixins import ToDictMixin
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -73,7 +74,7 @@ def compute_corpus_hash(document_hashes: list[str]) -> str:
 # =============================================================================
 
 @dataclass(frozen=True)
-class RetrievalSnapshot:
+class RetrievalSnapshot(ToDictMixin):
     """Immutable snapshot of retrieval configuration."""
     dense_k: int
     sparse_k: int
@@ -88,8 +89,6 @@ class RetrievalSnapshot:
     chunk_size: int
     chunk_overlap: int
 
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
 
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> RetrievalSnapshot:
@@ -111,7 +110,7 @@ class RetrievalSnapshot:
 
 
 @dataclass(frozen=True)
-class ModelSnapshot:
+class ModelSnapshot(ToDictMixin):
     """Immutable snapshot of model configuration."""
     provider: str
     model_id: str
@@ -120,8 +119,6 @@ class ModelSnapshot:
     temperature: float
     max_tokens: int
 
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
 
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> ModelSnapshot:
@@ -137,14 +134,12 @@ class ModelSnapshot:
 
 
 @dataclass(frozen=True)
-class PromptSnapshot:
+class PromptSnapshot(ToDictMixin):
     """Immutable snapshot of prompt templates."""
     system_prompt_hash: str
     query_template_hash: str
     citation_template_hash: str
 
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
 
     @classmethod
     def from_prompts(
