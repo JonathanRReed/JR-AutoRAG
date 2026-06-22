@@ -601,7 +601,7 @@ class IndexPersistence:
         return self._base_path / f"{index_name}_embeddings.npy"
 
     def _chunks_path(self, index_name: str) -> Path:
-        return self._base_path / f"{index_name}_chunks.pkl"
+        return self._base_path / f"{index_name}_chunks.json"
 
     def _bm25_path(self, index_name: str) -> Path:
         return self._base_path / f"{index_name}_bm25.pkl"
@@ -632,10 +632,12 @@ class IndexPersistence:
         embeddings_path = self._embeddings_path(index_name)
         np.save(str(embeddings_path), embeddings)
 
+        from dataclasses import asdict
         # Save chunks
         chunks_path = self._chunks_path(index_name)
-        with open(chunks_path, "wb") as f:
-            pickle.dump(chunks, f)
+        with open(chunks_path, "w") as f:
+            serialized_chunks = [{"doc_id": doc_id, "chunk": asdict(chunk)} for doc_id, chunk in chunks]
+            json.dump(serialized_chunks, f)
 
         # Save metadata
         metadata_path = self._metadata_path(index_name)
@@ -659,9 +661,11 @@ class IndexPersistence:
         # Load embeddings
         embeddings = np.load(str(embeddings_path))
 
+        from api.app.core.chunking import Chunk
         # Load chunks
-        with open(chunks_path, "rb") as f:
-            chunks = pickle.load(f)
+        with open(chunks_path, "r") as f:
+            loaded_chunks = json.load(f)
+            chunks = [(item["doc_id"], Chunk(**item["chunk"])) for item in loaded_chunks]
 
         # Load metadata
         with open(metadata_path) as f:
