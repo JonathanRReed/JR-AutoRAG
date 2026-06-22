@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any
+from .utils import count_matches
 
 
 class RouteDecision(str, Enum):
@@ -205,10 +206,6 @@ class LearnedRouter:
         self._temporal_re = [re.compile(p, re.I) for p in self.TEMPORAL_PATTERNS]
         self._list_re = [re.compile(p, re.I) for p in self.LIST_PATTERNS]
 
-    def _count_matches(self, patterns: list, text: str) -> int:
-        """Count pattern matches in text."""
-        return sum(1 for p in patterns if p.search(text))
-
     def extract_features(self, query: str) -> RouterFeatures:
         """Extract comprehensive feature vector from query."""
         words = query.lower().split()
@@ -230,13 +227,13 @@ class LearnedRouter:
         numeric_count = len(re.findall(r'\b\d+[\d,\.]*\b', query))
 
         # Detect signals
-        comparison = self._count_matches(self._comparison_re, query) > 0
-        procedural = self._count_matches(self._procedural_re, query) > 0
-        factual = self._count_matches(self._factual_re, query) > 0
-        analytical = self._count_matches(self._analytical_re, query) > 0
-        ambiguity = self._count_matches(self._ambiguity_re, query) > 0
-        temporal = self._count_matches(self._temporal_re, query) > 0
-        list_signal = self._count_matches(self._list_re, query) > 0
+        comparison = count_matches(self._comparison_re, query) > 0
+        procedural = count_matches(self._procedural_re, query) > 0
+        factual = count_matches(self._factual_re, query) > 0
+        analytical = count_matches(self._analytical_re, query) > 0
+        ambiguity = count_matches(self._ambiguity_re, query) > 0
+        temporal = count_matches(self._temporal_re, query) > 0
+        list_signal = count_matches(self._list_re, query) > 0
         negation = bool(re.search(r'\b(not|no|never|without|except)\b', query, re.I))
 
         # Compute complexity score
