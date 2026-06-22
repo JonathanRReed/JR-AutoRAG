@@ -44,8 +44,7 @@ class AbstentionResult:
 class AbstentionConfig:
     """Configuration for abstention rules."""
     # Enable/disable abstention entirely
-    # DISABLED: Coverage calculation has bugs causing false positives
-    enabled: bool = False
+    enabled: bool = True
 
     # Coverage thresholds (relaxed to avoid false positives)
     min_coverage_ratio: float = 0.15  # Was 0.3 - too aggressive
