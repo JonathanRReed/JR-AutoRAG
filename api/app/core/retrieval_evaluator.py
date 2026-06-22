@@ -412,15 +412,36 @@ INCORRECT means the context is irrelevant to the query."""
         # Extract quoted terms
         quoted = re.findall(r'"([^"]+)"', query)
         slots.extend(quoted)
+
+        ignore_words = {
+            "what", "who", "when", "where", "why", "which", "how",
+            "is", "are", "was", "were", "do", "does", "did", "can",
+            "could", "would", "should", "the", "a", "an", "in", "on",
+            "at", "by", "for", "with", "about", "to", "from", "of",
+            "and", "or", "not", "it", "this", "that", "these", "those"
+        }
+
         # Extract capitalized terms (entities)
-        entities = re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', query)
-        slots.extend(entities)
+        entities = re.findall(r'\b[A-Z][a-zA-Z0-9]*(?:\s+[A-Z][a-zA-Z0-9]*)*\b', query)
+        for entity in entities:
+            if entity.lower() not in ignore_words:
+                slots.append(entity)
+
         # Extract key question words and their objects
         wh_matches = re.findall(r'\b(what|who|when|where|which|how)\s+(?:is|are|was|were|does|did)?\s*(\w+)', query.lower())
         for _, obj in wh_matches:
-            if len(obj) > 3:
+            if len(obj) > 3 and obj.lower() not in ignore_words:
                 slots.append(obj)
-        return list(set(slots))
+
+        # Deduplicate case-insensitively
+        unique_slots = []
+        seen = set()
+        for slot in slots:
+            if slot.lower() not in seen:
+                seen.add(slot.lower())
+                unique_slots.append(slot)
+
+        return unique_slots
 
     def _find_covered_slots(self, slots: list[str], chunks: list[EvidenceChunk]) -> list[str]:
         """Find which slots are covered by retrieved chunks."""
@@ -565,7 +586,14 @@ INCORRECT means the context is irrelevant to the query."""
         slots = self._extract_query_slots(query)
         if not slots:
             # Fall back to term-based coverage
-            query_terms = {w.lower() for w in query.split() if len(w) > 4}
+            ignore_words = {
+                "what", "who", "when", "where", "why", "which", "how",
+                "is", "are", "was", "were", "do", "does", "did", "can",
+                "could", "would", "should", "the", "a", "an", "in", "on",
+                "at", "by", "for", "with", "about", "to", "from", "of",
+                "and", "or", "not", "it", "this", "that", "these", "those"
+            }
+            query_terms = {w.lower() for w in query.split() if len(w) > 4 and w.lower() not in ignore_words}
             if not query_terms:
                 return RetrievalVerdict.CORRECT, 1.0, []
             chunk_text = " ".join(c.snippet.lower() for c in chunks if hasattr(c, 'snippet'))
