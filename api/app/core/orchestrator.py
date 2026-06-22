@@ -1118,9 +1118,8 @@ class Orchestrator:
         max_iterations = max(max_iterations, learned_route.max_iterations)
         # Override max_iterations from budget plan if tighter
         max_iterations = min(max_iterations, budget_plan.max_iterations)
-        # PERFORMANCE FIX: Hard cap at 2 iterations to prevent long delays
-        # Complex multi-iteration loops with evaluations were causing 20+ minute responses
-        max_iterations = min(max_iterations, 2)
+        # PERFORMANCE FIX: Removed hard cap of 2 iterations.
+        # We now use active time-based aborts in the loop to safely prevent long delays.
 
         # Adjust retrieval k per learned router suggestion
         for step in getattr(plan, "steps", []):
@@ -1261,7 +1260,7 @@ class Orchestrator:
             "clarification_top_k": 4,
         }
 
-        while iteration < max_iterations:
+        while iteration < max_iterations and (time.perf_counter() - gatherer_start) < ((budget_plan.estimated_latency_ms / 1000.0) * 2.0):
             if trace_id in self._cancelled_traces:
                 raise asyncio.CancelledError(f"Trace {trace_id} cancelled by user")
             iteration_start = time.perf_counter()
