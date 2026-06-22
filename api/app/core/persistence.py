@@ -27,6 +27,21 @@ if TYPE_CHECKING:
 # Disk-Backed Embedding Cache
 # ============================================================================
 
+class DiskCacheBase:
+    """Base class for disk-backed SQLite caches."""
+
+    def __init__(self, db_path: Path) -> None:
+        self._db_path = db_path
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._conn: sqlite3.Connection | None = None
+
+    def _get_conn(self) -> sqlite3.Connection:
+        """Get or create database connection."""
+        if self._conn is None:
+            self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
+        return self._conn
+
+
 @dataclass
 class CacheConfig:
     """Configuration for disk cache."""
@@ -41,7 +56,7 @@ class CacheConfig:
         return f"__corpus_version__{self.model_name}"
 
 
-class DiskEmbeddingCache:
+class DiskEmbeddingCache(DiskCacheBase):
     """SQLite-backed embedding cache with model+text hash keys.
 
     Persists embeddings across restarts with automatic expiration.
@@ -53,9 +68,7 @@ class DiskEmbeddingCache:
             config = CacheConfig(db_path=Path("data/embedding_cache.db"))
 
         self._config = config
-        self._db_path = config.db_path
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn: sqlite3.Connection | None = None
+        super().__init__(config.db_path)
         self._init_db()
 
     def _init_db(self) -> None:
@@ -83,12 +96,6 @@ class DiskEmbeddingCache:
             )
         """)
         conn.commit()
-
-    def _get_conn(self) -> sqlite3.Connection:
-        """Get or create database connection."""
-        if self._conn is None:
-            self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
-        return self._conn
 
     def _make_key(self, text: str, model: str | None = None) -> tuple[str, str]:
         """Create cache key from text and model."""
@@ -296,7 +303,7 @@ class QueryCacheConfig:
     ttl_hours: int = 24  # Queries expire faster than embeddings
 
 
-class DiskQueryCache:
+class DiskQueryCache(DiskCacheBase):
     """SQLite-backed query result cache with versioned keys.
 
     Implements P0.3: Cache keys include corpus version, retrieval mode,
@@ -310,9 +317,7 @@ class DiskQueryCache:
             config = QueryCacheConfig(db_path=Path("data/query_cache.db"))
 
         self._config = config
-        self._db_path = config.db_path
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn: sqlite3.Connection | None = None
+        super().__init__(config.db_path)
         self._last_event: CacheEvent | None = None
         self._init_db()
 
@@ -337,12 +342,6 @@ class DiskQueryCache:
             ON query_cache(query_normalized, corpus_version)
         """)
         conn.commit()
-
-    def _get_conn(self) -> sqlite3.Connection:
-        """Get or create database connection."""
-        if self._conn is None:
-            self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
-        return self._conn
 
     def _normalize_query(self, query: str) -> str:
         """Normalize query for cache key generation."""
