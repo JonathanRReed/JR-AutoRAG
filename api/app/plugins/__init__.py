@@ -411,6 +411,35 @@ class PluginRegistry:
                 result.append(plugin.info)
         return result
 
+    def _load_module(self, py_file: Path, module_name: str | None = None) -> Any | None:
+        """Load a python module from a file."""
+        name = module_name or py_file.stem
+        spec = importlib.util.spec_from_file_location(name, py_file)
+        if spec and spec.loader:
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            return module
+        return None
+
+    def _register_from_module(self, module: Any) -> int:
+        """Register plugins from a loaded module."""
+        if not hasattr(module, "create_plugin"):
+            return 0
+
+        discovered = 0
+        plugin = module.create_plugin()
+
+        if isinstance(plugin, Plugin):
+            self.register(plugin)
+            discovered += 1
+        elif isinstance(plugin, list):
+            for p in plugin:
+                if isinstance(p, Plugin):
+                    self.register(p)
+                    discovered += 1
+
+        return discovered
+
     def discover(self, path: Path) -> int:
         """Auto-discover plugins from a directory.
 
@@ -433,25 +462,10 @@ class PluginRegistry:
                 continue
 
             try:
-                # Load the module
-                spec = importlib.util.spec_from_file_location(
-                    py_file.stem, py_file
-                )
-                if spec and spec.loader:
-                    module = importlib.util.module_from_spec(spec)
-                    spec.loader.exec_module(module)
-
-                    # Look for factory function
-                    if hasattr(module, "create_plugin"):
-                        plugin = module.create_plugin()
-                        if isinstance(plugin, Plugin):
-                            self.register(plugin)
-                            discovered += 1
-                        elif isinstance(plugin, list):
-                            for p in plugin:
-                                if isinstance(p, Plugin):
-                                    self.register(p)
-                                    discovered += 1
+                module_name = f"plugins.{path.name}.{py_file.stem}"
+                module = self._load_module(py_file, module_name)
+                if module:
+                    discovered += self._register_from_module(module)
             except Exception as e:
                 logger.warning(f"Failed to load plugin from {py_file}: {e}")
 
