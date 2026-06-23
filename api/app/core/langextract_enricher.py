@@ -346,8 +346,10 @@ class LangExtractEnricher:
             return future.result(timeout=timeout)
         except FutureTimeoutError as exc:
             timed_out = True
-            future.cancel()
-            executor.shutdown(wait=False, cancel_futures=True)
+            if future.cancel():
+                executor.shutdown(wait=False, cancel_futures=True)
+            else:
+                executor.shutdown(wait=True, cancel_futures=True)
             raise TimeoutError(f"LangExtract timed out after {timeout}s") from exc
         finally:
             if not timed_out:
