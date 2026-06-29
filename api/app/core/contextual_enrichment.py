@@ -71,6 +71,9 @@ class EnrichmentConfig:
     # Fallback settings
     fallback_to_heuristic: bool = True
 
+    # Concurrency settings
+    max_concurrent_enrichments: int = 8
+
 
 class ContextualEnricher:
     """Enrich chunks with document context for better retrieval.
@@ -339,19 +342,24 @@ Summary:"""
         # Extract document title
         document_title = self.extract_document_title(document_text, filename)
 
-        tasks = [
-            self.enrich_chunk(
-                chunk=chunk,
-                chunk_index=i,
-                all_chunks=chunks,
-                document_text=document_text,
-                document_title=document_title,
-                document_summary=document_summary,
-                provider=provider,
-            )
-            for i, chunk in enumerate(chunks)
-        ]
-        enriched = list(await asyncio.gather(*tasks))
+        max_concurrent = max(1, self.config.max_concurrent_enrichments)
+        enriched: list[EnrichedChunk] = []
+
+        for start in range(0, len(chunks), max_concurrent):
+            batch = chunks[start:start + max_concurrent]
+            tasks = [
+                self.enrich_chunk(
+                    chunk=chunk,
+                    chunk_index=start + i,
+                    all_chunks=chunks,
+                    document_text=document_text,
+                    document_title=document_title,
+                    document_summary=document_summary,
+                    provider=provider,
+                )
+                for i, chunk in enumerate(batch)
+            ]
+            enriched.extend(await asyncio.gather(*tasks))
 
         return enriched
 
