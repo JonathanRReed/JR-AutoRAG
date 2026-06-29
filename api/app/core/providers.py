@@ -11,7 +11,13 @@ from typing import Any
 
 import httpx
 
-from ..schemas.config import LocalProviderInfo, ProviderConfig, ProviderKind
+from ..schemas.config import (
+    LocalProviderInfo,
+    ProviderConfig,
+    ProviderKind,
+    is_client_owned_provider_url,
+    is_public_provider_url,
+)
 from .secrets_vault import get_secrets_vault
 
 DEFAULT_PROVIDER_TIMEOUT = 300.0
@@ -517,6 +523,12 @@ async def discover_models(cfg: ProviderConfig) -> list[str]:
 
     base = str(cfg.base_url).rstrip("/")
     base_lower = base.lower()
+    kind = (cfg.name or "").lower()
+    if "ollama" in kind or "lm" in kind or "studio" in kind:
+        if not is_client_owned_provider_url(base):
+            raise ProviderError("Local provider discovery requires a localhost or client-owned URL.")
+    elif not is_public_provider_url(base):
+        raise ProviderError("Cloud provider discovery URL must resolve to a public network address.")
     api_key = resolve_provider_api_key(cfg.name, base, cfg.api_key)
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
 
@@ -526,7 +538,6 @@ async def discover_models(cfg: ProviderConfig) -> list[str]:
         return f"{base_url}/v1/models"
 
     async with httpx.AsyncClient(timeout=15.0, headers=headers) as client:
-        kind = (cfg.name or "").lower()
         try:
             if "ollama" in kind:
                 resp = await client.get(f"{base}/api/tags")

@@ -89,6 +89,46 @@ def _is_client_owned_url(value: str) -> bool:
     return parsed_ip.is_loopback or parsed_ip.is_private or parsed_ip.is_link_local
 
 
+def is_client_owned_provider_url(value: str) -> bool:
+    """Return whether a provider URL is restricted to a client-owned local address."""
+
+    return _is_client_owned_url(value)
+
+
+def _is_blocked_provider_ip(value: str) -> bool:
+    parsed_ip = ip_address(value)
+    return (
+        parsed_ip.is_loopback
+        or parsed_ip.is_private
+        or parsed_ip.is_link_local
+        or parsed_ip.is_multicast
+        or parsed_ip.is_reserved
+        or parsed_ip.is_unspecified
+    )
+
+
+def is_public_provider_url(value: str) -> bool:
+    """Return whether a provider URL resolves only to public addresses."""
+
+    parsed = urlparse(value.strip())
+    host = (parsed.hostname or "").strip().lower()
+    if not host or host == "localhost" or host.endswith(".localhost"):
+        return False
+    try:
+        return not _is_blocked_provider_ip(host)
+    except ValueError:
+        pass
+
+    try:
+        resolved = {
+            result[4][0]
+            for result in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+        }
+    except OSError:
+        return False
+    return bool(resolved) and all(not _is_blocked_provider_ip(item) for item in resolved)
+
+
 class BackendCapabilities(BaseModel):
     mode: BackendMode = BackendMode.LOCAL
     requires_network: bool = False
