@@ -165,15 +165,21 @@ class EvalHarness:
         self,
         data_path: Path | None = None,
         query_fn: Callable | None = None,
+        max_concurrent: int = 5,
     ) -> None:
         """Initialize harness.
 
         Args:
             data_path: Path to store eval results
             query_fn: Async function to run queries
+            max_concurrent: Maximum number of eval cases to run at once
         """
+        if max_concurrent < 1:
+            raise ValueError("max_concurrent must be at least 1")
+
         self._data_path = data_path or Path("data/evaluations")
         self._query_fn = query_fn
+        self._max_concurrent = max_concurrent
         self._runs: dict[str, EvalRun] = {}
 
     def load_cases(self, path: Path) -> list[EvalCase]:
@@ -218,7 +224,13 @@ class EvalHarness:
             config_snapshot=config or {},
         )
 
-        results = await asyncio.gather(*(self._evaluate_case(case) for case in cases))
+        semaphore = asyncio.Semaphore(self._max_concurrent)
+
+        async def evaluate_bounded(case: EvalCase) -> EvalResult:
+            async with semaphore:
+                return await self._evaluate_case(case)
+
+        results = await asyncio.gather(*(evaluate_bounded(case) for case in cases))
         run.results.extend(results)
 
         self._runs[run_id] = run
@@ -356,9 +368,14 @@ class EvalHarness:
 def get_eval_harness(
     data_path: Path | None = None,
     query_fn: Callable | None = None,
+    max_concurrent: int = 5,
 ) -> EvalHarness:
     """Create evaluation harness."""
-    return EvalHarness(data_path=data_path, query_fn=query_fn)
+    return EvalHarness(
+        data_path=data_path,
+        query_fn=query_fn,
+        max_concurrent=max_concurrent,
+    )
 
 
 __all__ = [
