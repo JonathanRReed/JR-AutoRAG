@@ -95,16 +95,14 @@ def is_client_owned_provider_url(value: str) -> bool:
     return _is_client_owned_url(value)
 
 
-def _is_blocked_provider_ip(value: str) -> bool:
-    parsed_ip = ip_address(value)
-    return (
-        parsed_ip.is_loopback
-        or parsed_ip.is_private
-        or parsed_ip.is_link_local
-        or parsed_ip.is_multicast
-        or parsed_ip.is_reserved
-        or parsed_ip.is_unspecified
-    )
+def is_local_provider_url(value: str) -> bool:
+    """Return whether a provider URL is restricted to localhost or loopback."""
+
+    return _is_local_url(value)
+
+
+def _is_public_provider_ip(value: str) -> bool:
+    return ip_address(value).is_global
 
 
 def is_public_provider_url(value: str) -> bool:
@@ -115,7 +113,7 @@ def is_public_provider_url(value: str) -> bool:
     if not host or host == "localhost" or host.endswith(".localhost"):
         return False
     try:
-        return not _is_blocked_provider_ip(host)
+        return _is_public_provider_ip(host)
     except ValueError:
         pass
 
@@ -126,7 +124,7 @@ def is_public_provider_url(value: str) -> bool:
         }
     except OSError:
         return False
-    return bool(resolved) and all(not _is_blocked_provider_ip(item) for item in resolved)
+    return bool(resolved) and all(_is_public_provider_ip(item) for item in resolved)
 
 
 class BackendCapabilities(BaseModel):

@@ -15,7 +15,7 @@ from ..schemas.config import (
     LocalProviderInfo,
     ProviderConfig,
     ProviderKind,
-    is_client_owned_provider_url,
+    is_local_provider_url,
     is_public_provider_url,
 )
 from .secrets_vault import get_secrets_vault
@@ -525,8 +525,8 @@ async def discover_models(cfg: ProviderConfig) -> list[str]:
     base_lower = base.lower()
     kind = (cfg.name or "").lower()
     if "ollama" in kind or "lm" in kind or "studio" in kind:
-        if not is_client_owned_provider_url(base):
-            raise ProviderError("Local provider discovery requires a localhost or client-owned URL.")
+        if not is_local_provider_url(base):
+            raise ProviderError("Local provider discovery requires a localhost or loopback URL.")
     elif not is_public_provider_url(base):
         raise ProviderError("Cloud provider discovery URL must resolve to a public network address.")
     api_key = resolve_provider_api_key(cfg.name, base, cfg.api_key)
