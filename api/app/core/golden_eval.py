@@ -495,71 +495,73 @@ class GoldenSetEvaluator:
         run_id = str(uuid.uuid4())[:12]
         start_time = time.perf_counter()
         individual_results: list[TestCaseResult] = []
-        semaphore = asyncio.Semaphore(max_concurrent)
+        max_concurrent = max(1, max_concurrent)
         completed_count = 0
 
-        async def process_case(case: GoldenTestCase, index: int) -> TestCaseResult:
+        async def process_case(case: GoldenTestCase) -> TestCaseResult:
             nonlocal completed_count
-            async with semaphore:
-                case_start = time.perf_counter()
+            case_start = time.perf_counter()
 
-                # Run the query
-                response = await orchestrator.answer(case.question)
+            # Run the query
+            response = await orchestrator.answer(case.question)
 
-                case_duration = (time.perf_counter() - case_start) * 1000
+            case_duration = (time.perf_counter() - case_start) * 1000
 
-                # Extract retrieved source IDs
-                retrieved_ids = [
-                    s.get("id", "") for s in response.get("sources", [])
-                ]
+            # Extract retrieved source IDs
+            retrieved_ids = [
+                s.get("id", "") for s in response.get("sources", [])
+            ]
 
-                # Compute retrieval metrics
-                retrieval_metrics = RetrievalMetrics(
-                    recall_at_k=compute_recall_at_k(retrieved_ids, case.expected_source_ids),
-                    mrr=compute_mrr(retrieved_ids, case.expected_source_ids),
-                    ndcg=compute_ndcg(retrieved_ids, case.expected_source_ids),
-                    citation_coverage=compute_citation_coverage(
-                        response.get("answer", ""),
-                        len(response.get("sources", [])),
-                    ),
-                )
+            # Compute retrieval metrics
+            retrieval_metrics = RetrievalMetrics(
+                recall_at_k=compute_recall_at_k(retrieved_ids, case.expected_source_ids),
+                mrr=compute_mrr(retrieved_ids, case.expected_source_ids),
+                ndcg=compute_ndcg(retrieved_ids, case.expected_source_ids),
+                citation_coverage=compute_citation_coverage(
+                    response.get("answer", ""),
+                    len(response.get("sources", [])),
+                ),
+            )
 
-                # Compute answer metrics
-                answer_metrics = AnswerMetrics(
-                    completeness=compute_completeness(
-                        response.get("answer", ""),
-                        case.expected_answer_points,
-                    ),
-                    refusal_accuracy=compute_refusal_accuracy(
-                        response.get("answer", ""),
-                        case.tags,
-                    ),
-                    # Prefer explicit top-level metrics, then production RAGAS scores.
-                    faithfulness=_nested_metric(response.get("metrics", {}), ["faithfulness"])
-                    or _nested_metric(response.get("metrics", {}), ["ragas", "faithfulness"]),
-                    coherence=_nested_metric(response.get("metrics", {}), ["coherence"])
-                    or _nested_metric(response.get("metrics", {}), ["ragas", "overall_score"]),
-                )
+            # Compute answer metrics
+            answer_metrics = AnswerMetrics(
+                completeness=compute_completeness(
+                    response.get("answer", ""),
+                    case.expected_answer_points,
+                ),
+                refusal_accuracy=compute_refusal_accuracy(
+                    response.get("answer", ""),
+                    case.tags,
+                ),
+                # Prefer explicit top-level metrics, then production RAGAS scores.
+                faithfulness=_nested_metric(response.get("metrics", {}), ["faithfulness"])
+                or _nested_metric(response.get("metrics", {}), ["ragas", "faithfulness"]),
+                coherence=_nested_metric(response.get("metrics", {}), ["coherence"])
+                or _nested_metric(response.get("metrics", {}), ["ragas", "overall_score"]),
+            )
 
-                result = TestCaseResult(
-                    test_case_id=case.id,
-                    question=case.question,
-                    answer=response.get("answer", ""),
-                    retrieved_source_ids=retrieved_ids,
-                    retrieval_metrics=retrieval_metrics,
-                    answer_metrics=answer_metrics,
-                    duration_ms=case_duration,
-                    trace_id=response.get("trace_id", ""),
-                )
+            result = TestCaseResult(
+                test_case_id=case.id,
+                question=case.question,
+                answer=response.get("answer", ""),
+                retrieved_source_ids=retrieved_ids,
+                retrieval_metrics=retrieval_metrics,
+                answer_metrics=answer_metrics,
+                duration_ms=case_duration,
+                trace_id=response.get("trace_id", ""),
+            )
 
-                completed_count += 1
-                if on_progress:
-                    on_progress(completed_count, len(test_cases), case.question)
+            completed_count += 1
+            if on_progress:
+                on_progress(completed_count, len(test_cases), case.question)
 
-                return result
+            return result
 
-        tasks = [process_case(case, i) for i, case in enumerate(test_cases)]
-        individual_results = await asyncio.gather(*tasks)
+        for start_index in range(0, len(test_cases), max_concurrent):
+            batch = test_cases[start_index : start_index + max_concurrent]
+            individual_results.extend(
+                await asyncio.gather(*(process_case(case) for case in batch))
+            )
 
         # Aggregate metrics
         n = len(individual_results)

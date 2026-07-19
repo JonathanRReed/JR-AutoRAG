@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core import golden_eval as golden_eval_module
 from app.core.golden_eval import (
     EvalRunStore,
     GoldenSetEvaluator,
@@ -127,6 +129,32 @@ async def test_golden_eval_reads_nested_ragas_metrics(tmp_path: Path) -> None:
 
     assert result.answer_metrics.faithfulness == pytest.approx(0.91)
     assert result.answer_metrics.coherence == pytest.approx(0.84)
+
+
+@pytest.mark.asyncio
+async def test_golden_eval_batches_case_tasks(tmp_path: Path) -> None:
+    golden_store = GoldenSetStore(tmp_path / "golden_sets.json")
+    run_store = EvalRunStore(tmp_path / "eval_runs.json")
+    golden_store.create_set(
+        "batching",
+        [GoldenTestCase(id=f"case-{i}", question=f"Q{i}") for i in range(7)],
+    )
+    gather_batch_sizes: list[int] = []
+
+    original_gather = golden_eval_module.asyncio.gather
+
+    async def recording_gather(*aws, **kwargs):
+        gather_batch_sizes.append(len(aws))
+        return await original_gather(*aws, **kwargs)
+
+    with patch.object(golden_eval_module.asyncio, "gather", recording_gather):
+        result = await GoldenSetEvaluator(
+            golden_store=golden_store,
+            run_store=run_store,
+        ).run_batch(FakeAuditOrchestrator(), "batching", max_concurrent=3)
+
+    assert len(result.individual_results) == 7
+    assert gather_batch_sizes == [3, 3, 1]
 
 
 @pytest.mark.asyncio
