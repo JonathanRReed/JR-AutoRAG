@@ -102,7 +102,8 @@ def is_local_provider_url(value: str) -> bool:
 
 
 def _is_public_provider_ip(value: str) -> bool:
-    return ip_address(value).is_global
+    address = ip_address(value)
+    return address.is_global and not address.is_multicast and not address.is_reserved
 
 
 def is_public_provider_url(value: str) -> bool:
