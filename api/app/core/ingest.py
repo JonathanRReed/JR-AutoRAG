@@ -685,8 +685,35 @@ class IngestPipeline:
 
     def _chunk(self, text: str, target: int = 800) -> list[str]:
         cfg = self._read_config()
+        strategy = "fixed"
+        overlap = 50
         if cfg is not None:
             target = max(200, int(getattr(cfg.retrieval, "chunk_size", target)))
+            strategy = str(getattr(cfg.retrieval, "chunking_strategy", "fixed")).lower()
+            overlap = max(0, int(getattr(cfg.retrieval, "chunk_overlap", overlap)))
+
+        # Route to the shared chunking module for non-fixed strategies so the
+        # configured chunking_strategy actually takes effect. The inline
+        # header-aware splitter below remains the "fixed" default for backward
+        # compatibility.
+        if strategy in {"semantic", "recursive"}:
+            try:
+                from .chunking import ChunkingStrategy, get_chunker
+
+                chunker = get_chunker(
+                    strategy=ChunkingStrategy(strategy),
+                    target_size=target,
+                    overlap=overlap,
+                )
+                chunk_objs = chunker.chunk(text)
+                texts = [c.text for c in chunk_objs if c.text and c.text.strip()]
+                return texts or [text.strip()]
+            except Exception:
+                # Fall back to the inline splitter if the chunking module or an
+                # optional dependency (e.g. sentence-transformers for semantic)
+                # is unavailable.
+                pass
+
         clean = text.replace("\r", "").replace("\f", "\n\n[PAGE_BREAK]\n\n")
         raw_blocks = [block.strip() for block in re.split(r"\n{2,}", clean) if block.strip()]
 
@@ -704,7 +731,7 @@ class IngestPipeline:
 
         chunks: list[str] = []
         current = ""
-        overlap = max(0, min(150, target // 8))
+        overlap = max(0, min(overlap or target // 8, target // 2))
         for section in sections:
             candidate = f"{current}\n\n{section}".strip() if current else section
             if current and len(candidate) > target:

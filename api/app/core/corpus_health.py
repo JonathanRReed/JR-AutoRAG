@@ -113,31 +113,80 @@ class CorpusHealthChecker:
         if not self._retrieval:
             return stats
 
-        # Get document count
-        if hasattr(self._retrieval, '_documents'):
-            stats.document_count = len(self._retrieval._documents)
+        # Prefer the public readiness snapshot when available: it is the
+        # supported contract and avoids poking private attrs that have shifted
+        # across retrieval-engine implementations.
+        snapshot: dict | None = None
+        if hasattr(self._retrieval, "get_readiness_snapshot"):
+            try:
+                snapshot = self._retrieval.get_readiness_snapshot()
+            except Exception:
+                snapshot = None
 
-        # Get chunk count
-        if hasattr(self._retrieval, '_chunks'):
-            chunks = self._retrieval._chunks
-            stats.chunk_count = len(chunks)
-
-            if chunks:
-                sizes = [len(c.text.split()) for c in chunks if hasattr(c, 'text')]
+        if snapshot is not None:
+            stats.document_count = int(snapshot.get("document_count", 0))
+            stats.chunk_count = int(snapshot.get("chunk_count", 0))
+            dense_ready = bool(snapshot.get("dense_ready"))
+            sparse_ready = bool(snapshot.get("sparse_ready"))
+            index_ready = bool(snapshot.get("index_ready"))
+            if stats.chunk_count == 0:
+                # An empty corpus has nothing indexed, even though the engine
+                # may report index_ready=True vacuously when there are no docs.
+                stats.index_status = "missing"
+            elif index_ready and (dense_ready or sparse_ready):
+                stats.index_status = "ready"
+            else:
+                stats.index_status = "stale"
+            model_status = snapshot.get("model_status") or {}
+            embedding_model = model_status.get("embedding_model") or {}
+            stats.embedding_status = embedding_model.get("status", "unknown")
+        else:
+            # Fallback for engines without a readiness snapshot. The retrieval
+            # engine stores chunks as list[(doc_id, Chunk)] tuples.
+            chunks = getattr(self._retrieval, "_chunks", None)
+            if chunks is not None:
+                stats.chunk_count = len(chunks)
+                sizes = [
+                    len(chunk.text.split())
+                    for _doc_id, chunk in chunks
+                    if hasattr(chunk, "text") and chunk.text
+                ]
                 if sizes:
                     stats.avg_chunk_size = sum(sizes) // len(sizes)
                     stats.total_tokens = int(sum(sizes) * 1.3)  # Rough token estimate
+            docs = getattr(self._retrieval, "_docs", None)
+            if docs is not None and hasattr(docs, "list"):
+                try:
+                    stats.document_count = len(docs.list())
+                except Exception:
+                    pass
+            embeddings = getattr(self._retrieval, "_embeddings", None)
+            if embeddings is not None and len(embeddings) > 0:
+                stats.index_status = "ready"
+            elif stats.chunk_count > 0:
+                stats.index_status = "stale"
+            else:
+                stats.index_status = "missing"
+            if hasattr(self._retrieval, "get_model_status"):
+                try:
+                    model_status = self._retrieval.get_model_status()
+                    stats.embedding_status = (
+                        model_status.get("embedding_model", {}).get("status", "unknown")
+                    )
+                except Exception:
+                    pass
 
-        # Get embedding status
-        if hasattr(self._retrieval, 'get_model_status'):
-            model_status = self._retrieval.get_model_status()
-            stats.embedding_status = model_status.get('embedding_status', 'unknown')
-
-        # Get index status
-        if hasattr(self._retrieval, '_faiss') and self._retrieval._faiss is not None:
-            stats.index_status = "ready"
-        else:
-            stats.index_status = "missing"
+        # Chunk-size stats from the raw chunks when not already populated.
+        if stats.avg_chunk_size == 0 and hasattr(self._retrieval, "_chunks"):
+            chunks = self._retrieval._chunks
+            sizes = [
+                len(chunk.text.split())
+                for _doc_id, chunk in chunks
+                if hasattr(chunk, "text") and chunk.text
+            ]
+            if sizes:
+                stats.avg_chunk_size = sum(sizes) // len(sizes)
+                stats.total_tokens = int(sum(sizes) * 1.3)  # Rough token estimate
 
         return stats
 

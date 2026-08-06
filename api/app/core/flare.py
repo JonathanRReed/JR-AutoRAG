@@ -12,6 +12,7 @@ Paper: https://arxiv.org/abs/2305.06983
 
 from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -84,11 +85,18 @@ class FLAREGenerator:
         threshold = self.config.confidence_threshold
         self._monitor = monitor or UncertaintyMonitor(threshold=threshold)
         self._uncertainty_re = [re.compile(p, re.IGNORECASE) for p in UNCERTAINTY_PATTERNS]
+        # Cancellation flag set by stop() so in-flight generation loops can
+        # exit promptly instead of running to completion after a cancel request.
+        self._cancelled: asyncio.Event = asyncio.Event()
 
     def _estimate_confidence(self, text: str) -> ConfidenceSignal:
         """Estimate confidence of generated text."""
 
         return self._monitor.estimate(text)
+
+    def _is_cancelled(self) -> bool:
+        """True when stop() has been requested for the current generation."""
+        return self._cancelled.is_set()
 
     def _split_sentences(self, text: str) -> list[str]:
         """Split text into sentences."""
@@ -143,6 +151,8 @@ class FLAREGenerator:
         current_context = initial_context
         retrieval_count = 0
         all_chunk_ids: set[str] = set()
+        # Clear any prior cancellation request from a previous generation.
+        self._cancelled.clear()
 
         # System prompt for RAG generation
         system_prompt = system_prompt or """You are a FLARE-Enhanced RAG Assistant with active retrieval capabilities.
@@ -201,6 +211,8 @@ Generate accurate, well-cited answers. Signal uncertainty clearly so the system 
         final_answer_parts = []
 
         for _i, sentence in enumerate(sentences):
+            if self._is_cancelled():
+                break
             signal = self._estimate_confidence(sentence)
             confidence_value = signal.aggregate
             step = FLAREStep(
@@ -320,8 +332,14 @@ Generate accurate, well-cited answers. Signal uncertainty clearly so the system 
         return result
 
     async def stop(self) -> None:
-        """Stop any active processing."""
-        pass
+        """Request cancellation of any active generation.
+
+        Sets the cancellation flag so in-flight ``generate_with_flare`` loops
+        exit at the next sentence boundary. The flag is cleared at the start of
+        the next generation, so a single stop() call does not permanently
+        disable the generator.
+        """
+        self._cancelled.set()
 
 
 __all__ = [

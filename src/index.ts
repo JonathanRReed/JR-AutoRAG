@@ -5,9 +5,8 @@ import { proxyApiRequest } from "./lib/api-proxy";
 const server = serve({
   idleTimeout: 60,
   routes: {
-    // Serve index.html for all unmatched routes.
-    "/*": index,
-
+    // Static asset and API routes are registered before the "/*" catch-all so
+    // Bun's matcher cannot shadow them with the index.html fallback.
     "/HWC-Icon.png": Bun.file(new URL("./HWC-Icon.png", import.meta.url)),
 
     // Do not expose bare FastAPI routes through the web server. The UI should
@@ -41,6 +40,10 @@ const server = serve({
         message: `Hello, ${name}!`,
       });
     },
+
+    // Serve index.html for all unmatched routes. Registered last so the more
+    // specific API and asset routes above are matched first.
+    "/*": index,
   },
 
   development: process.env.NODE_ENV !== "production" && {
