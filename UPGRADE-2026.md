@@ -27,23 +27,28 @@ Frontend cleanup removed 8 dead components: `ArtifactViewer` (unreachable),
 ### Phase 2: SOTA Retrieval Upgrades (2025-2026)
 
 **Late Chunking** (arXiv 2409.04701):
+
 - New `ChunkingStrategy.LATE` enum value + `LateChunker` class
 - Produces non-overlapping windows for post-embedding pooling
 - Wired into `ingest.py` `_chunk()` routing
 
 **Per-Query Hybrid Weights** (`AutoHybridWeights`):
+
 - Analyzes query features (length, question words, quotes, numbers, NL indicators)
 - Computes per-query dense/sparse fusion weights instead of global defaults
 - Wired into `HybridRetrievalEngine.query()` when no explicit overrides provided
 
 **MMR Diversity Rerank** (upgraded):
+
 - Now uses embedding cosine similarity (SOTA) when available
 - Falls back to token Jaccard for zero-dependency operation
 
 **Matryoshka Embedding Support**:
+
 - `HybridConfig.matryoshka_dim` field for truncated embedding + full-dim rescore
 
 **Contextual Enrichment as Default** (Anthropic Contextual Retrieval):
+
 - `ContextualEnricher.enrich_chunks_sync()` adds document title, section header,
   heuristic chunk summary, and context window to every chunk at ingest time
 - Falls back to simple header prepend on failure
@@ -58,11 +63,13 @@ Frontend cleanup removed 8 dead components: `ArtifactViewer` (unreachable),
 ### Phase 4: Security Hardening (OWASP LLM01/02)
 
 **Canary Token Manager** (OWASP LLM01 — Prompt Injection):
+
 - `CanaryTokenManager` injects unique canary tokens into system prompts
 - Verifies token presence in LLM output — missing canary indicates hijack
 - Singleton accessor: `get_canary_manager()`
 
 **Poisoned Chunk Scanner** (OWASP LLM02 — Knowledge Base Poisoning):
+
 - `PoisonedChunkScanner` detects anomalous chunks via:
   - Embedded instruction patterns ("ignore previous", "system:", etc.)
   - Excessive repetition (adversarial padding)
@@ -74,18 +81,21 @@ Frontend cleanup removed 8 dead components: `ArtifactViewer` (unreachable),
 ### Phase 5: UI/UX P0 Fixes
 
 **Color Contrast (WCAG AA)**:
+
 - Darkened light-mode primary from `#ff5d73` to `#d92647` (~4.8:1 on white)
 - Dark mode keeps brand pink (passes on dark background)
 - Separated `--destructive` from `--primary` (were same color)
 - Lightened dark-mode `--muted-foreground` for WCAG compliance
 
 **Tab Navigation (ARIA Tablist)**:
+
 - Roving tabindex (active tab = 0, inactive = -1)
 - Arrow-key navigation (left/right cycles tabs)
 - `id` + `role="tabpanel"` + `tabIndex` on all 6 panels
 - `aria-controls` now points to real panel ids
 
 **Accessibility**:
+
 - Source items and saved session rows are now keyboard-focusable
 - aria-labels on all icon-only buttons (sidebar toggles, close buttons)
 - `aria-live="polite"` on toast viewport and streaming answer
@@ -94,6 +104,7 @@ Frontend cleanup removed 8 dead components: `ArtifactViewer` (unreachable),
 - Scoped global `*` transition to interactive elements only
 
 **Functional Fixes**:
+
 - Wired `cacheStats`/`onClearCache`/`isClearingCache` to `MetricsDashboard`
 - Fixed script loading: `defer` instead of `async`, moved to body end
 - API URL visible on `lg+` screens (was hidden below `2xl`)
@@ -102,6 +113,7 @@ Frontend cleanup removed 8 dead components: `ArtifactViewer` (unreachable),
 ### Verification
 
 All checks pass:
+
 - `uv run ruff check app tests` — clean
 - `uv run pytest -q` — 363 tests pass (334 original + 29 new)
 - `bun run typecheck` — clean
@@ -133,12 +145,14 @@ After this upgrade session, the codebase has:
 ## 2. Remaining work (future phases)
 
 ### Phase B — Model/Backend Layer
+
 - Add `BGE_M3` and `NOMIC` to `EmbeddingModelPreset` with FlagEmbedding integration
 - Add `bge-reranker-v2-m3` as default reranker for `balanced`/`thorough` presets
 - Implement `ColPaliReranker` / `ColQwenReranker` behind feature flag
 - Add `QdrantStore`, `LanceDBStore`, `ChromaStore` implementing `VectorStore` ABC
 
 ### Phase C — Agentic & Advanced Security
+
 - Promote `smart_planner.py` to `AgenticRAGPlanner` with `max_steps`/`token_budget`
 - Add ReAct-style prompt formatting with trace visualization
 - Add Presidio-backed PII redaction (optional backend)
@@ -146,6 +160,7 @@ After this upgrade session, the codebase has:
 - Add metamorphic drift detection to eval harness
 
 ### Phase D — Frontend Polish
+
 - Enable bundle splitting (`splitting: true` in `build.ts`)
 - Add `AbortController` to `fetchJson` and cancel streams on unmount
 - Stabilize handlers with `useCallback` and memoize heavy chat subcomponents
