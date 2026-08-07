@@ -1,6 +1,6 @@
 # JR-AutoRAG Upgrade Plan — 2026
 
-> Supersedes `JR-AutoRAG-Upgrade-Doc-Local-First.md`.
+> Supersedes the original `JR-AutoRAG-Upgrade-Doc-Local-First.md` (deleted).
 > Grounded in a 2025–2026 state-of-the-art RAG survey and a full read-only
 > architecture audit of the current repository.
 

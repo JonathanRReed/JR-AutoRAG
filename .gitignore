@@ -16,9 +16,9 @@ __pycache__/
 *.egg-info/
 
 # virtual environments
-.venv
-venv
-api/.venv
+.venv/
+venv/
+api/.venv/
 
 # code coverage
 coverage
@@ -44,21 +44,31 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .cache
 *.tsbuildinfo
 
-# IntelliJ based IDEs
+# IDEs & editors
 .idea
+*.swp
+*.swo
+*~
+.DS_Store
 
 # VS Code (optional - uncomment if you don't want to share settings)
 # .vscode/
 
-# Finder (MacOS) folder config
-.DS_Store
-
-# editor swap/backup files
-*.swp
-*.swo
-*~
-
-# app data (runtime configs, documents, traces)
+# app data (runtime configs, documents, traces, indexes)
 data/
 api/data/
 evidence/
+
+# generated audit evidence (regenerated on demand)
+audit/
+
+# runtime databases
+*.db
+*.sqlite
+*.sqlite3
+
+# model artifacts (downloaded models, not tracked in git)
+*.bin
+*.safetensors
+models/
+

@@ -165,7 +165,7 @@ Common environment variables:
 - Uses local-only deployment policy by default, rejecting public cloud providers unless the deployment profile allows them.
 - Keeps client-adjacent policy fields explicit, including retention, external model calls, PII redaction, and operator review.
 
-See [Public/SECURITY.md](./Public/SECURITY.md) for production deployment guidance.
+See [SECURITY.md](./SECURITY.md) for production deployment guidance.
 
 ## API Surfaces
 
@@ -216,7 +216,7 @@ Uploads trigger indexing and retrieval rebuilds. Deleting a document also rebuil
 
 The UI surfaces related controls for hybrid search, reranking, RAPTOR, graph retrieval, evidence contracts, HyDE, and Self-RAG critique where supported by the current backend settings.
 
-See [docs/architecture/research-backed-rag-architecture.md](./docs/architecture/research-backed-rag-architecture.md) for the current research-to-implementation matrix used in client evidence bundles.
+See [UPGRADE-2026.md](./UPGRADE-2026.md) for the current architecture status and upgrade roadmap.
 
 ## Verification
 
@@ -293,7 +293,7 @@ curl http://127.0.0.1:8000/documents
 11. Run `JR_EVIDENCE_API_KEY="${AUTORAG_API_KEYS%%,*}" bun run evidence:bundle` and keep the generated directory with the client handoff evidence.
 12. Run `bun run handoff:gate -- evidence/install/<timestamp>-install-evidence`; fix every failure before handoff.
 13. Persist `data/` or set `JR_DATA_DIR` to durable storage.
-14. Review [Public/SECURITY.md](./Public/SECURITY.md) before exposing the API.
+14. Review [SECURITY.md](./SECURITY.md) before exposing the API.
 
 The API Docker image sets `UV_TORCH_BACKEND=cpu` so default local installs avoid CUDA wheel downloads. Use a GPU-specific image or override only when the client environment explicitly requires GPU acceleration.
 The default API container installs the core backend dependency set. For local workstation installs, `bun run api:sync` includes the `ml` extra for Docling and local sentence-transformer embeddings.
