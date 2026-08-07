@@ -40,6 +40,8 @@ except ImportError:  # pragma: no cover
 
 from ..schemas.config import AppConfig, OCRPolicy, ProviderConfig
 from .audit import AuditAction, AuditEntry, get_audit_log
+from .chunking import Chunk
+from .contextual_enrichment import ContextualEnricher, EnrichmentConfig
 from .documents import DocumentStore
 from .document_parser import DocumentParserRouter, parser_result_from_text, parser_result_to_metadata
 from .langextract_enricher import LangExtractEnricher
@@ -87,6 +89,14 @@ class IngestPipeline:
         self._langextract = LangExtractEnricher(data_dir=data_dir)
         self._policy_registry = policy_registry
         self._parser_router = DocumentParserRouter()
+        self._enricher = ContextualEnricher(EnrichmentConfig(
+            add_document_title=True,
+            add_section_header=True,
+            add_chunk_summary=True,
+            add_context_window=True,
+            use_llm_for_summary=False,  # Sync path uses heuristic summaries
+            fallback_to_heuristic=True,
+        ))
 
     def ingest_text(
         self,
@@ -127,8 +137,10 @@ class IngestPipeline:
         meta["content_hash"] = content_hash
 
         chunks = self._chunk(augmented_text)
-        # Contextualize chunks with document header (D2)
-        contextualized = self._contextualize_chunks(chunks, title, meta)
+        # Contextual enrichment: add document title, section header, summary,
+        # and context window to each chunk (Anthropic Contextual Retrieval).
+        # Falls back to simple header prepend if enrichment fails.
+        contextualized = self._enrich_chunks(chunks, augmented_text, title, meta)
         combined = "\n\n".join(contextualized)
 
         doc = self._store.add(title=title, text=combined, metadata=meta, on_duplicate=on_duplicate)
@@ -430,6 +442,43 @@ class IngestPipeline:
         except ValueError:
             return 0.0
 
+    def _enrich_chunks(
+        self,
+        chunks: list[str],
+        document_text: str,
+        doc_title: str,
+        metadata: dict[str, str] | None,
+    ) -> list[str]:
+        """Enrich chunks with contextual retrieval (Anthropic approach).
+
+        Uses ContextualEnricher to add document title, section header,
+        chunk summary, and context window to each chunk. Falls back to
+        the simple header prepend if enrichment fails.
+        """
+        try:
+            # Build Chunk objects with positions for the enricher
+            chunk_objs: list[Chunk] = []
+            char_pos = 0
+            for i, text in enumerate(chunks):
+                stripped = text.strip()
+                if stripped:
+                    chunk_objs.append(Chunk(
+                        text=stripped,
+                        index=i,
+                        start_char=char_pos,
+                        end_char=char_pos + len(stripped),
+                    ))
+                char_pos += len(text) + 2  # approximate gap
+
+            enriched = self._enricher.enrich_chunks_sync(
+                chunks=chunk_objs,
+                document_text=document_text,
+                filename=metadata.get("filename", doc_title) if metadata else doc_title,
+            )
+            return [e.enriched_text for e in enriched]
+        except Exception:
+            return self._contextualize_chunks(chunks, doc_title, metadata)
+
     def _contextualize_chunks(
         self,
         chunks: list[str],
@@ -438,7 +487,7 @@ class IngestPipeline:
     ) -> list[str]:
         """Add header context to each chunk for better interpretability (D2).
 
-        Makes isolated snippets self-contained with document info.
+        Fallback when ContextualEnricher is unavailable.
         """
         header_parts = [f"[Document: {doc_title}]"]
         if metadata:
@@ -696,7 +745,7 @@ class IngestPipeline:
         # configured chunking_strategy actually takes effect. The inline
         # header-aware splitter below remains the "fixed" default for backward
         # compatibility.
-        if strategy in {"semantic", "recursive"}:
+        if strategy in {"semantic", "recursive", "late"}:
             try:
                 from .chunking import ChunkingStrategy, get_chunker
 

@@ -12,7 +12,7 @@ from ..core.golden_eval import (
     GoldenSetStore,
     GoldenTestCase,
 )
-from ..core.eval_gates import install_builtin_datasets
+from ..core.eval_gates import EvalThresholds, GatedEvaluator, install_builtin_datasets
 from ..schemas.evaluation import (
     AnswerMetricsSchema,
     EvalRunResultSchema,
@@ -259,3 +259,37 @@ async def compare_eval_runs(run_id: str, other_run_id: str):
         raise HTTPException(status_code=404, detail=str(e))
 
     return RunComparisonResult(**comparison)
+
+
+@router.post("/gates/{set_name}", response_model=dict[str, Any])
+async def run_eval_gates(
+    set_name: str,
+    strict: bool = False,
+    container: ServiceContainer = Depends(get_container),
+):
+    """Run evaluation with quality gates (CI/CD integration).
+
+    Returns pass/fail status for each gate (citation coverage, recall@k,
+    faithfulness, latency p95). Use strict=true for production handoff
+    gates, strict=false for dev/lenient gates.
+    """
+    orchestrator = container.orchestrator
+    if orchestrator is None:
+        raise HTTPException(status_code=503, detail="Orchestrator not initialized")
+
+    thresholds = EvalThresholds.strict() if strict else EvalThresholds.lenient()
+    gated = GatedEvaluator(
+        thresholds=thresholds,
+        golden_store=get_golden_store(),
+        run_store=get_eval_run_store(),
+    )
+
+    try:
+        result = await gated.evaluate_with_gates(
+            orchestrator=orchestrator,
+            golden_set=set_name,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    return result.to_dict()

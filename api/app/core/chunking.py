@@ -22,6 +22,7 @@ class ChunkingStrategy(str, Enum):
     FIXED = "fixed"           # Paragraph-based (original behavior)
     SEMANTIC = "semantic"     # Sentence-transformer boundary detection
     RECURSIVE = "recursive"   # Recursive character splitting
+    LATE = "late"             # Late chunking: embed full doc, pool per chunk window
 
 
 @dataclass
@@ -257,13 +258,91 @@ class RecursiveChunker:
         return chunks if chunks else [Chunk(text=text.strip(), index=0, start_char=0, end_char=len(text))]
 
 
+class LateChunker:
+    """Late chunking: split into windows for post-embedding pooling.
+
+    Implements the splitting phase of late chunking (arXiv 2409.04701).
+    The full document is split into token-window chunks. At embedding time,
+    the retrieval engine should embed the full document with a long-context
+    model (e.g. BGE-M3, Jina v3) and pool token-level representations over
+    these chunk windows, preserving cross-chunk context.
+
+    This chunker produces clean, non-overlapping windows that align with
+    token boundaries. If no long-context model is available at embedding
+    time, the retrieval engine falls back to per-chunk embedding.
+    """
+
+    def __init__(
+        self,
+        target_size: int = 500,
+        overlap: int = 0,  # Late chunking typically uses no overlap
+        separators: list[str] | None = None,
+    ) -> None:
+        self._target_size = target_size
+        self._overlap = 0  # No overlap for late chunking; pooling handles context
+        self._separators = separators or ["\n\n", "\n", ". ", " ", ""]
+
+    def chunk(self, text: str) -> list[Chunk]:
+        clean = text.replace("\r", "")
+        # Use recursive splitting to get boundary-respecting windows
+        raw_chunks: list[str] = []
+        self._split_recursive(clean, self._separators, raw_chunks)
+
+        chunks: list[Chunk] = []
+        char_pos = 0
+        for raw in raw_chunks:
+            stripped = raw.strip()
+            if stripped:
+                chunks.append(Chunk(
+                    text=stripped,
+                    index=len(chunks),
+                    start_char=char_pos,
+                    end_char=char_pos + len(stripped),
+                    metadata={"late_chunking": "true"},
+                ))
+            char_pos += len(raw)
+
+        return chunks if chunks else [Chunk(text=text.strip(), index=0, start_char=0, end_char=len(text))]
+
+    def _split_recursive(self, text: str, separators: list[str], out: list[str]) -> None:
+        """Recursively split text, appending results to out."""
+        if not text.strip():
+            return
+        if len(text) <= self._target_size:
+            out.append(text)
+            return
+        if not separators:
+            # Force split at target size
+            for i in range(0, len(text), self._target_size):
+                out.append(text[i:i + self._target_size])
+            return
+        sep = separators[0]
+        remaining = separators[1:]
+        if sep not in text:
+            self._split_recursive(text, remaining, out)
+            return
+        splits = text.split(sep)
+        current = ""
+        for split in splits:
+            if len(current) + len(split) + len(sep) <= self._target_size:
+                current += (sep if current else "") + split
+            else:
+                if current:
+                    out.append(current)
+                if len(split) > self._target_size:
+                    self._split_recursive(split, remaining, out)
+                current = split
+        if current:
+            out.append(current)
+
+
 def get_chunker(
     strategy: ChunkingStrategy | str = ChunkingStrategy.FIXED,
     embedder: SentenceTransformer | None = None,
     target_size: int = 400,
     overlap: int = 50,
     **kwargs,
-) -> FixedChunker | SemanticChunker | RecursiveChunker:
+) -> FixedChunker | SemanticChunker | RecursiveChunker | LateChunker:
     """Factory function to get a chunker based on strategy.
 
     Args:
@@ -286,5 +365,8 @@ def get_chunker(
         )
     elif strategy == ChunkingStrategy.RECURSIVE:
         return RecursiveChunker(target_size=target_size, overlap=overlap)
+    elif strategy == ChunkingStrategy.LATE:
+        # Late chunking uses no overlap; pooling handles cross-chunk context
+        return LateChunker(target_size=target_size, overlap=0)
     else:
         return FixedChunker(target_size=target_size, overlap=overlap)

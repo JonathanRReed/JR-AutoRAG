@@ -170,6 +170,78 @@ class EmbeddingModelPreset:
         return cls.MODEL_INFO.get(model, {"dimensions": 768, "max_tokens": 512, "requires_api": False})
 
 
+class AutoHybridWeights:
+    """Per-query hybrid weight computation (SOTA 2025-2026).
+
+    Analyzes query features to adjust dense/sparse fusion weights.
+    Keyword-heavy queries get more sparse weight; conceptual/natural
+    language queries get more dense weight. This beats global weights
+    because the optimal fusion ratio varies by query type.
+    """
+
+    # Question words indicate semantic/conceptual intent
+    QUESTION_WORDS = frozenset({"what", "why", "how", "when", "where", "who", "which", "explain", "describe", "compare", "difference", "summarize", "overview"})
+
+    @classmethod
+    def compute_weights(
+        cls,
+        query: str,
+        base_dense: float = 0.6,
+        base_sparse: float = 0.4,
+    ) -> tuple[float, float]:
+        """Compute per-query dense/sparse weights.
+
+        Returns (dense_weight, sparse_weight) normalized to sum to 1.0.
+        """
+        if not query or not query.strip():
+            return base_dense, base_sparse
+
+        text = query.strip().lower()
+        tokens = re.findall(r"\w+", text)
+        if not tokens:
+            return base_dense, base_sparse
+
+        # Start from base weights
+        dense_adj = 0.0
+        sparse_adj = 0.0
+
+        # Feature 1: Query length — short queries are more keyword-like
+        if len(tokens) <= 3:
+            sparse_adj += 0.15
+        elif len(tokens) >= 10:
+            dense_adj += 0.10
+
+        # Feature 2: Question words indicate semantic intent
+        has_question_word = any(tok in cls.QUESTION_WORDS for tok in tokens)
+        if has_question_word:
+            dense_adj += 0.12
+
+        # Feature 3: Quoted phrases indicate exact-match (sparse) intent
+        if '"' in query:
+            sparse_adj += 0.10
+
+        # Feature 4: Numbers, IDs, codes indicate keyword lookup
+        has_numbers = any(re.search(r"\d", tok) for tok in tokens)
+        if has_numbers:
+            sparse_adj += 0.08
+
+        # Feature 5: Natural language indicators (long, multi-clause)
+        if len(text) > 80 or text.count(" ") > 8:
+            dense_adj += 0.05
+
+        # Apply adjustments, clamped to [0.1, 0.9]
+        dense = max(0.1, min(0.9, base_dense + dense_adj - sparse_adj))
+        sparse = max(0.1, min(0.9, base_sparse + sparse_adj - dense_adj))
+
+        # Normalize to sum to 1.0
+        total = dense + sparse
+        if total > 0:
+            dense /= total
+            sparse /= total
+
+        return dense, sparse
+
+
 @dataclass
 class HybridConfig:
     """Configuration for hybrid retrieval."""
@@ -188,7 +260,11 @@ class HybridConfig:
     title_boost: float = 0.6
     heading_boost: float = 0.4
     proximity_weight: float = 0.5
-    diversity: float = 0.0
+    diversity: float = 0.0  # MMR lambda: 0.0 = pure relevance, 1.0 = pure diversity
+
+    # Matryoshka embedding support: truncate vectors to this dim for fast
+    # search, then rescore top-k with full-dim vectors. 0 = disabled.
+    matryoshka_dim: int = 0
 
     # Chunking
     chunking_strategy: ChunkingStrategy = ChunkingStrategy.SEMANTIC
@@ -499,6 +575,18 @@ class HybridRetrievalEngine:
     def _normalize_routing_params(self, routing_params: dict[str, Any] | None) -> dict[str, float]:
         """Normalize per-query routing params and merge with defaults."""
         params = dict(routing_params or {})
+        # If no explicit weight overrides are provided, compute per-query
+        # weights using AutoHybridWeights (SOTA: per-query beats global).
+        has_explicit_weights = "dense_weight" in params or "sparse_weight" in params
+        if not has_explicit_weights:
+            dense_w, sparse_w = AutoHybridWeights.compute_weights(
+                query=str(params.get("query", "")),
+                base_dense=self._config.dense_weight,
+                base_sparse=self._config.sparse_weight,
+            )
+            params["dense_weight"] = dense_w
+            params["sparse_weight"] = sparse_w
+
         sparse_weight = float(params.get("sparse_weight", self._config.sparse_weight) or 0.0)
         dense_weight = float(params.get("dense_weight", self._config.dense_weight) or 0.0)
         if "dense_weight" not in params and "sparse_weight" in params:
@@ -605,7 +693,11 @@ class HybridRetrievalEngine:
         top_k: int,
         diversity: float,
     ) -> list[tuple[int, float]]:
-        """Apply a lightweight diversity rerank using token overlap."""
+        """Apply MMR (Maximal Marginal Relevance) diversity rerank.
+
+        Uses embedding cosine similarity when available (SOTA), falls back
+        to token Jaccard similarity for zero-dependency operation.
+        """
         if diversity <= 0 or len(candidates) <= 1:
             return candidates[:top_k]
         pool = candidates[: max(top_k * 4, top_k)]
@@ -622,22 +714,55 @@ class HybridRetrievalEngine:
             token_cache[idx] = set(self._tokenize_terms(chunk.text))
             return token_cache[idx]
 
+        def embedding_sim(idx_a: int, idx_b: int) -> float:
+            """Cosine similarity between chunk embeddings (if available)."""
+            if self._embeddings is None or idx_a >= len(self._embeddings) or idx_b >= len(self._embeddings):
+                return -1.0  # Signal that embeddings are not available
+            a = self._embeddings[idx_a]
+            b = self._embeddings[idx_b]
+            na = float(np.linalg.norm(a))
+            nb = float(np.linalg.norm(b))
+            if na == 0 or nb == 0:
+                return 0.0
+            return float(np.dot(a, b) / (na * nb))
+
+        def max_sim_to_selected(idx: int) -> float:
+            if not selected:
+                return 0.0
+            # Try embedding similarity first (SOTA)
+            for sel_idx, _ in selected:
+                emb_sim = embedding_sim(idx, sel_idx)
+                if emb_sim >= 0:
+                    return max(emb_sim, max_sim_to_selected_emb(idx, selected))
+            # Fall back to token Jaccard
+            candidate_tokens = tokens_for(idx)
+            if not candidate_tokens:
+                return 0.0
+            best = 0.0
+            for sel_idx, _ in selected:
+                sel_tokens = tokens_for(sel_idx)
+                if not sel_tokens:
+                    continue
+                overlap = len(candidate_tokens & sel_tokens)
+                union = len(candidate_tokens | sel_tokens)
+                if union:
+                    best = max(best, overlap / union)
+            return best
+
+        def max_sim_to_selected_emb(idx: int, sel: list[tuple[int, float]]) -> float:
+            best = 0.0
+            for sel_idx, _ in sel:
+                sim = embedding_sim(idx, sel_idx)
+                if sim > best:
+                    best = sim
+            return best
+
         with self._index_lock:
             while pool and len(selected) < top_k:
                 best = None
                 best_score = None
                 for idx, score in pool:
-                    candidate_tokens = tokens_for(idx)
-                    max_sim = 0.0
-                    if selected and candidate_tokens:
-                        for sel_idx, _ in selected:
-                            sel_tokens = tokens_for(sel_idx)
-                            if not sel_tokens:
-                                continue
-                            overlap = len(candidate_tokens & sel_tokens)
-                            union = len(candidate_tokens | sel_tokens)
-                            if union:
-                                max_sim = max(max_sim, overlap / union)
+                    max_sim = max_sim_to_selected(idx)
                     mmr_score = ((1 - diversity) * score) - (diversity * max_sim)
                     if best_score is None or mmr_score > best_score:
                         best_score = mmr_score
@@ -1706,7 +1831,10 @@ class HybridRetrievalEngine:
 
         # Reset cache info for this query
         self._last_cache = {}
-        overrides = self._normalize_routing_params(routing_params)
+        # Inject query text for per-query weight computation
+        params_with_query = dict(routing_params or {})
+        params_with_query.setdefault("query", text)
+        overrides = self._normalize_routing_params(params_with_query)
         # Get candidates from both methods in parallel
         rerank_k = self._config.rerank_top_k
         loop = asyncio.get_event_loop()

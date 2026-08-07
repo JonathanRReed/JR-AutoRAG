@@ -390,6 +390,7 @@ class RetrievalDefaults(BaseModel):
     heading_boost: float = 0.4
     proximity_weight: float = 0.5
     diversity: float = 0.0
+    matryoshka_dim: int = 0
     use_hyde: bool = False
     abstain_when_unverified: bool = False
     self_rag_critic: bool = False

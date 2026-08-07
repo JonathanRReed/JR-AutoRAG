@@ -367,6 +367,62 @@ Summary:"""
         """Clear the summary cache."""
         self._cache.clear()
 
+    def enrich_chunks_sync(
+        self,
+        chunks: list[Chunk],
+        document_text: str,
+        filename: str = "",
+        document_summary: str = "",
+    ) -> list[EnrichedChunk]:
+        """Synchronous enrichment using heuristic summaries (no LLM).
+
+        This is the default enrichment path for the ingest pipeline. It adds
+        document title, section header, context window, and a heuristic
+        chunk summary to each chunk. When an LLM provider is available,
+        enrich_chunks() can be called separately for LLM-quality summaries.
+        """
+        document_title = self.extract_document_title(document_text, filename)
+        enriched: list[EnrichedChunk] = []
+
+        for i, chunk in enumerate(chunks):
+            section_header = self.extract_section_header(
+                chunk.text, document_text, chunk.start_char
+            )
+            chunk_summary = ""
+            if self.config.add_chunk_summary:
+                chunk_summary = self._heuristic_summary(chunk.text)
+
+            preceding, following = self.get_context_window(
+                i, chunks, document_text
+            )
+
+            context = EnrichmentContext(
+                document_title=document_title,
+                document_summary=document_summary,
+                section_header=section_header,
+                chunk_summary=chunk_summary,
+                preceding_context=preceding,
+                following_context=following,
+                metadata=chunk.metadata.copy() if chunk.metadata else {},
+            )
+            context.metadata["enriched"] = True
+            context.metadata["section"] = section_header
+
+            enriched_text = self.format_enriched_text(chunk.text, context)
+            content_hash = hashlib.sha256(chunk.text.encode()).hexdigest()
+
+            enriched.append(EnrichedChunk(
+                original_text=chunk.text,
+                enriched_text=enriched_text,
+                context=context,
+                index=i,
+                start_char=chunk.start_char,
+                end_char=chunk.end_char,
+                content_hash=content_hash,
+            ))
+
+        return enriched
+
 
 # Singleton for easy access
 _enricher: ContextualEnricher | None = None
