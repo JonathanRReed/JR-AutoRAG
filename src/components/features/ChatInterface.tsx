@@ -45,13 +45,10 @@ import { TypingAnimation } from "@/components/ui/typing-animation";
 import { useToast } from "@/components/ui/toast";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-// EnterpriseControls removed
 
-import { ArtifactViewer } from "./ArtifactViewer";
 import { PresetSelector } from "./PresetSelector";
 import { ConfidenceIndicator } from "./ConfidenceIndicator";
 import { QueryModeToggle } from "./QueryModeToggle";
-import { CacheEventBadge } from "./CacheEventBadge";
 import type { DocumentOut, PipelineStep, ProviderConfig, QueryResponse, ChatSession, PresetLevel, QueryMode } from "@/types";
 
 interface ProgressData {
@@ -1031,7 +1028,6 @@ export function ChatInterface({
     const [selectedDoc, setSelectedDoc] = useState<DocumentOut | null>(null);
     const [showHistory, setShowHistory] = useState(() => (typeof window === "undefined" ? true : window.innerWidth >= 1024));
     const [showSources, setShowSources] = useState(() => (typeof window === "undefined" ? true : window.innerWidth >= 1280));
-    const [viewingArtifact, setViewingArtifact] = useState<'graph_rag' | 'raptor' | null>(null);
 
     // Persist sources panel when query results are available
     useEffect(() => {
@@ -1787,18 +1783,6 @@ export function ChatInterface({
                     </div>
                 )}
             </div>
-
-            {/* Artifact Detail Modal */}
-            {
-                viewingArtifact && (
-                    <ArtifactViewer
-                        type={viewingArtifact}
-                        onClose={() => setViewingArtifact(null)}
-                        baseUrl={baseUrl}
-                        apiKey={apiKey}
-                    />
-                )
-            }
         </div >
     );
 }
