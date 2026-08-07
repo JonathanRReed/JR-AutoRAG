@@ -4,6 +4,8 @@ This module provides:
 - Pattern-based detection of prompt injection attempts
 - Input sanitization for malicious instructions
 - Policy prompts for generation safety
+- Canary tokens for output integrity verification (OWASP LLM01)
+- Poisoned chunk scanning for knowledge-base poisoning defense (OWASP LLM02)
 - Logging of suspected injection attempts
 """
 
@@ -11,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import re
+import secrets
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -219,6 +222,135 @@ class PromptGuard:
         self._attempt_log.clear()
 
 
+class CanaryTokenManager:
+    """Canary token injection for output integrity verification (OWASP LLM01).
+
+    Injects a unique, random canary token into the system prompt. After
+    generation, verify the token is still present in the output. If it's
+    missing, the output may have been hijacked by prompt injection.
+
+    This is a lightweight defense that adds minimal overhead and catches
+    many prompt injection attacks that attempt to override system instructions.
+    """
+
+    _canary_format = "CANARY-{token}"
+
+    def __init__(self) -> None:
+        self._active_token: str | None = None
+
+    def generate_canary(self) -> str:
+        """Generate a new canary token and return it for prompt injection."""
+        self._active_token = secrets.token_hex(8)
+        return self._canary_format.format(token=self._active_token)
+
+    def inject_into_prompt(self, system_prompt: str) -> str:
+        """Inject a canary token into a system prompt.
+
+        Appends an invisible instruction to preserve the canary token.
+        """
+        canary = self.generate_canary()
+        return f"{system_prompt}\n\n[Internal canary: {canary}. Do not remove or modify this canary.]"
+
+    def verify_output(self, output: str) -> bool:
+        """Verify the canary token is present in the output.
+
+        Returns True if the canary is present (output is trustworthy),
+        False if it's missing (possible injection/hijack).
+        """
+        if self._active_token is None:
+            return True  # No canary active, nothing to verify
+        expected = self._canary_format.format(token=self._active_token)
+        return expected in output
+
+    def clear(self) -> None:
+        """Clear the active canary token."""
+        self._active_token = None
+
+
+class PoisonedChunkScanner:
+    """Detect poisoned chunks in the knowledge base (OWASP LLM02).
+
+    Implements lightweight statistical anomaly detection to flag chunks
+    that may be injected documents designed to manipulate the LLM. Checks:
+
+    1. Embedded instruction patterns (ignore previous, system:, etc.)
+    2. Excessive repetition (sign of adversarial padding)
+    3. Unusual character distribution (encoded payloads)
+    4. Disproportionate special characters vs. natural text
+    """
+
+    # Patterns that suggest embedded instructions in chunks
+    INSTRUCTION_PATTERNS = [
+        re.compile(r"ignore\s+(all\s+)?(previous|above|prior)\s+(instructions?|prompts?)", re.IGNORECASE),
+        re.compile(r"system\s*:\s*", re.IGNORECASE),
+        re.compile(r"you\s+are\s+(now|actually)\s+a", re.IGNORECASE),
+        re.compile(r"disregard\s+(all\s+)?(previous|prior)", re.IGNORECASE),
+        re.compile(r"new\s+instructions?\s*:", re.IGNORECASE),
+        re.compile(r"forget\s+(everything|all\s+previous)", re.IGNORECASE),
+        re.compile(r"act\s+as\s+(if|a)\s+", re.IGNORECASE),
+    ]
+
+    @dataclass
+    class ScanResult:
+        """Result of scanning a single chunk."""
+        chunk_id: str
+        is_suspicious: bool
+        risk_score: float  # 0.0 to 1.0
+        flags: list[str]
+
+    def scan_chunk(self, chunk_text: str, chunk_id: str = "") -> ScanResult:
+        """Scan a single chunk for poisoning indicators."""
+        flags: list[str] = []
+        risk = 0.0
+
+        if not chunk_text or not chunk_text.strip():
+            return self.ScanResult(chunk_id=chunk_id, is_suspicious=False, risk_score=0.0, flags=[])
+
+        text = chunk_text.strip()
+
+        # Check 1: Embedded instruction patterns
+        for pattern in self.INSTRUCTION_PATTERNS:
+            if pattern.search(text):
+                flags.append(f"instruction_pattern: {pattern.pattern[:40]}")
+                risk = max(risk, 0.8)
+
+        # Check 2: Excessive repetition (adversarial padding)
+        words = text.split()
+        if len(words) > 10:
+            unique_words = set(w.lower() for w in words)
+            repetition_ratio = 1.0 - (len(unique_words) / len(words))
+            if repetition_ratio > 0.7:
+                flags.append(f"excessive_repetition: {repetition_ratio:.0%}")
+                risk = max(risk, 0.6)
+
+        # Check 3: Unusual character distribution
+        alpha_count = sum(1 for c in text if c.isalpha())
+        special_count = sum(1 for c in text if not c.isalnum() and not c.isspace())
+        total = len(text)
+        if total > 0:
+            special_ratio = special_count / total
+            alpha_ratio = alpha_count / total
+            if special_ratio > 0.3 and alpha_ratio < 0.4:
+                flags.append(f"unusual_chars: special={special_ratio:.0%}, alpha={alpha_ratio:.0%}")
+                risk = max(risk, 0.5)
+
+        # Check 4: Very short chunks with high information density (possible payload)
+        if len(text) < 50 and any(p.search(text) for p in self.INSTRUCTION_PATTERNS):
+            flags.append("short_payload_with_instructions")
+            risk = max(risk, 0.9)
+
+        return self.ScanResult(
+            chunk_id=chunk_id,
+            is_suspicious=risk >= 0.5,
+            risk_score=risk,
+            flags=flags,
+        )
+
+    def scan_chunks(self, chunks: list[tuple[str, str]]) -> list[ScanResult]:
+        """Scan multiple chunks. Each tuple is (chunk_id, chunk_text)."""
+        return [self.scan_chunk(text, cid) for cid, text in chunks]
+
+
 # ============================================================================
 # Policy Prompts
 # ============================================================================
@@ -317,6 +449,8 @@ def get_policy_prompt(
 
 # Global guard instance
 _guard: PromptGuard | None = None
+_canary_manager: CanaryTokenManager | None = None
+_poison_scanner: PoisonedChunkScanner | None = None
 
 
 def get_prompt_guard() -> PromptGuard:
@@ -325,6 +459,22 @@ def get_prompt_guard() -> PromptGuard:
     if _guard is None:
         _guard = PromptGuard()
     return _guard
+
+
+def get_canary_manager() -> CanaryTokenManager:
+    """Get the global CanaryTokenManager instance."""
+    global _canary_manager
+    if _canary_manager is None:
+        _canary_manager = CanaryTokenManager()
+    return _canary_manager
+
+
+def get_poison_scanner() -> PoisonedChunkScanner:
+    """Get the global PoisonedChunkScanner instance."""
+    global _poison_scanner
+    if _poison_scanner is None:
+        _poison_scanner = PoisonedChunkScanner()
+    return _poison_scanner
 
 
 # ============================================================================

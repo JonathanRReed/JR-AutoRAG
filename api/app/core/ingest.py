@@ -137,6 +137,11 @@ class IngestPipeline:
         meta["content_hash"] = content_hash
 
         chunks = self._chunk(augmented_text)
+        # Scan for poisoned chunks (OWASP LLM02: knowledge base poisoning)
+        poison_flags = self._scan_for_poisoned_chunks(chunks)
+        if poison_flags:
+            meta["poison_warnings"] = str(len(poison_flags))
+            meta["poison_flags"] = "; ".join(poison_flags[:5])
         # Contextual enrichment: add document title, section header, summary,
         # and context window to each chunk (Anthropic Contextual Retrieval).
         # Falls back to simple header prepend if enrichment fails.
@@ -441,6 +446,24 @@ class IngestPipeline:
             return float(metadata.get(key, "0") or 0)
         except ValueError:
             return 0.0
+
+    def _scan_for_poisoned_chunks(self, chunks: list[str]) -> list[str]:
+        """Scan chunks for poisoning indicators (OWASP LLM02).
+
+        Returns a list of warning strings for suspicious chunks.
+        """
+        try:
+            from .prompt_guard import get_poison_scanner
+            scanner = get_poison_scanner()
+            chunk_tuples = [(str(i), text) for i, text in enumerate(chunks)]
+            results = scanner.scan_chunks(chunk_tuples)
+            warnings = []
+            for r in results:
+                if r.is_suspicious:
+                    warnings.append(f"chunk {r.chunk_id}: {', '.join(r.flags)}")
+            return warnings
+        except Exception:
+            return []
 
     def _enrich_chunks(
         self,
