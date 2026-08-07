@@ -65,8 +65,9 @@ body::before {
   display: none;
 }
 
-/* Smooth transitions for theme changes */
-* {
+/* Smooth transitions for theme changes — scoped to avoid perf issues */
+/* Only apply transitions to interactive elements, not all elements */
+button, a, input, textarea, select, [role="tab"], [role="button"] {
   transition-property: background-color, border-color, color, fill, stroke;
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
   transition-duration: 150ms;
@@ -134,15 +135,19 @@ body::before {
   animation: pulse-ring 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
-/* Focus ring improvements */
+/* Focus ring — single consistent style to avoid triple rings */
 *:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 2px;
 }
 
-/* Button hover polish */
-button:not(:disabled):hover {
-  box-shadow: 0 1px 6px rgb(21 21 21 / 50%);
+/* Remove the box-shadow focus from buttons/inputs to avoid double rings.
+   The outline above is the single focus indicator. */
+button:focus-visible,
+input:focus,
+textarea:focus,
+select:focus {
+  box-shadow: none;
 }
 
 /* Status badges */
@@ -226,15 +231,8 @@ button:not(:disabled):hover {
   pointer-events: none;
 }
 
-/* Premium input focus states */
-input:focus,
-textarea:focus,
-select:focus,
-button:focus-visible {
-  box-shadow:
-    0 0 0 2px var(--background),
-    0 0 0 4px color-mix(in srgb, var(--primary) 30%, transparent);
-}
+/* Premium input focus states — removed to avoid triple focus rings.
+   Focus is handled by the single outline in the focus-visible rule above. */
 
 /* Refined button styles */
 button[class*="bg-primary"] {

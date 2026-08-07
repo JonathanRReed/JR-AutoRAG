@@ -1286,20 +1286,43 @@ export function App() {
             </div>
           </div>
 
-          {/* Top Navigation */}
-          <nav className="no-scrollbar flex min-w-0 items-center gap-1 overflow-x-auto rounded-lg bg-muted/30 p-1" role="tablist" aria-label="Main navigation">
+          {/* Top Navigation — ARIA tablist with roving tabindex + arrow keys */}
+          <nav
+            className="no-scrollbar flex min-w-0 items-center gap-1 overflow-x-auto rounded-lg bg-muted/30 p-1"
+            role="tablist"
+            aria-label="Main navigation"
+            onKeyDown={(e) => {
+              if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+                e.preventDefault();
+                const currentIndex = tabs.findIndex(t => t.id === activeTab);
+                const direction = e.key === "ArrowRight" ? 1 : -1;
+                const nextIndex = (currentIndex + direction + tabs.length) % tabs.length;
+                const nextTab = tabs[nextIndex];
+                if (nextTab) {
+                  setActiveTab(nextTab.id);
+                  // Focus the newly selected tab button
+                  requestAnimationFrame(() => {
+                    const btn = document.querySelector<HTMLButtonElement>(`[data-tab-id="${nextTab.id}"]`);
+                    btn?.focus();
+                  });
+                }
+              }
+            }}
+          >
             {tabs.map(tab => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;
               return (
                 <button
                   key={tab.id}
+                  data-tab-id={tab.id}
                   onClick={() => setActiveTab(tab.id)}
-	                  role="tab"
-	                  aria-selected={isActive}
-	                  aria-controls={`tabpanel-${tab.id}`}
-	                  aria-label={tab.label}
-	                  title={tab.label}
+                  role="tab"
+                  aria-selected={isActive}
+                  aria-controls={`tabpanel-${tab.id}`}
+                  aria-label={tab.label}
+                  title={tab.label}
+                  tabIndex={isActive ? 0 : -1}
                   className={`flex shrink-0 items-center gap-2 rounded-md px-2.5 py-1.5 text-sm font-medium transition-all ${isActive
                     ? "bg-primary text-primary-foreground shadow-sm"
                     : "text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -1313,23 +1336,23 @@ export function App() {
           </nav>
 
           <div className="flex min-w-0 items-center justify-end gap-2">
-            {/* API URL */}
+            {/* API URL — visible on all screens, compact on smaller */}
             <form
-              className="hidden 2xl:flex items-center gap-2"
+              className="hidden lg:flex items-center gap-2"
               onSubmit={(event) => {
                 event.preventDefault();
                 void handleTestConnection();
               }}
             >
               <Input
-                className="w-48 text-xs"
+                className="w-40 2xl:w-48 text-xs"
                 value={baseUrl}
                 onChange={e => setBaseUrl(e.target.value)}
                 placeholder="API URL"
                 aria-label="API base URL"
               />
               <Input
-                className="w-40 text-xs"
+                className="hidden 2xl:block w-40 text-xs"
                 value={apiKey}
                 onChange={e => setApiKey(e.target.value)}
                 type="password"
@@ -1373,7 +1396,7 @@ export function App() {
       <main className="flex-1 min-h-0 mx-auto w-full max-w-[1600px]">
         <div className="flex h-full flex-col">
           <div className={`flex-1 bg-background ${activeTab === "query" ? "overflow-hidden p-0" : "overflow-auto p-6"}`}>
-            <div className={`h-full animate-in fade-in slide-in-from-bottom-2 duration-300 ${activeTab !== "home" ? "hidden" : ""}`}>
+            <div id="tabpanel-home" role="tabpanel" aria-labelledby="tab-home" tabIndex={0} className={`h-full animate-in fade-in slide-in-from-bottom-2 duration-300 ${activeTab !== "home" ? "hidden" : ""}`}>
               <div className="mx-auto flex max-w-[1500px] flex-col gap-6">
                 <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
                   <div className="rounded-lg border border-border/60 bg-card p-6 shadow-sm">
@@ -1571,7 +1594,7 @@ export function App() {
               </div>
             </div>
 
-            <div className={`h-full animate-in fade-in slide-in-from-bottom-2 duration-300 ${activeTab !== "config" ? "hidden" : ""}`}>
+            <div id="tabpanel-config" role="tabpanel" aria-labelledby="tab-config" tabIndex={0} className={`h-full animate-in fade-in slide-in-from-bottom-2 duration-300 ${activeTab !== "config" ? "hidden" : ""}`}>
               {/* Configuration Panel */}
               <div className="space-y-6 max-w-[1600px] mx-auto">
                 <div>
@@ -1720,7 +1743,7 @@ export function App() {
               </div>
             </div>
 
-            <div className={`h-full animate-in fade-in slide-in-from-bottom-2 duration-300 ${activeTab !== "documents" ? "hidden" : ""}`}>
+            <div id="tabpanel-documents" role="tabpanel" aria-labelledby="tab-documents" tabIndex={0} className={`h-full animate-in fade-in slide-in-from-bottom-2 duration-300 ${activeTab !== "documents" ? "hidden" : ""}`}>
               {/* Documents Panel */}
               <div className="space-y-6 max-w-[1600px] mx-auto flex flex-col">
                 <div>
@@ -1793,7 +1816,7 @@ export function App() {
                                   <span>- {doc.chunk_count} chunks</span>
                                 </div>
                               </div>
-                              <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
                                 <div className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${doc.metadata?.processing_status === 'ready' ? 'bg-primary/10 text-primary' :
                                   doc.metadata?.processing_status === 'error' ? 'bg-destructive/10 text-destructive' :
                                     'bg-muted text-muted-foreground'
@@ -1820,7 +1843,7 @@ export function App() {
               </div>
             </div>
 
-            <div className={`h-full animate-in fade-in slide-in-from-bottom-2 duration-300 ${activeTab !== "query" ? "hidden" : ""}`}>
+            <div id="tabpanel-query" role="tabpanel" aria-labelledby="tab-query" tabIndex={0} className={`h-full animate-in fade-in slide-in-from-bottom-2 duration-300 ${activeTab !== "query" ? "hidden" : ""}`}>
               {/* Query Interface */}
               <Suspense fallback={<LoadingSpinner message="Loading chat interface..." />}>
                 <ChatInterface
@@ -1863,7 +1886,7 @@ export function App() {
               </Suspense>
             </div>
 
-            <div className={`h-full animate-in fade-in slide-in-from-bottom-2 duration-300 ${activeTab !== "quality" ? "hidden" : ""}`}>
+            <div id="tabpanel-quality" role="tabpanel" aria-labelledby="tab-quality" tabIndex={0} className={`h-full animate-in fade-in slide-in-from-bottom-2 duration-300 ${activeTab !== "quality" ? "hidden" : ""}`}>
               <div className="mx-auto max-w-[1400px]">
                 <Suspense fallback={<LoadingSpinner message="Loading quality cockpit..." />}>
                   <QualityCockpit
@@ -1876,7 +1899,7 @@ export function App() {
               </div>
             </div>
 
-            <div className={`h-full animate-in fade-in slide-in-from-bottom-2 duration-300 ${activeTab !== "metrics" ? "hidden" : ""}`}>
+            <div id="tabpanel-metrics" role="tabpanel" aria-labelledby="tab-metrics" tabIndex={0} className={`h-full animate-in fade-in slide-in-from-bottom-2 duration-300 ${activeTab !== "metrics" ? "hidden" : ""}`}>
               {/* Metrics & Traces */}
               <div className="space-y-6 max-w-5xl mx-auto">
                 <Suspense fallback={<LoadingSpinner message="Loading status panel..." />}>
@@ -1884,7 +1907,12 @@ export function App() {
                 </Suspense>
 
                 <Suspense fallback={<LoadingSpinner message="Loading metrics..." />}>
-                  <MetricsDashboard traces={traces} />
+                  <MetricsDashboard
+                    traces={traces}
+                    cacheStats={cacheStats ?? undefined}
+                    onClearCache={handleClearCache}
+                    isClearingCache={isClearingCache}
+                  />
                 </Suspense>
                 <Suspense fallback={<LoadingSpinner message="Loading traces..." />}>
                   <TraceLog

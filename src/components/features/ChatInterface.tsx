@@ -217,7 +217,7 @@ const HistoryItem = ({
                         <MessageContent content={content} onCitationClick={onCitationClick} />
 
                         {isAssistant && (
-                            <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
                                 <Button
                                     variant="ghost"
                                     size="icon"
@@ -789,7 +789,7 @@ function SourceDetailPanel({ doc, onClose }: { doc: DocumentOut; onClose: () => 
         <div className="absolute inset-0 z-50 flex flex-col bg-background animate-in slide-in-from-right duration-300">
             <div className="flex items-center justify-between p-4 border-b border-border/40 bg-muted/20">
                 <h3 className="text-sm font-semibold truncate flex-1 mr-4">{doc.title}</h3>
-                <Button variant="ghost" size="icon" onClick={onClose} className="h-8 w-8 shrink-0">
+                <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close document preview" className="h-8 w-8 shrink-0">
                     <PanelRightClose className="h-4 w-4" />
                 </Button>
             </div>
@@ -854,9 +854,18 @@ function SourcesList({ sources, highlightedSourceId, onSourceClick }: { sources:
                         key={`${source.id}-${idx}`}
                         id={`source-${source.citation_number ?? idx + 1}`}
                         onClick={() => onSourceClick?.(source)}
+                        onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                onSourceClick?.(source);
+                            }
+                        }}
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`Source ${source.citation_number ?? idx + 1}: ${source.title}`}
                         className={`group flex min-w-0 gap-3 rounded-md border p-3 transition-all duration-500 cursor-pointer ${highlightedSourceId === String(source.citation_number ?? idx + 1)
                             ? "bg-primary/10 border-primary ring-1 ring-primary"
-                            : "bg-card border-border/60 hover:bg-muted/20"
+                            : "bg-card border-border/60 hover:bg-muted/20 focus-within:bg-muted/20"
                             }`}
                     >
                         <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-secondary/40 text-xs font-bold text-foreground">
@@ -1253,9 +1262,18 @@ export function ChatInterface({
                                         key={session.id}
                                         className={`group flex items-center justify-between p-2.5 rounded-lg border transition-all cursor-pointer ${isActive
                                             ? "bg-primary/10 border-primary/30 shadow-sm"
-                                            : "bg-transparent border-transparent hover:bg-muted/50 hover:border-border/40"
+                                            : "bg-transparent border-transparent hover:bg-muted/50 hover:border-border/40 focus-within:bg-muted/50 focus-within:border-border/40"
                                             }`}
                                         onClick={() => onLoadSession?.(session)}
+                                        onKeyDown={(e) => {
+                                            if (e.key === "Enter" || e.key === " ") {
+                                                e.preventDefault();
+                                                onLoadSession?.(session);
+                                            }
+                                        }}
+                                        role="button"
+                                        tabIndex={0}
+                                        aria-label={`Load chat session: ${session.title || session.id}`}
                                     >
                                         <div className="flex items-center gap-3 min-w-0">
                                             <MessageSquare className={`h-4 w-4 shrink-0 ${isActive ? "text-primary" : "text-muted-foreground"}`} />
@@ -1271,7 +1289,7 @@ export function ChatInterface({
                                         <Button
                                             variant="ghost"
                                             size="icon"
-                                            className={`h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-destructive/10 hover:text-destructive ${isActive ? "opacity-100 text-primary/60" : ""}`}
+                                            className={`h-7 w-7 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity hover:bg-destructive/10 hover:text-destructive ${isActive ? "opacity-100 text-primary/60" : ""}`}
                                             onClick={(e) => {
                                                 e.stopPropagation();
                                                 onDeleteSession?.(session.id);
@@ -1291,12 +1309,12 @@ export function ChatInterface({
                     {/* Toggle header */}
                     <div className="absolute top-4 left-4 z-10 transition-opacity duration-300">
                         {!showHistory && (
-                            <Button variant="ghost" size="icon" onClick={() => setShowHistory(true)} className="h-8 w-8 text-muted-foreground hover:text-foreground">
+                            <Button variant="ghost" size="icon" onClick={() => setShowHistory(true)} aria-label="Show chat history sidebar" className="h-8 w-8 text-muted-foreground hover:text-foreground">
                                 <PanelLeftOpen className="h-4 w-4" />
                             </Button>
                         )}
                         {showHistory && (
-                            <Button variant="ghost" size="icon" onClick={() => setShowHistory(false)} className="h-8 w-8 text-muted-foreground hover:text-foreground">
+                            <Button variant="ghost" size="icon" onClick={() => setShowHistory(false)} aria-label="Hide chat history sidebar" className="h-8 w-8 text-muted-foreground hover:text-foreground">
                                 <PanelLeftClose className="h-4 w-4" />
                             </Button>
                         )}
@@ -1519,12 +1537,14 @@ export function ChatInterface({
                                 />
                             ))}
 
-                            {/* Streaming Result bubble */}
+                            {/* Streaming Result bubble — aria-live for screen reader feedback */}
                             {isQuerying && queryResult?.answer && (
-                                <HistoryItem
-                                    role="assistant"
-                                    content={queryResult.answer}
-                                />
+                                <div aria-live="polite" aria-atomic="false">
+                                    <HistoryItem
+                                        role="assistant"
+                                        content={queryResult.answer}
+                                    />
+                                </div>
                             )}
 
                             {!isQuerying && queryResult && !hasSources && (
@@ -1667,7 +1687,7 @@ export function ChatInterface({
                         <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
                             <FileText className="h-3 w-3" /> Sources
                         </h3>
-                        <Button variant="ghost" size="icon" onClick={() => setShowSources(false)} className="h-6 w-6">
+                        <Button variant="ghost" size="icon" onClick={() => setShowSources(false)} aria-label="Hide sources panel" className="h-6 w-6">
                             <PanelRightClose className="h-3 w-3" />
                         </Button>
                     </div>
@@ -1777,7 +1797,7 @@ export function ChatInterface({
                 {/* Right Panel Toggle (Absolute if closed) */}
                 {!showSources && (
                     <div className="absolute top-4 right-4 z-10 hidden xl:block">
-                        <Button variant="ghost" size="icon" onClick={() => setShowSources(true)} className="h-8 w-8 text-muted-foreground hover:text-foreground bg-background/50 backdrop-blur border border-border/20">
+                        <Button variant="ghost" size="icon" onClick={() => setShowSources(true)} aria-label="Show sources panel" className="h-8 w-8 text-muted-foreground hover:text-foreground bg-background/50 backdrop-blur border border-border/20">
                             <PanelRightOpen className="h-4 w-4" />
                         </Button>
                     </div>

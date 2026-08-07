@@ -55,7 +55,12 @@ function Tone({ variant }: { variant?: ToastVariant }) {
 
 function ToastViewport({ toasts, dismiss }: { toasts: ToastItem[]; dismiss: (id: string) => void }) {
   return (
-    <div className="pointer-events-none fixed inset-0 z-9999 flex flex-col items-end gap-3 px-4 py-4 sm:top-4 sm:right-4 sm:left-auto">
+    <div
+      className="pointer-events-none fixed inset-0 z-9999 flex flex-col items-end gap-3 px-4 py-4 sm:top-4 sm:right-4 sm:left-auto"
+      role="status"
+      aria-live="polite"
+      aria-atomic="false"
+    >
       {toasts.map(toast => (
         <div
           key={toast.id}

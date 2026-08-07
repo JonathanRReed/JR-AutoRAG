@@ -58,37 +58,39 @@
   --card-foreground: #000000;
   --popover: #ffffff;
   --popover-foreground: #000000;
-  --primary: #ff5d73;
+  /* Darkened from #ff5d73 to #d92647 for WCAG AA 4.5:1 contrast on white */
+  --primary: #d92647;
   --primary-foreground: #ffffff;
   --secondary: #494949;
   --secondary-foreground: #ffffff;
   --muted: color-mix(in srgb, #7c7a7a 12%, #ffffff);
-  --muted-foreground: #7c7a7a;
-  --accent: color-mix(in srgb, #ff5d73 12%, #ffffff);
+  --muted-foreground: #6b6868;
+  --accent: color-mix(in srgb, #d92647 12%, #ffffff);
   --accent-foreground: #000000;
-  --destructive: #ff5d73;
+  /* Separate destructive from primary for semantic clarity */
+  --destructive: #dc2626;
   --border: color-mix(in srgb, #7c7a7a 36%, #ffffff);
   --input: color-mix(in srgb, #7c7a7a 30%, #ffffff);
-  --ring: #ff5d73;
-  --chart-1: #ff5d73;
+  --ring: #d92647;
+  --chart-1: #d92647;
   --chart-2: #000000;
   --chart-3: #494949;
   --chart-4: #7c7a7a;
   --chart-5: #ffffff;
   --sidebar: #ffffff;
   --sidebar-foreground: #000000;
-  --sidebar-primary: #ff5d73;
+  --sidebar-primary: #d92647;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: color-mix(in srgb, #ff5d73 12%, #ffffff);
+  --sidebar-accent: color-mix(in srgb, #d92647 12%, #ffffff);
   --sidebar-accent-foreground: #000000;
   --sidebar-border: color-mix(in srgb, #7c7a7a 36%, #ffffff);
-  --sidebar-ring: #ff5d73;
-  --warning: #ff5d73;
+  --sidebar-ring: #d92647;
+  --warning: #d92647;
   --warning-foreground: #ffffff;
   --success: #494949;
   --info: #7c7a7a;
   --glass-bg: rgba(255, 255, 255, 0.7);
-  --glass-border: color-mix(in srgb, #ff5d73 16%, transparent);
+  --glass-border: color-mix(in srgb, #d92647 16%, transparent);
 }
 
 .dark {
@@ -98,15 +100,18 @@
   --card-foreground: #ffffff;
   --popover: color-mix(in srgb, #494949 30%, #000000);
   --popover-foreground: #ffffff;
+  /* Keep brand pink in dark mode (passes WCAG on dark background) */
   --primary: #ff5d73;
   --primary-foreground: #ffffff;
   --secondary: #494949;
   --secondary-foreground: #ffffff;
   --muted: color-mix(in srgb, #494949 56%, #000000);
-  --muted-foreground: #7c7a7a;
+  /* Lightened from #7c7a7a for WCAG AA on dark background */
+  --muted-foreground: #a8a5a5;
   --accent: color-mix(in srgb, #ff5d73 18%, #000000);
   --accent-foreground: #ffffff;
-  --destructive: #ff5d73;
+  /* Separate destructive from primary */
+  --destructive: #ef4444;
   --border: color-mix(in srgb, #494949 72%, #000000);
   --input: color-mix(in srgb, #494949 72%, #000000);
   --ring: #ff5d73;
