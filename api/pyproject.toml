@@ -3,6 +3,9 @@ name = "jr-autorag-api"
 version = "0.1.0"
 description = "Local-first FastAPI backend for JR AutoRAG."
 requires-python = ">=3.11,<3.15"
+authors = [
+  { name = "Jonathan R. Reed" },
+]
 dependencies = [
   "fastapi==0.139.2",
   "uvicorn[standard]==0.51.0",
@@ -19,6 +22,11 @@ dependencies = [
   "rank-bm25>=0.2.2",
   "langextract[openai]>=1.1.1",
 ]
+
+[project.urls]
+Homepage = "https://jonathanrreed.com/projects/jr-autorag/"
+Source = "https://github.com/JonathanRReed/JR-AutoRAG"
+Issues = "https://github.com/JonathanRReed/JR-AutoRAG/issues"
 
 [project.optional-dependencies]
 ml = [
