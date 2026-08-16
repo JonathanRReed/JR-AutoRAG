@@ -11,7 +11,7 @@ CONTAINER_MANIFEST_CMD="${JR_EVIDENCE_CONTAINER_MANIFEST_CMD:-bash ./scripts/con
 RESEARCH_CHECK_CMD="${JR_EVIDENCE_RESEARCH_CHECK_CMD:-bash ./scripts/research-architecture-check.sh}"
 SECRET_SCAN_CMD="${JR_EVIDENCE_SECRET_SCAN_CMD:-bash ./scripts/secret-scan.sh}"
 SUPPLY_CHAIN_CMD="${JR_EVIDENCE_SUPPLY_CHAIN_CMD:-bash ./scripts/supply-chain-evidence.sh}"
-RESEARCH_DOC="${JR_EVIDENCE_RESEARCH_DOC:-${ROOT_DIR}/docs/architecture/research-backed-rag-architecture.md}"
+RESEARCH_DOC="${JR_EVIDENCE_RESEARCH_DOC:-${ROOT_DIR}/UPGRADE-2026.md}"
 
 usage() {
   cat <<'EOF'
@@ -22,6 +22,7 @@ Collects a redacted JR AutoRAG install evidence bundle from a running API:
 - install-smoke.txt from bash scripts/install-smoke.test.sh
 - container-manifest.txt from bash scripts/container-manifest-check.sh
 - research-architecture-check.txt from bash scripts/research-architecture-check.sh
+- research-architecture.md copied from the current UPGRADE-2026.md record
 - secret-scan.txt from bash scripts/secret-scan.sh
 - supply-chain.txt plus SBOM and dependency audit artifacts from bash scripts/supply-chain-evidence.sh
 - readyz.json from GET /readyz
@@ -40,6 +41,7 @@ Environment overrides:
   JR_EVIDENCE_INSTALL_SMOKE_CMD
   JR_EVIDENCE_CONTAINER_MANIFEST_CMD
   JR_EVIDENCE_RESEARCH_CHECK_CMD
+  JR_EVIDENCE_RESEARCH_DOC
   JR_EVIDENCE_SECRET_SCAN_CMD
   JR_EVIDENCE_SUPPLY_CHAIN_CMD
 EOF
@@ -95,7 +97,7 @@ metadata_file="${bundle_dir}/http-metadata.jsonl"
 research_file="${bundle_dir}/research-architecture.md"
 
 if [[ ! -s "${RESEARCH_DOC}" ]]; then
-  printf 'Missing research architecture document: %s\n' "${RESEARCH_DOC}" >&2
+  printf 'Missing current architecture record: %s\n' "${RESEARCH_DOC}" >&2
   exit 1
 fi
 cp "${RESEARCH_DOC}" "${research_file}"
