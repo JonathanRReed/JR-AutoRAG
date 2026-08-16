@@ -1,0 +1,21 @@
+cff-version: 1.2.0
+message: "If you use JR AutoRAG, cite the exact version or Git commit you evaluated."
+title: "JR AutoRAG: A Local-First Retrieval Workbench"
+type: software
+authors:
+  - family-names: Reed
+    given-names: "Jonathan R."
+repository-code: "https://github.com/JonathanRReed/JR-AutoRAG"
+url: "https://jonathanrreed.com/projects/jr-autorag/"
+version: 0.1.0
+license: FSL-1.1-MIT
+abstract: >-
+  JR AutoRAG is a local-first workbench for document ingestion, hybrid
+  retrieval, grounded answers, citations, traces, evaluation, security
+  posture, and deployment handoff evidence.
+keywords:
+  - retrieval-augmented generation
+  - local AI
+  - hybrid retrieval
+  - grounded answers
+  - AI security
