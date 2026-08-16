@@ -1,9 +1,19 @@
 {
   "name": "jr-autorag",
   "version": "0.1.0",
+  "description": "Local-first RAG workbench for document ingestion, grounded answers, citations, traces, evaluation, and secure client handoff",
   "license": "SEE LICENSE IN LICENSE",
   "private": true,
   "type": "module",
+  "author": {
+    "name": "Jonathan R. Reed",
+    "url": "https://jonathanrreed.com/about/"
+  },
+  "homepage": "https://jonathanrreed.com/projects/jr-autorag/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/JonathanRReed/JR-AutoRAG.git"
+  },
   "scripts": {
     "dev": "bun --hot src/index.ts",
     "dev:all": "bash ./scripts/dev.sh",
@@ -20,6 +30,8 @@
     "evidence:test": "bash ./scripts/evidence-bundle.test.sh",
     "handoff:gate": "bash ./scripts/client-handoff-gate.sh",
     "handoff:test": "bash ./scripts/client-handoff-gate.test.sh",
+    "audit:shadscan": "bunx @shadscan/cli@0.17.0 --json --no-interactive --no-roast",
+    "audit:shadscan:prompt": "bunx @shadscan/cli@0.17.0 --prompt --no-interactive --no-roast",
     "verify": "bash ./scripts/verify.sh",
     "build": "bash ./scripts/build.sh",
     "typecheck": "tsc --noEmit",
