@@ -2,57 +2,74 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DOC="${ROOT_DIR}/docs/architecture/research-backed-rag-architecture.md"
+DOC="${ROOT_DIR}/UPGRADE-2026.md"
 
 python3 - "${ROOT_DIR}" "${DOC}" <<'PY'
 from __future__ import annotations
 
-import re
 import sys
 from pathlib import Path
 
 root = Path(sys.argv[1])
 doc = Path(sys.argv[2])
+if not doc.is_file():
+    raise SystemExit(f"missing current architecture record: {doc}")
+
 text = doc.read_text(encoding="utf-8")
+required_markers = (
+    "# JR-AutoRAG Upgrade Plan",
+    "Supersedes the original",
+    "### Phase 2: SOTA Retrieval Upgrades",
+    "Late Chunking",
+    "Per-Query Hybrid Weights",
+    "Contextual Enrichment as Default",
+    "### Phase 3: Eval Gates CI Integration",
+    "### Phase 4: Security Hardening",
+    "Canary Token Manager",
+    "Poisoned Chunk Scanner",
+    "### Phase 5: UI/UX P0 Fixes",
+    "## 1. Where the project actually is",
+    "## 2. Remaining work",
+)
+missing_markers = [marker for marker in required_markers if marker not in text]
+if missing_markers:
+    raise SystemExit(
+        f"current architecture record is missing required markers: {missing_markers}"
+    )
 
-required_markers = [
-    "Last verified: 2026-05-12.",
-    "https://arxiv.org/abs/2506.00054",
-    "https://arxiv.org/abs/2501.09136",
-    "https://arxiv.org/abs/2602.03442",
-    "https://arxiv.org/abs/2510.13910",
-    "https://arxiv.org/abs/2510.10114",
-    "https://arxiv.org/abs/2507.09477",
-    "https://arxiv.org/abs/2501.14342",
-    "https://arxiv.org/abs/2603.21654",
-    "https://arxiv.org/abs/2602.09319",
-    "https://arxiv.org/abs/2601.09985",
-    "https://arxiv.org/abs/2505.00105",
-    "https://arxiv.org/abs/2511.13057",
-    "https://arxiv.org/abs/2408.08067",
-    "Agentic hierarchical retrieval interfaces",
-    "Agentic capability benchmarks",
-    "Handoff-gated robustness benchmark",
-    "RAG threat and leakage controls",
-    "Memory-efficient retrieval modes",
-    "Fine-grained evaluation receipts",
-]
+required_files: dict[str, tuple[str, ...]] = {
+    "README.md": (),
+    "SECURITY.md": (),
+    "UPGRADE-2026.md": (),
+    "api/app/core/chunking.py": ("class LateChunker",),
+    "api/app/core/hybrid_retrieval.py": ("class AutoHybridWeights",),
+    "api/app/core/contextual_enrichment.py": ("class ContextualEnricher",),
+    "api/app/core/prompt_guard.py": (
+        "class CanaryTokenManager",
+        "class PoisonedChunkScanner",
+    ),
+    "api/app/core/eval_gates.py": ("class GatedEvaluator",),
+    "api/app/core/ingest.py": (),
+    "api/tests/core/test_sota_retrieval_upgrades.py": (),
+    "api/tests/core/test_security_hardening.py": (),
+    "api/tests/core/test_contextual_enrichment.py": (),
+    "src/frontend.tsx": (),
+    "scripts/evidence-bundle.sh": (),
+    "scripts/research-architecture-check.sh": (),
+}
 
-missing = [marker for marker in required_markers if marker not in text]
-if missing:
-    raise SystemExit(f"research architecture missing required markers: {missing}")
-
-checked_paths: list[str] = []
-for match in re.finditer(r"`([^`]+)`", text):
-    value = match.group(1)
-    if not value.startswith(("api/", "src/", "scripts/", "Public/", "README.md")):
+for relative_path, required_symbols in required_files.items():
+    file_path = root / relative_path
+    if not file_path.is_file():
+        raise SystemExit(f"current architecture references missing path: {relative_path}")
+    if not required_symbols:
         continue
-    checked_paths.append(value)
-    if not (root / value).exists():
-        raise SystemExit(f"research architecture references missing path: {value}")
+    source = file_path.read_text(encoding="utf-8")
+    for symbol in required_symbols:
+        if symbol not in source:
+            raise SystemExit(
+                f"current architecture path {relative_path} is missing symbol: {symbol}"
+            )
 
-if len(checked_paths) < 25:
-    raise SystemExit(f"research architecture path coverage is too thin: {len(checked_paths)}")
-
-print(f"research_architecture=pass checked_paths={len(checked_paths)}")
+print(f"research_architecture=pass checked_paths={len(required_files)}")
 PY
