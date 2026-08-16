@@ -1,6 +1,13 @@
 {
   "name": "jr-autorag",
   "version": "0.1.0",
+  "description": "Local-first RAG workbench for document ingestion, grounded answers, citations, traces, and deployment evidence.",
+  "author": "Jonathan R. Reed",
+  "homepage": "https://jonathanrreed.com/projects/jr-autorag/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/JonathanRReed/JR-AutoRAG.git"
+  },
   "license": "SEE LICENSE IN LICENSE",
   "private": true,
   "type": "module",
