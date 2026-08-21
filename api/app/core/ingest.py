@@ -39,6 +39,7 @@ except ImportError:  # pragma: no cover
     print("WARNING: docx library failed to load")
 
 from ..schemas.config import AppConfig, OCRPolicy, ProviderConfig
+from .archive_safety import validate_docx_archive
 from .audit import AuditAction, AuditEntry, get_audit_log
 from .chunking import Chunk
 from .contextual_enrichment import ContextualEnricher, EnrichmentConfig
@@ -569,6 +570,8 @@ class IngestPipeline:
         ext = self._infer_extension(metadata)
         if not ext:
             ext = self._detect_magic_extension(content)
+        if ext == ".docx":
+            validate_docx_archive(content)
         if ext in {".md", ".markdown"}:
             text = self._extract_markdown(content)
             return text, self._build_extraction_metadata(

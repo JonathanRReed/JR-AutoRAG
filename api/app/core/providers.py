@@ -2,19 +2,23 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
 from ..schemas.config import (
+    DeploymentProfile,
     LocalProviderInfo,
     ProviderConfig,
     ProviderKind,
+    is_client_owned_provider_url,
     is_local_provider_url,
     is_public_provider_url,
 )
@@ -25,6 +29,14 @@ DEFAULT_STREAM_TIMEOUT = 300.0
 DEFAULT_CLOUD_TIMEOUT = 120.0
 
 _shared_async_client: httpx.AsyncClient | None = None
+
+_TRUSTED_CLOUD_SECRET_KEYS = {
+    "https://api.openai.com": "OPENAI_API_KEY",
+    "https://openrouter.ai": "OPENROUTER_API_KEY",
+    "https://ollama.com": "OLLAMA_API_KEY",
+    "https://api.anthropic.com": "ANTHROPIC_API_KEY",
+    "https://generativelanguage.googleapis.com": "GOOGLE_API_KEY",
+}
 
 
 def get_shared_client() -> httpx.AsyncClient:
@@ -86,23 +98,31 @@ def _get_timeout(env_key: str, default: float) -> float:
     return value if value > 0 else default
 
 
+def _normalized_origin(base_url: str) -> str:
+    parsed = urlparse((base_url or "").strip())
+    scheme = parsed.scheme.lower()
+    host = (parsed.hostname or "").lower()
+    if not scheme or not host:
+        return ""
+    port = parsed.port
+    if port is None or (scheme == "https" and port == 443) or (scheme == "http" and port == 80):
+        return f"{scheme}://{host}"
+    return f"{scheme}://{host}:{port}"
+
+
 def _infer_secret_key_name(name: str, base_url: str) -> str:
-    lowered = (name or "").lower()
-    base = (base_url or "").lower()
-    if "openrouter" in lowered or "openrouter" in base:
-        return "OPENROUTER_API_KEY"
-    if "ollama.com" in base or "ollama cloud" in lowered or "ollama_cloud" in lowered:
-        return "OLLAMA_API_KEY"
-    if "lm" in lowered or "studio" in lowered:
-        return "LM_STUDIO_API_KEY"
-    if "openai" in lowered or "api.openai.com" in base:
-        return "OPENAI_API_KEY"
-    if "anthropic" in lowered or "claude" in lowered:
-        return "ANTHROPIC_API_KEY"
-    if "google" in lowered or "gemini" in lowered:
-        return "GOOGLE_API_KEY"
+    origin = _normalized_origin(base_url)
+    trusted_key = _TRUSTED_CLOUD_SECRET_KEYS.get(origin)
+    if trusted_key:
+        return trusted_key
+
     sanitized = "".join(ch if ch.isalnum() else "_" for ch in (name or "PROVIDER").upper())
-    return f"{sanitized}_API_KEY"
+    origin_digest = hashlib.sha256(origin.encode()).hexdigest()[:16].upper()
+    return f"PROVIDER_{sanitized}_{origin_digest}_API_KEY"
+
+
+def _is_trusted_cloud_provider_url(base_url: str) -> bool:
+    return _normalized_origin(base_url) in _TRUSTED_CLOUD_SECRET_KEYS
 
 
 def resolve_provider_api_key(
@@ -518,17 +538,37 @@ class ProviderFactory:
         return None
 
 
-async def discover_models(cfg: ProviderConfig) -> list[str]:
+async def discover_models(
+    cfg: ProviderConfig,
+    deployment_profile: DeploymentProfile | None = None,
+) -> list[str]:
     """Fetch available model names for a provider."""
 
     base = str(cfg.base_url).rstrip("/")
     base_lower = base.lower()
     kind = (cfg.name or "").lower()
-    if "ollama" in kind or "lm" in kind or "studio" in kind:
-        if not is_local_provider_url(base):
+    if deployment_profile == DeploymentProfile.LOCAL_ONLY and not is_local_provider_url(base):
+        raise ProviderError("Local-only mode permits model discovery only from localhost providers.")
+    if (
+        deployment_profile == DeploymentProfile.CLIENT_SAFE
+        and not is_client_owned_provider_url(base)
+    ):
+        raise ProviderError("Client-safe mode permits model discovery only from client-owned providers.")
+
+    ollama_cloud = _normalized_origin(base) == "https://ollama.com"
+    local_provider = "lm" in kind or "studio" in kind or ("ollama" in kind and not ollama_cloud)
+    if local_provider:
+        permitted_local_url = is_local_provider_url(base) or (
+            deployment_profile == DeploymentProfile.CLIENT_SAFE
+            and is_client_owned_provider_url(base)
+        )
+        if not permitted_local_url:
             raise ProviderError("Local provider discovery requires a localhost or loopback URL.")
-    elif not is_public_provider_url(base):
-        raise ProviderError("Cloud provider discovery URL must resolve to a public network address.")
+    else:
+        if not is_public_provider_url(base):
+            raise ProviderError("Cloud provider discovery URL must resolve to a public network address.")
+        if not _is_trusted_cloud_provider_url(base):
+            raise ProviderError("Model discovery is limited to a trusted cloud provider origin.")
     api_key = resolve_provider_api_key(cfg.name, base, cfg.api_key)
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
 

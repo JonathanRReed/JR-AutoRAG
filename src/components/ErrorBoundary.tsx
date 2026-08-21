@@ -28,7 +28,7 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
         this.setState({ errorInfo });
     }
 
-    handleRetry = (): void => {
+    resetErrorBoundary = (): void => {
         this.setState({ hasError: false, error: null, errorInfo: null });
     };
 
@@ -60,8 +60,8 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
                         </pre>
                     )}
                     <div className="flex gap-3">
-                        <Button variant="outline" onClick={this.handleRetry}>
-                            <RefreshCw className="mr-2 h-4 w-4" />
+                        <Button variant="outline" onClick={this.resetErrorBoundary}>
+                            <RefreshCw className="mr-2 h-4 w-4" data-icon="inline-start" />
                             Try Again
                         </Button>
                         <Button onClick={this.handleReload}>

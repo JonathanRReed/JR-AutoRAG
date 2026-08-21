@@ -143,7 +143,11 @@ const MessageContent = ({ content, onCitationClick }: { content: string; onCitat
                     p: ({ children }) => <p className="mb-3 last:mb-0">{processNode(children)}</p>,
                     li: ({ children }) => <li>{processNode(children)}</li>,
                     blockquote: ({ children }) => <blockquote className="border-l-2 border-primary/30 pl-4 py-1 my-3 bg-muted/10 italic">{processNode(children)}</blockquote>,
-                    a: ({ node, ...props }) => <a {...props} className="text-primary hover:underline" target="_blank" rel="noopener noreferrer" />,
+                    a: ({ node: _node, children, ...props }) => (
+                        <a {...props} className="text-primary hover:underline" target="_blank" rel="noopener noreferrer">
+                            {children}
+                        </a>
+                    ),
                     code: ({ node, ...props }) => (
                         <code {...props} className="bg-muted px-1.5 py-0.5 rounded text-xs font-mono font-medium border border-border/40" />
                     ),
@@ -1289,6 +1293,8 @@ export function ChatInterface({
                                         <Button
                                             variant="ghost"
                                             size="icon"
+                                            aria-label={`Delete chat session: ${session.title || session.id}`}
+                                            title={`Delete ${session.title || "chat session"}`}
                                             className={`h-7 w-7 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity hover:bg-destructive/10 hover:text-destructive ${isActive ? "opacity-100 text-primary/60" : ""}`}
                                             onClick={(e) => {
                                                 e.stopPropagation();
@@ -1642,7 +1648,7 @@ export function ChatInterface({
                                             onClick={onCancel}
                                             className="h-8 px-3 text-xs flex items-center gap-1.5 text-destructive hover:text-destructive hover:bg-destructive/10"
                                         >
-                                            <XCircle className="h-3.5 w-3.5" />
+                                            <XCircle className="h-3.5 w-3.5" data-icon="inline-start" />
                                             Cancel
                                         </Button>
                                     )}

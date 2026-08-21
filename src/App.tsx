@@ -122,6 +122,7 @@ export function App() {
   });
   const [status, setStatus] = useState("");
   const [isConnected, setIsConnected] = useState(false); // New state for reliable connection tracking
+  const [isTestingConnection, setIsTestingConnection] = useState(false);
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [documents, setDocuments] = useState<DocumentOut[]>([]);
   const [traces, setTraces] = useState<TraceOut[]>([]);
@@ -598,6 +599,7 @@ export function App() {
   }, [config?.retrieval?.embedding_model, config?.retrieval?.reranker_model]);
 
   const handleTestConnection = async () => {
+    setIsTestingConnection(true);
     setStatus("Testing connection...");
     try {
       await fetchJson("/healthz");
@@ -608,6 +610,8 @@ export function App() {
       setStatus(`Health check failed: ${toMessage(error)}`);
       setIsConnected(false);
       toast({ title: "API health check failed", description: toMessage(error), variant: "error" });
+    } finally {
+      setIsTestingConnection(false);
     }
   };
 
@@ -1346,6 +1350,8 @@ export function App() {
             >
               <Input
                 className="w-40 2xl:w-48 text-xs"
+                type="url"
+                required
                 value={baseUrl}
                 onChange={e => setBaseUrl(e.target.value)}
                 placeholder="API URL"
@@ -1360,8 +1366,8 @@ export function App() {
                 placeholder="X-API-Key (session)"
                 aria-label="API key"
               />
-              <Button size="sm" variant="outline" type="submit">
-                {apiReady ? "Connected" : "Connect"}
+              <Button size="sm" variant="outline" type="submit" disabled={isTestingConnection}>
+                {isTestingConnection ? "Connecting" : apiReady ? "Connected" : "Connect"}
               </Button>
             </form>
 
@@ -1439,21 +1445,21 @@ export function App() {
                     </div>
                     <div className="grid gap-2">
                       <Button onClick={() => setActiveTab("documents")}>
-                        <FileText className="size-4" />
+                        <FileText className="size-4" data-icon="inline-start" />
                         Ingest Client Documents
                       </Button>
                       <div className="grid grid-cols-2 gap-2">
                         <Button variant="outline" onClick={() => setActiveTab("config")}>
-                          <Settings className="size-4" />
+                          <Settings className="size-4" data-icon="inline-start" />
                           Configure
                         </Button>
                         <Button variant="outline" onClick={() => setActiveTab("query")}>
-                          <MessageSquare className="size-4" />
+                          <MessageSquare className="size-4" data-icon="inline-start" />
                           Query
                         </Button>
                       </div>
                       <Button variant="secondary" onClick={() => setActiveTab("quality")}>
-                        <FileCheck2 className="size-4" />
+                        <FileCheck2 className="size-4" data-icon="inline-start" />
                         Prove Readiness
                       </Button>
                     </div>
@@ -1516,21 +1522,21 @@ export function App() {
                             disabled={!apiReady || isExportingInstallReport}
                           >
                             {isExportingInstallReport ? "Exporting" : "Export"}
-                            <ArrowRight className="size-4" />
+                            <ArrowRight className="size-4" data-icon="inline-end" />
                           </Button>
                         </div>
                         <div className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-muted/10 px-3 py-2">
                           <span className="text-muted-foreground">Quality receipts</span>
                           <Button variant="ghost" size="sm" onClick={() => setActiveTab("quality")}>
                             Open
-                            <ArrowRight className="size-4" />
+                            <ArrowRight className="size-4" data-icon="inline-end" />
                           </Button>
                         </div>
                         <div className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-muted/10 px-3 py-2">
                           <span className="text-muted-foreground">Runtime traces</span>
                           <Button variant="ghost" size="sm" onClick={() => setActiveTab("metrics")}>
                             Inspect
-                            <ArrowRight className="size-4" />
+                            <ArrowRight className="size-4" data-icon="inline-end" />
                           </Button>
                         </div>
                       </div>
@@ -1557,7 +1563,7 @@ export function App() {
                         </div>
                         <Button variant="outline" size="sm" onClick={() => setActiveTab("config")}>
                           Open Configuration
-                          <ArrowRight className="size-4" />
+                          <ArrowRight className="size-4" data-icon="inline-end" />
                         </Button>
                       </div>
                     </div>

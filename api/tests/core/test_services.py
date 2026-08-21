@@ -189,3 +189,35 @@ def test_prepare_config_for_storage_handles_no_provider() -> None:
         container.config_store.read.assert_called_once()
         assert result.provider is None
         mock_vault.set.assert_not_called()
+
+
+def test_prepare_config_for_storage_does_not_move_plaintext_fallback_to_changed_host() -> None:
+    container = object.__new__(ServiceContainer)
+    container.config_store = MagicMock()
+    container.config_store.read.return_value = AppConfig(
+        deployment_profile=DeploymentProfile.CLOUD_ACCELERATED,
+        provider=ProviderConfig(
+            name="OpenAI",
+            base_url="https://api.openai.com/v1",
+            api_key="old-key-fallback",
+        ),
+    )
+    new_cfg = AppConfig(
+        deployment_profile=DeploymentProfile.CLOUD_ACCELERATED,
+        provider=ProviderConfig(
+            name="OpenAI",
+            base_url="https://gateway.example/v1",
+            api_key=None,
+        ),
+    )
+
+    with patch("app.core.secrets_vault.get_secrets_vault") as mock_get_vault, \
+         patch("app.state.set_orchestrator"):
+        mock_vault = MagicMock()
+        mock_get_vault.return_value = mock_vault
+
+        result = container.prepare_config_for_storage(new_cfg)
+
+        assert result.provider is not None
+        assert result.provider.api_key is None
+        mock_vault.set.assert_not_called()

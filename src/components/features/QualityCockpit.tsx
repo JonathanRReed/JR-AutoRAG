@@ -250,6 +250,9 @@ export function QualityCockpit({ documents, buildUrl, buildHeaders, onPresetProm
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <span className="sr-only" role="status" aria-live="polite">
+            {isLoading ? "Refreshing quality data" : isRunningExperiment ? "Running quality advisory" : ""}
+          </span>
           <Button variant="outline" size="sm" onClick={refresh} disabled={isLoading}>
             <RefreshCw data-icon="inline-start" />
             {isLoading ? "Refreshing" : "Refresh"}
@@ -262,7 +265,7 @@ export function QualityCockpit({ documents, buildUrl, buildHeaders, onPresetProm
       </div>
 
       {error && (
-        <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+        <div role="alert" className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
           {error}
         </div>
       )}

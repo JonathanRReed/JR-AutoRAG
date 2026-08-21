@@ -110,9 +110,13 @@ def update_config(
 
 
 @router.post("/models", response_model=list[str])
-async def list_models(payload: ProviderConfig):
+async def list_models(
+    payload: ProviderConfig,
+    container: ServiceContainer = Depends(get_container),
+):
     try:
-        models = await discover_models(payload)
+        cfg = container.config_store.read()
+        models = await discover_models(payload, deployment_profile=cfg.deployment_profile)
         return models
     except ProviderError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc

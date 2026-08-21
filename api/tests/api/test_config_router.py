@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import pytest
 from fastapi import HTTPException
 
 from app.core.providers import ProviderError
-from app.routers.config import update_config
+from app.routers import config as config_router
+from app.routers.config import list_models, update_config
 from app.schemas.config import AppConfig, DeploymentProfile, ProviderConfig
 
 
@@ -68,3 +71,19 @@ def test_update_config_persists_after_successful_apply() -> None:
     assert stored == cfg
     assert container.config_store.writes == [cfg]
     assert container.events == ["prepare", "apply"]
+
+
+@pytest.mark.asyncio
+async def test_model_discovery_uses_active_deployment_policy(monkeypatch: pytest.MonkeyPatch) -> None:
+    container = RecordingContainer()
+    discover = AsyncMock(return_value=[])
+    monkeypatch.setattr(config_router, "discover_models", discover)
+    provider = ProviderConfig(name="OpenAI", base_url="https://api.openai.com/v1")
+
+    result = await list_models(provider, container=container)
+
+    assert result == []
+    discover.assert_awaited_once_with(
+        provider,
+        deployment_profile=DeploymentProfile.LOCAL_ONLY,
+    )

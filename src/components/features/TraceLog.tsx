@@ -283,7 +283,7 @@ export function TraceLog({
                                 </>
                             ) : (
                                 <>
-                                    <Sparkles className="mr-2 h-4 w-4" />
+                                    <Sparkles className="mr-2 h-4 w-4" data-icon="inline-start" />
                                     Run Evaluation
                                 </>
                             )}
@@ -354,7 +354,7 @@ export function TraceLog({
                             {traces.length === 0 && (
                                 <div className="mt-4">
                                     <Button variant="secondary" size="sm" onClick={handleEvaluation}>
-                                        <Sparkles className="mr-2 h-4 w-4" />
+                                        <Sparkles className="mr-2 h-4 w-4" data-icon="inline-start" />
                                         Run quick evaluation
                                     </Button>
                                 </div>

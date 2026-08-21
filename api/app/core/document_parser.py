@@ -10,6 +10,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Literal, Protocol
 
+from .archive_safety import validate_docx_archive
+
 ParsedBlockType = Literal["text", "heading", "table", "image", "ocr", "metadata"]
 
 
@@ -163,12 +165,14 @@ class DoclingDocumentParser:
         return True
 
     def parse(self, content: bytes, metadata: dict[str, str] | None = None) -> ParserResult:
+        suffix = _infer_suffix(metadata)
+        if suffix == ".docx":
+            validate_docx_archive(content)
         try:
             from docling.document_converter import DocumentConverter
         except Exception as exc:
             raise RuntimeError(f"Docling is not installed: {exc}") from exc
 
-        suffix = _infer_suffix(metadata)
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / f"input{suffix}"
             path.write_bytes(content)

@@ -292,7 +292,10 @@ export function ProviderCarousel({
           }}
           disabled={!provider.models.length}
         >
-          <SelectTrigger className="h-9 text-sm bg-muted/30">
+          <SelectTrigger
+            className="h-9 text-sm bg-muted/30"
+            aria-label={`${provider.name} ${label}`}
+          >
             <SelectValue placeholder="Select model" />
           </SelectTrigger>
           <SelectContent>
@@ -342,7 +345,7 @@ export function ProviderCarousel({
             </Button>
             <Button variant="outline" size="sm" asChild>
               <a href={downloadUrl} target="_blank" rel="noreferrer">
-                Download <ExternalLink className="ml-1 h-3 w-3" />
+                Download <ExternalLink className="ml-1 h-3 w-3" data-icon="inline-end" />
               </a>
             </Button>
           </div>
@@ -365,6 +368,7 @@ export function ProviderCarousel({
 
         <div className="flex gap-2">
           <Input
+            aria-label={`Search ${provider.name} models`}
             value={filterTerm}
             onChange={e => setFilter(e.target.value)}
             placeholder="Search models"
@@ -393,7 +397,7 @@ export function ProviderCarousel({
           disabled={!provider.models.length || isSavingConfig}
           className="w-full"
         >
-          <CheckCircle2 className="mr-2 h-4 w-4" />
+          <CheckCircle2 className="mr-2 h-4 w-4" data-icon="inline-start" />
           Apply {provider.name}
         </Button>
       </div>
@@ -426,7 +430,9 @@ export function ProviderCarousel({
           <div className="flex gap-2">
             <Input
               id="ollama-cloud-api-key"
+              aria-label="Ollama Cloud API key"
               type="password"
+              required
               value={ollamaCloudApiKey}
               onChange={(e) => setOllamaCloudApiKey(e.target.value)}
               autoComplete="off"
@@ -435,7 +441,7 @@ export function ProviderCarousel({
             />
             <Button variant="outline" size="sm" asChild>
               <a href="https://ollama.com/settings/keys" target="_blank" rel="noreferrer">
-                Get Key <ExternalLink className="ml-1 h-3 w-3" />
+                Get Key <ExternalLink className="ml-1 h-3 w-3" data-icon="inline-end" />
               </a>
             </Button>
           </div>
@@ -455,6 +461,7 @@ export function ProviderCarousel({
           <>
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
               <Input
+                aria-label="Search Ollama Cloud models"
                 value={ollamaCloudFilter}
                 onChange={e => setOllamaCloudFilter(e.target.value)}
                 placeholder="Search cloud models"
@@ -473,7 +480,7 @@ export function ProviderCarousel({
                 value={ollamaCloudSelection.planner}
                 onValueChange={(val) => setOllamaCloudSelection({ planner: val, generator: val, gatherer: val })}
               >
-                <SelectTrigger className="h-9 text-sm bg-muted/30">
+                <SelectTrigger className="h-9 text-sm bg-muted/30" aria-label="Ollama Cloud model for all roles">
                   <SelectValue placeholder="Select a model" />
                 </SelectTrigger>
                 <SelectContent className="max-h-[250px]">
@@ -493,7 +500,7 @@ export function ProviderCarousel({
                   value={ollamaCloudSelection.planner}
                   onValueChange={(val) => setOllamaCloudSelection(prev => ({ ...prev, planner: val }))}
                 >
-                  <SelectTrigger className="h-9 text-sm bg-muted/30">
+                  <SelectTrigger className="h-9 text-sm bg-muted/30" aria-label="Ollama Cloud planner model">
                     <SelectValue placeholder="Select" />
                   </SelectTrigger>
                   <SelectContent className="max-h-[250px]">
@@ -511,7 +518,7 @@ export function ProviderCarousel({
                   value={ollamaCloudSelection.gatherer}
                   onValueChange={(val) => setOllamaCloudSelection(prev => ({ ...prev, gatherer: val }))}
                 >
-                  <SelectTrigger className="h-9 text-sm bg-muted/30">
+                  <SelectTrigger className="h-9 text-sm bg-muted/30" aria-label="Ollama Cloud gatherer model">
                     <SelectValue placeholder="Select" />
                   </SelectTrigger>
                   <SelectContent className="max-h-[250px]">
@@ -529,7 +536,7 @@ export function ProviderCarousel({
                   value={ollamaCloudSelection.generator}
                   onValueChange={(val) => setOllamaCloudSelection(prev => ({ ...prev, generator: val }))}
                 >
-                  <SelectTrigger className="h-9 text-sm bg-muted/30">
+                  <SelectTrigger className="h-9 text-sm bg-muted/30" aria-label="Ollama Cloud generator model">
                     <SelectValue placeholder="Select" />
                   </SelectTrigger>
                   <SelectContent className="max-h-[250px]">
@@ -565,7 +572,7 @@ export function ProviderCarousel({
             disabled={isSavingConfig}
             className="flex-1"
           >
-            <CheckCircle2 className="mr-2 h-4 w-4" />
+            <CheckCircle2 className="mr-2 h-4 w-4" data-icon="inline-start" />
             Apply Ollama Cloud
           </Button>
         </div>
@@ -589,7 +596,9 @@ export function ProviderCarousel({
           <div className="flex gap-2">
             <Input
               id="openrouter-api-key"
+              aria-label="OpenRouter API key"
               type="password"
+              required
               value={openRouterApiKey}
               onChange={(e) => setOpenRouterApiKey(e.target.value)}
               autoComplete="off"
@@ -598,7 +607,7 @@ export function ProviderCarousel({
             />
             <Button variant="outline" size="sm" asChild>
               <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer">
-                Get Key <ExternalLink className="ml-1 h-3 w-3" />
+                Get Key <ExternalLink className="ml-1 h-3 w-3" data-icon="inline-end" />
               </a>
             </Button>
           </div>
@@ -612,6 +621,7 @@ export function ProviderCarousel({
           <>
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
               <Input
+                aria-label="Search OpenRouter models"
                 value={openRouterFilter}
                 onChange={e => setOpenRouterFilter(e.target.value)}
                 placeholder="Search OpenRouter models"
@@ -630,7 +640,7 @@ export function ProviderCarousel({
                 value={openRouterSelection.planner}
                 onValueChange={(val) => setOpenRouterSelection({ planner: val, generator: val, gatherer: val })}
               >
-                <SelectTrigger className="h-9 text-sm bg-muted/30">
+                <SelectTrigger className="h-9 text-sm bg-muted/30" aria-label="OpenRouter model for all roles">
                   <SelectValue placeholder="Select a model" />
                 </SelectTrigger>
                 <SelectContent className="max-h-[250px]">
@@ -650,7 +660,7 @@ export function ProviderCarousel({
                   value={openRouterSelection.planner}
                   onValueChange={(val) => setOpenRouterSelection(prev => ({ ...prev, planner: val }))}
                 >
-                  <SelectTrigger className="h-9 text-sm bg-muted/30">
+                  <SelectTrigger className="h-9 text-sm bg-muted/30" aria-label="OpenRouter planner model">
                     <SelectValue placeholder="Select" />
                   </SelectTrigger>
                   <SelectContent className="max-h-[250px]">
@@ -668,7 +678,7 @@ export function ProviderCarousel({
                   value={openRouterSelection.gatherer}
                   onValueChange={(val) => setOpenRouterSelection(prev => ({ ...prev, gatherer: val }))}
                 >
-                  <SelectTrigger className="h-9 text-sm bg-muted/30">
+                  <SelectTrigger className="h-9 text-sm bg-muted/30" aria-label="OpenRouter gatherer model">
                     <SelectValue placeholder="Select" />
                   </SelectTrigger>
                   <SelectContent className="max-h-[250px]">
@@ -686,7 +696,7 @@ export function ProviderCarousel({
                   value={openRouterSelection.generator}
                   onValueChange={(val) => setOpenRouterSelection(prev => ({ ...prev, generator: val }))}
                 >
-                  <SelectTrigger className="h-9 text-sm bg-muted/30">
+                  <SelectTrigger className="h-9 text-sm bg-muted/30" aria-label="OpenRouter generator model">
                     <SelectValue placeholder="Select" />
                   </SelectTrigger>
                   <SelectContent className="max-h-[250px]">
@@ -720,7 +730,7 @@ export function ProviderCarousel({
             disabled={!openRouterSelection.planner || isSavingConfig}
             className="flex-1"
           >
-            <CheckCircle2 className="mr-2 h-4 w-4" />
+            <CheckCircle2 className="mr-2 h-4 w-4" data-icon="inline-start" />
             Apply OpenRouter
           </Button>
         </div>
@@ -733,15 +743,26 @@ export function ProviderCarousel({
       {/* Provider Carousel */}
       <Card>
         <div className="flex items-center justify-between border-b border-border/50 px-4 py-3">
-          <Button variant="ghost" size="icon" onClick={goPrev} className="h-8 w-8">
+          <Button
+            variant="ghost"
+            size="icon"
+            type="button"
+            onClick={goPrev}
+            className="h-8 w-8"
+            aria-label="Show previous provider"
+            title="Previous provider"
+          >
             <ChevronLeft className="h-4 w-4" />
           </Button>
           
-          <div className="flex gap-1">
+          <div className="flex gap-1" role="tablist" aria-label="AI providers">
             {tabs.map((tab) => (
               <button
                 key={tab.id}
+                type="button"
                 onClick={() => setActiveTab(tab.id)}
+                role="tab"
+                aria-selected={activeTab === tab.id}
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                   activeTab === tab.id
                     ? "bg-primary text-primary-foreground"
@@ -754,7 +775,15 @@ export function ProviderCarousel({
             ))}
           </div>
           
-          <Button variant="ghost" size="icon" onClick={goNext} className="h-8 w-8">
+          <Button
+            variant="ghost"
+            size="icon"
+            type="button"
+            onClick={goNext}
+            className="h-8 w-8"
+            aria-label="Show next provider"
+            title="Next provider"
+          >
             <ChevronRight className="h-4 w-4" />
           </Button>
         </div>

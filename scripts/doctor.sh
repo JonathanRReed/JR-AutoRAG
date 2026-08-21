@@ -102,16 +102,16 @@ bun_version() {
 
 check_bun() {
   if ! command -v bun >/dev/null 2>&1; then
-    add_check "bun" "fail" "Bun is not installed" "Install Bun 1.3 or newer, then run bun install."
+    add_check "bun" "fail" "Bun is not installed" "Install Bun 1.4 or newer, then run bun install."
     return
   fi
   local version
   version="$(bun_version || true)"
   version="${version:-unknown}"
-  if version_at_least "${version}" "1.3.0"; then
+  if version_at_least "${version}" "1.4.0"; then
     add_check "bun" "pass" "Bun ${version} is available" "$(command -v bun)"
   else
-    add_check "bun" "warn" "Bun ${version} is older than the recommended 1.3.0" "Upgrade Bun before production installs."
+    add_check "bun" "warn" "Bun ${version} is older than the recommended 1.4.0" "Upgrade Bun before production installs."
   fi
 }
 

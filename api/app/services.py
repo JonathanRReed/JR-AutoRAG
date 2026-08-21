@@ -159,7 +159,16 @@ class ServiceContainer:
                 return None
             key_name = _infer_secret_key_name(provider.name, str(provider.base_url))
             candidate = (provider.api_key or "").strip()
-            fallback = (existing_provider.api_key or "").strip() if existing_provider else ""
+            existing_key_name = (
+                _infer_secret_key_name(existing_provider.name, str(existing_provider.base_url))
+                if existing_provider
+                else None
+            )
+            fallback = (
+                (existing_provider.api_key or "").strip()
+                if existing_provider and existing_key_name == key_name
+                else ""
+            )
 
             if candidate:
                 if store_secret(key_name, candidate):

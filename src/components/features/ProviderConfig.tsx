@@ -113,9 +113,9 @@ export function ProviderConfig({
           {/* Profiles Sidebar */}
           <div className="space-y-4 rounded-lg border border-border/60 bg-muted/10 p-4">
             <div className="space-y-2">
-              <Label>Active Profile</Label>
+              <Label htmlFor="active-provider-profile">Active Profile</Label>
               <Select value={selectedProfile} onValueChange={handleSelectProfile}>
-                <SelectTrigger>
+                <SelectTrigger id="active-provider-profile">
                   <SelectValue placeholder="Choose profile" />
                 </SelectTrigger>
                 <SelectContent>

@@ -580,7 +580,10 @@ export function AdvancedRAGSettings({
                                             value={retrieval?.[feature.id as keyof RetrievalDefaults] ? "on" : "off"}
                                             onValueChange={(value) => updateRetrieval(feature.id as keyof RetrievalDefaults, value === "on")}
                                         >
-                                            <SelectTrigger className="h-8 text-xs">
+                                            <SelectTrigger
+                                                className="h-8 text-xs"
+                                                aria-label={`${feature.label} setting`}
+                                            >
                                                 <SelectValue placeholder="Select mode" />
                                             </SelectTrigger>
                                             <SelectContent>

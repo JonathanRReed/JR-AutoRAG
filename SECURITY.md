@@ -384,4 +384,4 @@ Before deploying to production:
 
 If you discover a security vulnerability, please report it privately before public disclosure.
 
-Contact: [Add your security contact here]
+Contact: contact@helloworldfirm.com

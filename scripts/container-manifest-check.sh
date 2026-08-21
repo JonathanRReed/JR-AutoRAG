@@ -24,9 +24,21 @@ def read(path: str) -> str:
 api_dockerfile = read("api/Dockerfile")
 web_dockerfile = read("Dockerfile.web")
 compose = read("docker-compose.yml")
+workflow = read(".github/workflows/ci.yml")
 dockerignore = read(".dockerignore")
 api_dockerignore = read("api/.dockerignore")
 json.loads(read("package.json"))
+
+for action in re.findall(r"uses:\s*([^\s#]+)", workflow):
+    if action.startswith("./"):
+        continue
+    if not re.fullmatch(r"[^@\s]+@[0-9a-f]{40}", action):
+        raise SystemExit(f"workflow action is not pinned to a full commit SHA: {action}")
+
+image_references = re.findall(r"(?:^FROM\s+|COPY\s+--from=)([^\s]+)", api_dockerfile + "\n" + web_dockerfile, re.MULTILINE)
+for image in image_references:
+    if not re.search(r"@sha256:[0-9a-f]{64}$", image):
+        raise SystemExit(f"container image is not pinned to a sha256 digest: {image}")
 
 required_api_patterns = {
     "uv binary image": r"COPY\s+--from=ghcr\.io/astral-sh/uv:[^\s]+\s+/uv\s+/uvx\s+/bin/",

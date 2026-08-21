@@ -50,7 +50,7 @@ human_output="$(JR_DOCTOR_SKIP_PROVIDERS=1 bash "${ROOT_DIR}/scripts/doctor.sh")
 
 lifecyle_json_file="${TMP_DIR}/doctor-lifecycle.json"
 JR_DOCTOR_SKIP_PROVIDERS=1 \
-  npm_config_user_agent="bun/1.3.13 npm/? node/v24.3.0 darwin arm64" \
+  npm_config_user_agent="bun/1.4.0 npm/? node/v26.0.0 darwin arm64" \
   npm_command="run-script" \
   bash "${ROOT_DIR}/scripts/doctor.sh" --json > "${lifecyle_json_file}"
 python3 - "${lifecyle_json_file}" <<'PY'

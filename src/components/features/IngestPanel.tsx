@@ -291,6 +291,7 @@ export function IngestPanel({
                     <div className="mt-6">
                         <input
                             type="file"
+                            aria-label="Upload documents"
                             accept=".pdf,.doc,.docx,.txt,.md,.markdown"
                             multiple
                             ref={fileInputRef}

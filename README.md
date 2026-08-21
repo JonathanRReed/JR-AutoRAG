@@ -29,9 +29,9 @@ The product is built for two use cases:
 
 ## Requirements
 
-- Bun 1.3 or newer.
+- Bun 1.4 or newer.
 - Python 3.11 or newer.
-- uv 0.11 or newer for Python dependency sync and locking.
+- uv 0.12 or newer for Python dependency sync and locking.
 - Optional local LLM runtime: Ollama on `http://localhost:11434` or LM Studio on `http://localhost:1234`.
 - Optional local ML extras for Docling parsing and local dense embedding models are installed by `bun run api:sync`.
 - Optional OCR tooling for scanned PDFs:

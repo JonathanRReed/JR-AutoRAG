@@ -16,7 +16,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.security import APIKeyHeader
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
-from starlette.types import ASGIApp
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from .audit import get_audit_log
 from .auth import get_auth
@@ -111,6 +111,10 @@ def _resolve_required_scope(path: str, method: str) -> str | None:
     """Resolve required scope based on request path and method."""
     read_methods = {"GET", "HEAD", "OPTIONS"}
     method = method.upper()
+    if path.startswith("/monitoring/traces") or path.startswith("/api/traces"):
+        return "admin"
+    if path in {"/query/traces", "/query/cancel"}:
+        return "admin"
     if path.startswith("/documents"):
         return "read" if method in read_methods else "write"
     if path == "/install/report":
@@ -308,24 +312,97 @@ class ExposedDocsBlockerMiddleware(BaseHTTPMiddleware):
 # Request Size Limit Middleware
 # =============================================================================
 
-class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
-    """Middleware that enforces request body size limits."""
+class RequestSizeLimitMiddleware:
+    """Enforce the body limit against declared and actually received bytes."""
 
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        content_length = request.headers.get("content-length")
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
 
-        if content_length:
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or scope.get("method", "GET").upper() not in {
+            "POST",
+            "PUT",
+            "PATCH",
+            "DELETE",
+        }:
+            await self.app(scope, receive, send)
+            return
+
+        headers = {key.lower(): value for key, value in scope.get("headers", [])}
+        declared_length = headers.get(b"content-length")
+        if declared_length is not None:
             try:
-                size = int(content_length)
-                if size > MAX_REQUEST_SIZE:
-                    return Response(
-                        content=f"Request too large. Maximum size is {MAX_REQUEST_SIZE // (1024*1024)}MB.",
-                        status_code=413,
-                    )
+                declared_size = int(declared_length)
             except ValueError:
-                pass
+                await Response(content="Invalid Content-Length header.", status_code=400)(scope, receive, send)
+                return
+            if declared_size < 0:
+                await Response(content="Invalid Content-Length header.", status_code=400)(scope, receive, send)
+                return
+            if declared_size > MAX_REQUEST_SIZE:
+                await self._reject(scope, receive, send)
+                return
 
-        return await call_next(request)
+        buffered: list[Message] = []
+        received_size = 0
+        while True:
+            message = await receive()
+            buffered.append(message)
+            if message["type"] == "http.disconnect":
+                break
+            if message["type"] != "http.request":
+                continue
+            received_size += len(message.get("body", b""))
+            if received_size > MAX_REQUEST_SIZE:
+                await self._reject(scope, receive, send)
+                return
+            if not message.get("more_body", False):
+                break
+
+        async def replay_receive() -> Message:
+            if buffered:
+                return buffered.pop(0)
+            return await receive()
+
+        await self.app(scope, replay_receive, send)
+
+    @staticmethod
+    async def _reject(scope: Scope, receive: Receive, send: Send) -> None:
+        maximum_megabytes = MAX_REQUEST_SIZE // (1024 * 1024)
+        await Response(
+            content=f"Request too large. Maximum size is {maximum_megabytes}MB.",
+            status_code=413,
+        )(scope, receive, send)
+
+
+class UnsafeOriginGuardMiddleware:
+    """Reject browser-initiated state changes from origins outside the CORS allowlist."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or scope.get("method", "GET").upper() not in {
+            "POST",
+            "PUT",
+            "PATCH",
+            "DELETE",
+        }:
+            await self.app(scope, receive, send)
+            return
+
+        headers = {key.lower(): value for key, value in scope.get("headers", [])}
+        raw_origin = headers.get(b"origin")
+        if raw_origin is not None:
+            origin = raw_origin.decode("latin-1").strip()
+            if origin not in get_allowed_origins():
+                await JSONResponse(
+                    {"detail": "Cross-origin state-changing request is not allowed."},
+                    status_code=403,
+                )(scope, receive, send)
+                return
+
+        await self.app(scope, receive, send)
 
 
 # =============================================================================
@@ -400,6 +477,7 @@ def configure_security(app: FastAPI, *, strict: bool = False) -> None:
     app.add_middleware(RequestSizeLimitMiddleware)
     app.add_middleware(RateLimitMiddleware)
     app.add_middleware(ExposedDocsBlockerMiddleware)
+    app.add_middleware(UnsafeOriginGuardMiddleware)
 
     # Log configuration
     auth = get_auth()
@@ -418,6 +496,7 @@ __all__ = [
     "RateLimitMiddleware",
     "ExposedDocsBlockerMiddleware",
     "RequestSizeLimitMiddleware",
+    "UnsafeOriginGuardMiddleware",
     "TimeoutMiddleware",
     "SecurityHeadersMiddleware",
     "configure_security",
