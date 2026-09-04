@@ -11,7 +11,7 @@ Runs entirely in-process with numpy for fast Hamming distance computation.
 
 from __future__ import annotations
 
-import pickle
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -74,6 +74,7 @@ class MilvusConfig:
 @dataclass
 class MilvusChunk:
     """A chunk to be stored in the binary vector store."""
+
     doc_id: str
     chunk_id: str
     source: str
@@ -86,6 +87,7 @@ class MilvusChunk:
 @dataclass
 class MilvusSearchResult:
     """Result from binary vector search."""
+
     id: int
     doc_id: str
     chunk_id: str
@@ -103,6 +105,7 @@ class MilvusSearchResult:
 @dataclass
 class IndexStats:
     """Statistics about the binary vector index."""
+
     count: int
     index_type: str
     metric: str
@@ -116,6 +119,7 @@ class IndexStats:
 @dataclass
 class _StoredChunk:
     """Internal representation of a stored chunk."""
+
     id: int
     doc_id: str
     chunk_id: str
@@ -255,7 +259,9 @@ class MilvusVectorStore:
             elif chunk.embedding is not None:
                 bq_vector = float32_to_binary(chunk.embedding, self._bq_config)
             else:
-                raise ValueError(f"Chunk {chunk.chunk_id} has no embedding or bq_vector")
+                raise ValueError(
+                    f"Chunk {chunk.chunk_id} has no embedding or bq_vector"
+                )
 
             stored = _StoredChunk(
                 id=self._next_id,
@@ -291,7 +297,7 @@ class MilvusVectorStore:
         all_ids = []
 
         for i in range(0, len(chunks), batch_size):
-            batch = chunks[i:i + batch_size]
+            batch = chunks[i : i + batch_size]
             ids = self.insert(batch)
             all_ids.extend(ids)
             print(f"Inserted batch {i // batch_size + 1}: {len(ids)} chunks")
@@ -301,7 +307,9 @@ class MilvusVectorStore:
 
         return all_ids
 
-    def _hamming_distance_batch(self, query: np.ndarray, vectors: np.ndarray) -> np.ndarray:
+    def _hamming_distance_batch(
+        self, query: np.ndarray, vectors: np.ndarray
+    ) -> np.ndarray:
         """Compute Hamming distance between query and all vectors.
 
         Args:
@@ -316,12 +324,11 @@ class MilvusVectorStore:
 
         # Count set bits using lookup table
         # This is faster than np.unpackbits for large arrays
-        lookup = np.array([bin(i).count('1') for i in range(256)], dtype=np.uint8)
+        lookup = np.array([bin(i).count("1") for i in range(256)], dtype=np.uint8)
         bit_counts = lookup[xor]
 
         # Sum across bytes to get total Hamming distance
         return bit_counts.sum(axis=1)
-
 
     def _document_filter_indices(
         self,
@@ -331,14 +338,14 @@ class MilvusVectorStore:
         """Return chunk indices matching the supported document filter."""
         if document_ids:
             allowed_ids = set(document_ids)
-        elif filter_expr and 'doc_id ==' in filter_expr:
-            allowed_ids = {filter_expr.split('==')[1].strip().strip('"\'')}
+        elif filter_expr and "doc_id ==" in filter_expr:
+            allowed_ids = {filter_expr.split("==")[1].strip().strip("\"'")}
         else:
             return np.arange(len(self._chunks))
 
-        return np.array([
-            i for i, chunk in enumerate(self._chunks) if chunk.doc_id in allowed_ids
-        ])
+        return np.array(
+            [i for i, chunk in enumerate(self._chunks) if chunk.doc_id in allowed_ids]
+        )
 
     def search(
         self,
@@ -375,7 +382,9 @@ class MilvusVectorStore:
         # Quantize query embedding and compute Hamming distances only for the scoped vectors.
         query_bq = float32_to_binary(query_embedding, self._bq_config)
         query_arr = np.frombuffer(query_bq, dtype=np.uint8)
-        distances = self._hamming_distance_batch(query_arr, self._vectors[valid_indices])
+        distances = self._hamming_distance_batch(
+            query_arr, self._vectors[valid_indices]
+        )
 
         # Get top-k indices
         if len(distances) <= top_k:
@@ -390,15 +399,17 @@ class MilvusVectorStore:
         for idx in sorted_indices[:top_k]:
             chunk_idx = valid_indices[idx]
             chunk = self._chunks[chunk_idx]
-            results.append(MilvusSearchResult(
-                id=chunk.id,
-                doc_id=chunk.doc_id,
-                chunk_id=chunk.chunk_id,
-                source=chunk.source,
-                text=chunk.text,
-                metadata=chunk.metadata,
-                distance=float(distances[idx]),
-            ))
+            results.append(
+                MilvusSearchResult(
+                    id=chunk.id,
+                    doc_id=chunk.doc_id,
+                    chunk_id=chunk.chunk_id,
+                    source=chunk.source,
+                    text=chunk.text,
+                    metadata=chunk.metadata,
+                    distance=float(distances[idx]),
+                )
+            )
 
         return results
 
@@ -426,7 +437,9 @@ class MilvusVectorStore:
             return []
 
         query_arr = np.frombuffer(query_bq, dtype=np.uint8)
-        distances = self._hamming_distance_batch(query_arr, self._vectors[valid_indices])
+        distances = self._hamming_distance_batch(
+            query_arr, self._vectors[valid_indices]
+        )
 
         if len(distances) <= top_k:
             sorted_indices = np.argsort(distances)
@@ -438,15 +451,17 @@ class MilvusVectorStore:
         for idx in sorted_indices[:top_k]:
             chunk_idx = valid_indices[idx]
             chunk = self._chunks[chunk_idx]
-            results.append(MilvusSearchResult(
-                id=chunk.id,
-                doc_id=chunk.doc_id,
-                chunk_id=chunk.chunk_id,
-                source=chunk.source,
-                text=chunk.text,
-                metadata=chunk.metadata,
-                distance=float(distances[idx]),
-            ))
+            results.append(
+                MilvusSearchResult(
+                    id=chunk.id,
+                    doc_id=chunk.doc_id,
+                    chunk_id=chunk.chunk_id,
+                    source=chunk.source,
+                    text=chunk.text,
+                    metadata=chunk.metadata,
+                    distance=float(distances[idx]),
+                )
+            )
 
         return results
 
@@ -505,7 +520,11 @@ class MilvusVectorStore:
                 f"Query dimension {query_dim} does not match index dimension {self._embedding_dim}"
             )
 
-        if embedding_version and self._embedding_version and embedding_version != self._embedding_version:
+        if (
+            embedding_version
+            and self._embedding_version
+            and embedding_version != self._embedding_version
+        ):
             raise ValueError(
                 f"Query embedding version '{embedding_version}' does not match "
                 f"index version '{self._embedding_version}'"
@@ -521,8 +540,21 @@ class MilvusVectorStore:
         path = Path(self._config.persist_path)
         path.parent.mkdir(parents=True, exist_ok=True)
 
+        serialized_chunks = [
+            {
+                "id": c.id,
+                "doc_id": c.doc_id,
+                "chunk_id": c.chunk_id,
+                "source": c.source,
+                "text": c.text,
+                "metadata": c.metadata,
+                "bq_vector": c.bq_vector.hex(),
+            }
+            for c in self._chunks
+        ]
+
         data = {
-            "chunks": self._chunks,
+            "chunks": serialized_chunks,
             "next_id": self._next_id,
             "embedding_dim": self._embedding_dim,
             "embedding_version": self._embedding_version,
@@ -530,8 +562,8 @@ class MilvusVectorStore:
             "bq_config": self._bq_config.to_dict(),
         }
 
-        with open(path, "wb") as f:
-            pickle.dump(data, f)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
 
         print(f"Saved {len(self._chunks)} chunks to {path}")
 
@@ -545,11 +577,30 @@ class MilvusVectorStore:
             return False
 
         try:
-            with open(path, "rb") as f:
-                data = pickle.load(f)
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
 
-            self._chunks = data["chunks"]
-            self._next_id = data["next_id"]
+            raw_chunks = data.get("chunks", [])
+            self._chunks = []
+            for item in raw_chunks:
+                bq_vec = (
+                    bytes.fromhex(item["bq_vector"])
+                    if isinstance(item["bq_vector"], str)
+                    else item["bq_vector"]
+                )
+                self._chunks.append(
+                    _StoredChunk(
+                        id=item["id"],
+                        doc_id=item["doc_id"],
+                        chunk_id=item["chunk_id"],
+                        source=item["source"],
+                        text=item["text"],
+                        metadata=item.get("metadata", {}),
+                        bq_vector=bq_vec,
+                    )
+                )
+
+            self._next_id = data.get("next_id", 0)
             self._embedding_version = data.get("embedding_version", "")
             self._quantization_version = data.get("quantization_version", "")
             self._vectors_dirty = True
