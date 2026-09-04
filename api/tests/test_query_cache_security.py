@@ -21,22 +21,28 @@ def test_disk_query_cache_varies_by_scope_key(tmp_path):
             scope_key="secret-doc-scope",
         )
 
-        assert cache.get(
-            "what IS the launch code?",
-            corpus_version="v1",
-            retrieval_mode=1,
-            preset_id="balanced",
-            model_ids={"generator": "test-model"},
-            scope_key="public-doc-scope",
-        ) is None
-        assert cache.get(
-            "what IS the launch code?",
-            corpus_version="v1",
-            retrieval_mode=1,
-            preset_id="balanced",
-            model_ids={"generator": "test-model"},
-            scope_key="secret-doc-scope",
-        )["answer"] == "secret"
+        assert (
+            cache.get(
+                "what IS the launch code?",
+                corpus_version="v1",
+                retrieval_mode=1,
+                preset_id="balanced",
+                model_ids={"generator": "test-model"},
+                scope_key="public-doc-scope",
+            )
+            is None
+        )
+        assert (
+            cache.get(
+                "what IS the launch code?",
+                corpus_version="v1",
+                retrieval_mode=1,
+                preset_id="balanced",
+                model_ids={"generator": "test-model"},
+                scope_key="secret-doc-scope",
+            )["answer"]
+            == "secret"
+        )
     finally:
         cache.close()
 
@@ -45,9 +51,15 @@ def test_orchestrator_cache_scope_includes_request_context():
     """Document filters and private chat history must change full-query cache scope."""
     orchestrator = Orchestrator.__new__(Orchestrator)
 
-    base_scope = orchestrator._query_cache_scope(document_ids=["doc-a"], cache_scope="user-a")
-    same_scope = orchestrator._query_cache_scope(document_ids=["doc-a"], cache_scope="user-a")
-    other_doc_scope = orchestrator._query_cache_scope(document_ids=["doc-b"], cache_scope="user-a")
+    base_scope = orchestrator._query_cache_scope(
+        document_ids=["doc-a"], cache_scope="user-a"
+    )
+    same_scope = orchestrator._query_cache_scope(
+        document_ids=["doc-a"], cache_scope="user-a"
+    )
+    other_doc_scope = orchestrator._query_cache_scope(
+        document_ids=["doc-b"], cache_scope="user-a"
+    )
     history_scope = orchestrator._query_cache_scope(
         document_ids=["doc-a"],
         history=[{"role": "user", "content": "Private project is Orchid"}],
@@ -78,7 +90,9 @@ def test_orchestrator_cache_scope_includes_request_context():
     assert orchestrator._query_cache_scope() is None
 
 
-def test_document_mutation_invalidates_in_memory_and_disk_query_caches(tmp_path, monkeypatch):
+def test_document_mutation_invalidates_in_memory_and_disk_query_caches(
+    tmp_path, monkeypatch
+):
     """Document delete handlers must drop cached answers that may contain deleted text."""
     from app.core.cache import get_cache_manager
     from app.routers import documents
@@ -91,14 +105,20 @@ def test_document_mutation_invalidates_in_memory_and_disk_query_caches(tmp_path,
     try:
         memory_cache.set(
             "What is the launch code?",
-            {"answer": "SECRET-ALPHA-12345", "chunks": [{"snippet": "SECRET-ALPHA-12345"}]},
+            {
+                "answer": "SECRET-ALPHA-12345",
+                "chunks": [{"snippet": "SECRET-ALPHA-12345"}],
+            },
             config_hash="cfg",
             corpus_version="v1",
             retrieval_mode=1,
         )
         disk_cache.set(
             "What is the launch code?",
-            {"answer": "SECRET-ALPHA-12345", "chunks": [{"snippet": "SECRET-ALPHA-12345"}]},
+            {
+                "answer": "SECRET-ALPHA-12345",
+                "chunks": [{"snippet": "SECRET-ALPHA-12345"}],
+            },
             corpus_version="v1",
             retrieval_mode=1,
             preset_id="balanced",
@@ -106,37 +126,82 @@ def test_document_mutation_invalidates_in_memory_and_disk_query_caches(tmp_path,
             scope_key="scope",
         )
 
-        assert memory_cache.get(
-            "What is the launch code?",
-            config_hash="cfg",
-            corpus_version="v1",
-            retrieval_mode=1,
-        ) is not None
-        assert disk_cache.get(
-            "What is the launch code?",
-            corpus_version="v1",
-            retrieval_mode=1,
-            preset_id="balanced",
-            model_ids={"generator": "test-model"},
-            scope_key="scope",
-        ) is not None
+        assert (
+            memory_cache.get(
+                "What is the launch code?",
+                config_hash="cfg",
+                corpus_version="v1",
+                retrieval_mode=1,
+            )
+            is not None
+        )
+        assert (
+            disk_cache.get(
+                "What is the launch code?",
+                corpus_version="v1",
+                retrieval_mode=1,
+                preset_id="balanced",
+                model_ids={"generator": "test-model"},
+                scope_key="scope",
+            )
+            is not None
+        )
 
         documents._invalidate_query_caches_after_document_mutation()
 
-        assert memory_cache.get(
-            "What is the launch code?",
-            config_hash="cfg",
-            corpus_version="v1",
-            retrieval_mode=1,
-        ) is None
-        assert disk_cache.get(
-            "What is the launch code?",
-            corpus_version="v1",
-            retrieval_mode=1,
-            preset_id="balanced",
-            model_ids={"generator": "test-model"},
-            scope_key="scope",
-        ) is None
+        assert (
+            memory_cache.get(
+                "What is the launch code?",
+                config_hash="cfg",
+                corpus_version="v1",
+                retrieval_mode=1,
+            )
+            is None
+        )
+        assert (
+            disk_cache.get(
+                "What is the launch code?",
+                corpus_version="v1",
+                retrieval_mode=1,
+                preset_id="balanced",
+                model_ids={"generator": "test-model"},
+                scope_key="scope",
+            )
+            is None
+        )
     finally:
         memory_cache.invalidate_all()
         disk_cache.close()
+
+
+def test_disk_query_cache_uses_json_serialization(tmp_path):
+    """DiskQueryCache must use JSON serialization for stored query results."""
+    cache = DiskQueryCache(QueryCacheConfig(db_path=tmp_path / "query_cache.db"))
+    try:
+        data = {"answer": "hello world", "score": 0.95, "nested": {"key": [1, 2, 3]}}
+        cache.set(
+            "test query",
+            data,
+            corpus_version="v1",
+            retrieval_mode=1,
+            preset_id="balanced",
+        )
+
+        retrieved = cache.get(
+            "test query",
+            corpus_version="v1",
+            retrieval_mode=1,
+            preset_id="balanced",
+        )
+        assert retrieved == data
+
+        # Directly inspect SQLite DB content to verify it stored valid JSON UTF-8 bytes
+        conn = cache._get_conn()
+        cursor = conn.execute("SELECT result FROM query_cache")
+        raw_bytes = cursor.fetchone()[0]
+        import json
+
+        decoded = json.loads(raw_bytes.decode("utf-8"))
+        assert decoded == data
+    finally:
+        cache.close()
