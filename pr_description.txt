@@ -1,0 +1,13 @@
+🔒 [fix insecure deserialization in chunks persistence]
+
+🎯 **What:**
+Fixed insecure deserialization vulnerability in `api/app/core/persistence.py` where dense index chunks were loaded from disk using `pickle.load()`. Replaced pickle serialization for chunks with structured JSON (`json.dump` / `json.load`) and added `to_dict()`/`from_dict()` methods to the `Chunk` dataclass in `api/app/core/chunking.py`.
+
+⚠️ **Risk:**
+`pickle.load()` on untrusted input or manipulated index files stored on disk can lead to Arbitrary Code Execution (RCE). If an attacker tampers with or uploads a crafted `.pkl` chunks file, arbitrary commands could be executed on the backend host when `load_dense_index()` is invoked.
+
+🛡️ **Solution:**
+1. Added `to_dict()` and `from_dict()` serialization helpers to `Chunk` in `api/app/core/chunking.py`.
+2. Modified `save_dense_index()` in `api/app/core/persistence.py` to write chunk data into JSON files (`*_chunks.json`).
+3. Modified `load_dense_index()` to safely load chunks from JSON, while retaining a fallback check for legacy `.pkl` files to ensure backward compatibility for existing deployments.
+4. Added comprehensive unit tests in `api/tests/core/test_persistence_chunks.py` verifying both JSON serialization/deserialization and legacy pickle fallback behavior.

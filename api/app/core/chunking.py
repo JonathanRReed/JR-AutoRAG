@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from sentence_transformers import SentenceTransformer
@@ -19,20 +19,41 @@ import numpy as np
 
 class ChunkingStrategy(str, Enum):
     """Available chunking strategies."""
-    FIXED = "fixed"           # Paragraph-based (original behavior)
-    SEMANTIC = "semantic"     # Sentence-transformer boundary detection
-    RECURSIVE = "recursive"   # Recursive character splitting
-    LATE = "late"             # Late chunking: embed full doc, pool per chunk window
+
+    FIXED = "fixed"  # Paragraph-based (original behavior)
+    SEMANTIC = "semantic"  # Sentence-transformer boundary detection
+    RECURSIVE = "recursive"  # Recursive character splitting
+    LATE = "late"  # Late chunking: embed full doc, pool per chunk window
 
 
 @dataclass
 class Chunk:
     """A document chunk with metadata."""
+
     text: str
     index: int
     start_char: int
     end_char: int
     metadata: dict[str, str] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "text": self.text,
+            "index": self.index,
+            "start_char": self.start_char,
+            "end_char": self.end_char,
+            "metadata": self.metadata,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Chunk":
+        return cls(
+            text=data["text"],
+            index=data["index"],
+            start_char=data["start_char"],
+            end_char=data["end_char"],
+            metadata=data.get("metadata"),
+        )
 
 
 class FixedChunker:
@@ -54,12 +75,14 @@ class FixedChunker:
         for para in paragraphs:
             if current_len + len(para) > self._target_size and current_texts:
                 chunk_text = "\n".join(current_texts)
-                chunks.append(Chunk(
-                    text=chunk_text,
-                    index=len(chunks),
-                    start_char=char_pos - len(chunk_text),
-                    end_char=char_pos,
-                ))
+                chunks.append(
+                    Chunk(
+                        text=chunk_text,
+                        index=len(chunks),
+                        start_char=char_pos - len(chunk_text),
+                        end_char=char_pos,
+                    )
+                )
                 current_texts = []
                 current_len = 0
 
@@ -69,14 +92,20 @@ class FixedChunker:
 
         if current_texts:
             chunk_text = "\n".join(current_texts)
-            chunks.append(Chunk(
-                text=chunk_text,
-                index=len(chunks),
-                start_char=char_pos - len(chunk_text),
-                end_char=char_pos,
-            ))
+            chunks.append(
+                Chunk(
+                    text=chunk_text,
+                    index=len(chunks),
+                    start_char=char_pos - len(chunk_text),
+                    end_char=char_pos,
+                )
+            )
 
-        return chunks if chunks else [Chunk(text=text.strip(), index=0, start_char=0, end_char=len(text))]
+        return (
+            chunks
+            if chunks
+            else [Chunk(text=text.strip(), index=0, start_char=0, end_char=len(text))]
+        )
 
 
 class SemanticChunker:
@@ -103,7 +132,7 @@ class SemanticChunker:
     def _split_sentences(self, text: str) -> list[str]:
         """Split text into sentences."""
         # Simple sentence splitter - handles common cases
-        pattern = r'(?<=[.!?])\s+(?=[A-Z])'
+        pattern = r"(?<=[.!?])\s+(?=[A-Z])"
         sentences = re.split(pattern, text)
         return [s.strip() for s in sentences if s.strip()]
 
@@ -122,8 +151,8 @@ class SemanticChunker:
         # Compute cosine similarities between adjacent sentences
         boundaries: list[int] = []
         for i in range(1, len(embeddings)):
-            sim = np.dot(embeddings[i-1], embeddings[i]) / (
-                np.linalg.norm(embeddings[i-1]) * np.linalg.norm(embeddings[i])
+            sim = np.dot(embeddings[i - 1], embeddings[i]) / (
+                np.linalg.norm(embeddings[i - 1]) * np.linalg.norm(embeddings[i])
             )
             # Low similarity indicates a topic shift
             if sim < self._similarity_threshold:
@@ -152,15 +181,17 @@ class SemanticChunker:
             # Create chunk if at boundary or size exceeded (and minimum met)
             if (is_boundary or would_exceed) and current_len >= self._min_size:
                 chunk_text = " ".join(current_sentences)
-                chunks.append(Chunk(
-                    text=chunk_text,
-                    index=len(chunks),
-                    start_char=char_pos - len(chunk_text),
-                    end_char=char_pos,
-                ))
+                chunks.append(
+                    Chunk(
+                        text=chunk_text,
+                        index=len(chunks),
+                        start_char=char_pos - len(chunk_text),
+                        end_char=char_pos,
+                    )
+                )
                 # Keep overlap sentences
                 if self._overlap_sentences > 0:
-                    current_sentences = current_sentences[-self._overlap_sentences:]
+                    current_sentences = current_sentences[-self._overlap_sentences :]
                     current_len = sum(len(s) for s in current_sentences)
                 else:
                     current_sentences = []
@@ -173,14 +204,20 @@ class SemanticChunker:
         # Final chunk
         if current_sentences:
             chunk_text = " ".join(current_sentences)
-            chunks.append(Chunk(
-                text=chunk_text,
-                index=len(chunks),
-                start_char=char_pos - len(chunk_text),
-                end_char=char_pos,
-            ))
+            chunks.append(
+                Chunk(
+                    text=chunk_text,
+                    index=len(chunks),
+                    start_char=char_pos - len(chunk_text),
+                    end_char=char_pos,
+                )
+            )
 
-        return chunks if chunks else [Chunk(text=text.strip(), index=0, start_char=0, end_char=len(text))]
+        return (
+            chunks
+            if chunks
+            else [Chunk(text=text.strip(), index=0, start_char=0, end_char=len(text))]
+        )
 
 
 class RecursiveChunker:
@@ -210,7 +247,10 @@ class RecursiveChunker:
 
         if not separators:
             # No more separators - force split at target size
-            return [text[i:i+self._target_size] for i in range(0, len(text), self._target_size - self._overlap)]
+            return [
+                text[i : i + self._target_size]
+                for i in range(0, len(text), self._target_size - self._overlap)
+            ]
 
         sep = separators[0]
         remaining_seps = separators[1:]
@@ -247,15 +287,21 @@ class RecursiveChunker:
         for _i, raw in enumerate(raw_chunks):
             clean = raw.strip()
             if clean:
-                chunks.append(Chunk(
-                    text=clean,
-                    index=len(chunks),
-                    start_char=char_pos,
-                    end_char=char_pos + len(clean),
-                ))
+                chunks.append(
+                    Chunk(
+                        text=clean,
+                        index=len(chunks),
+                        start_char=char_pos,
+                        end_char=char_pos + len(clean),
+                    )
+                )
             char_pos += len(raw)
 
-        return chunks if chunks else [Chunk(text=text.strip(), index=0, start_char=0, end_char=len(text))]
+        return (
+            chunks
+            if chunks
+            else [Chunk(text=text.strip(), index=0, start_char=0, end_char=len(text))]
+        )
 
 
 class LateChunker:
@@ -293,18 +339,26 @@ class LateChunker:
         for raw in raw_chunks:
             stripped = raw.strip()
             if stripped:
-                chunks.append(Chunk(
-                    text=stripped,
-                    index=len(chunks),
-                    start_char=char_pos,
-                    end_char=char_pos + len(stripped),
-                    metadata={"late_chunking": "true"},
-                ))
+                chunks.append(
+                    Chunk(
+                        text=stripped,
+                        index=len(chunks),
+                        start_char=char_pos,
+                        end_char=char_pos + len(stripped),
+                        metadata={"late_chunking": "true"},
+                    )
+                )
             char_pos += len(raw)
 
-        return chunks if chunks else [Chunk(text=text.strip(), index=0, start_char=0, end_char=len(text))]
+        return (
+            chunks
+            if chunks
+            else [Chunk(text=text.strip(), index=0, start_char=0, end_char=len(text))]
+        )
 
-    def _split_recursive(self, text: str, separators: list[str], out: list[str]) -> None:
+    def _split_recursive(
+        self, text: str, separators: list[str], out: list[str]
+    ) -> None:
         """Recursively split text, appending results to out."""
         if not text.strip():
             return
@@ -314,7 +368,7 @@ class LateChunker:
         if not separators:
             # Force split at target size
             for i in range(0, len(text), self._target_size):
-                out.append(text[i:i + self._target_size])
+                out.append(text[i : i + self._target_size])
             return
         sep = separators[0]
         remaining = separators[1:]
@@ -361,7 +415,11 @@ def get_chunker(
             embedder=embedder,
             target_size=target_size,
             overlap_sentences=overlap_sentences,
-            **{k: v for k, v in kwargs.items() if k in ('min_size', 'similarity_threshold')}
+            **{
+                k: v
+                for k, v in kwargs.items()
+                if k in ("min_size", "similarity_threshold")
+            },
         )
     elif strategy == ChunkingStrategy.RECURSIVE:
         return RecursiveChunker(target_size=target_size, overlap=overlap)
