@@ -29,7 +29,9 @@ from app.core.security_middleware import _resolve_required_scope, verify_api_key
         ("/monitoring/cache/clear", "POST", "admin"),
     ],
 )
-def test_sensitive_protected_routes_resolve_expected_scopes(path: str, method: str, scope: str) -> None:
+def test_sensitive_protected_routes_resolve_expected_scopes(
+    path: str, method: str, scope: str
+) -> None:
     assert _resolve_required_scope(path, method) == scope
 
 
@@ -87,7 +89,9 @@ def test_more_specific_scope_mapping_wins_for_mutating_routes() -> None:
 
 
 @pytest.mark.asyncio
-async def test_verify_api_key_fails_closed_for_unmapped_protected_route(monkeypatch) -> None:
+async def test_verify_api_key_fails_closed_for_unmapped_protected_route(
+    monkeypatch,
+) -> None:
     auth = APIKeyAuth(enabled=True)
     api_key, _ = auth.generate_key("reader", scopes=["read"])
 
@@ -174,7 +178,9 @@ async def _run_http_middleware(
 
 
 @pytest.mark.asyncio
-async def test_request_size_limit_counts_streamed_bytes_not_only_header(monkeypatch) -> None:
+async def test_request_size_limit_counts_streamed_bytes_not_only_header(
+    monkeypatch,
+) -> None:
     monkeypatch.setattr(security_middleware, "MAX_REQUEST_SIZE", 4)
 
     sent, downstream_called = await _run_http_middleware(
@@ -183,7 +189,9 @@ async def test_request_size_limit_counts_streamed_bytes_not_only_header(monkeypa
         body_chunks=[b"abc", b"def"],
     )
 
-    response_start = next(message for message in sent if message["type"] == "http.response.start")
+    response_start = next(
+        message for message in sent if message["type"] == "http.response.start"
+    )
     assert response_start["status"] == 413
     assert downstream_called is False
 
@@ -197,7 +205,9 @@ async def test_unsafe_cross_origin_request_is_rejected_before_route_runs() -> No
         headers=[(b"origin", b"https://attacker.example")],
     )
 
-    response_start = next(message for message in sent if message["type"] == "http.response.start")
+    response_start = next(
+        message for message in sent if message["type"] == "http.response.start"
+    )
     assert response_start["status"] == 403
     assert downstream_called is False
 
@@ -210,11 +220,17 @@ async def test_unsafe_cross_origin_request_is_rejected_before_route_runs() -> No
         [(b"origin", b"http://localhost:3000")],
     ],
 )
-async def test_unsafe_request_allows_non_browser_and_trusted_local_origin(headers) -> None:
+async def test_unsafe_request_allows_non_browser_and_trusted_local_origin(
+    headers,
+) -> None:
     middleware_type = security_middleware.UnsafeOriginGuardMiddleware
 
-    sent, downstream_called = await _run_http_middleware(middleware_type, headers=headers)
+    sent, downstream_called = await _run_http_middleware(
+        middleware_type, headers=headers
+    )
 
-    response_start = next(message for message in sent if message["type"] == "http.response.start")
+    response_start = next(
+        message for message in sent if message["type"] == "http.response.start"
+    )
     assert response_start["status"] == 200
     assert downstream_called is True

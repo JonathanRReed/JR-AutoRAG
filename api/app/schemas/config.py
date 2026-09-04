@@ -84,7 +84,8 @@ def _is_client_owned_url(value: str) -> bool:
         except OSError:
             return False
         return bool(resolved) and all(
-            item.is_loopback or item.is_private or item.is_link_local for item in resolved
+            item.is_loopback or item.is_private or item.is_link_local
+            for item in resolved
         )
     return parsed_ip.is_loopback or parsed_ip.is_private or parsed_ip.is_link_local
 
@@ -164,7 +165,9 @@ class OCRSettings(BaseModel):
             "ocr.local.vision",
         ]
     )
-    dual_merge_strategy: Literal["highest_confidence", "prefer_text_parser"] = "highest_confidence"
+    dual_merge_strategy: Literal["highest_confidence", "prefer_text_parser"] = (
+        "highest_confidence"
+    )
 
     @field_validator("extractable_text_threshold")
     @classmethod
@@ -608,14 +611,18 @@ class StageBudgetDefaults(BaseModel):
 
 
 class ClientDataPolicy(BaseModel):
-    classification: Literal["internal", "client_confidential", "regulated"] = "client_confidential"
+    classification: Literal["internal", "client_confidential", "regulated"] = (
+        "client_confidential"
+    )
     storage_boundary: Literal["local_only", "client_owned"] = "client_owned"
     managed_cloud_hosting_allowed: bool = False
     external_model_calls_allowed: bool = False
     pii_redaction_required: bool = True
     document_retention_days: int = 30
     trace_retention_days: int = 14
-    report_export_mode: Literal["redacted_by_default", "full_with_client_approval"] = "redacted_by_default"
+    report_export_mode: Literal["redacted_by_default", "full_with_client_approval"] = (
+        "redacted_by_default"
+    )
     client_handoff_required: bool = True
     operator_review_required: bool = True
 
@@ -636,7 +643,9 @@ class AppConfig(BaseModel):
     retrieval: RetrievalDefaults = Field(default_factory=RetrievalDefaults)
     ingest: IngestSettings = Field(default_factory=IngestSettings)
     backends: dict[str, BackendConfig] = Field(default_factory=build_default_backends)
-    fallbacks: dict[str, FallbackConfig] = Field(default_factory=build_default_fallbacks)
+    fallbacks: dict[str, FallbackConfig] = Field(
+        default_factory=build_default_fallbacks
+    )
     query_mode: str = "grounded"
     stage_budgets: StageBudgetDefaults = Field(default_factory=StageBudgetDefaults)
 
@@ -662,7 +671,9 @@ class AppConfig(BaseModel):
                     "backend_id": raw.get("backend_id", default.backend_id),
                     "label": raw.get("label", default.label),
                     "enabled": raw.get("enabled", default.enabled),
-                    "capabilities": raw.get("capabilities", default.capabilities.model_dump()),
+                    "capabilities": raw.get(
+                        "capabilities", default.capabilities.model_dump()
+                    ),
                     "settings": raw.get("settings", default.settings),
                 }
             else:
@@ -706,7 +717,9 @@ class AppConfig(BaseModel):
     @model_validator(mode="after")
     def _validate_local_first_policy(self):
         known_backend_ids = build_known_backend_ids()
-        known_backend_ids.update(backend.backend_id for backend in self.backends.values())
+        known_backend_ids.update(
+            backend.backend_id for backend in self.backends.values()
+        )
         for subsystem, fallback in self.fallbacks.items():
             unknown = [item for item in fallback.order if item not in known_backend_ids]
             if unknown:
@@ -716,7 +729,9 @@ class AppConfig(BaseModel):
 
         if self.deployment_profile == DeploymentProfile.LOCAL_ONLY:
             if self.provider and not _is_local_url(str(self.provider.base_url)):
-                raise ValueError("Local-only mode requires a localhost or loopback provider URL.")
+                raise ValueError(
+                    "Local-only mode requires a localhost or loopback provider URL."
+                )
             for profile in self.provider_profiles:
                 if not _is_local_url(str(profile.provider.base_url)):
                     raise ValueError(
@@ -727,7 +742,10 @@ class AppConfig(BaseModel):
             for name, backend in self.backends.items():
                 if not backend.enabled:
                     continue
-                if backend.capabilities.requires_network or backend.capabilities.mode != BackendMode.LOCAL:
+                if (
+                    backend.capabilities.requires_network
+                    or backend.capabilities.mode != BackendMode.LOCAL
+                ):
                     raise ValueError(
                         f"Backend '{name}' is not compatible with local-only mode: {backend.backend_id}"
                     )
@@ -736,14 +754,21 @@ class AppConfig(BaseModel):
                 raise ValueError("Local-only mode cannot enable cloud OCR fallback.")
 
         if self.deployment_profile == DeploymentProfile.CLIENT_SAFE:
-            if self.data_policy.document_retention_days > 90 or self.data_policy.trace_retention_days > 90:
-                raise ValueError("Client-safe retention may not exceed 90 days without an exception.")
+            if (
+                self.data_policy.document_retention_days > 90
+                or self.data_policy.trace_retention_days > 90
+            ):
+                raise ValueError(
+                    "Client-safe retention may not exceed 90 days without an exception."
+                )
             if self.data_policy.managed_cloud_hosting_allowed:
                 raise ValueError("Client-safe mode cannot allow managed cloud hosting.")
             if self.data_policy.external_model_calls_allowed:
                 raise ValueError("Client-safe mode cannot allow external model calls.")
             if self.data_policy.storage_boundary not in {"local_only", "client_owned"}:
-                raise ValueError("Client-safe mode requires local or client-owned storage.")
+                raise ValueError(
+                    "Client-safe mode requires local or client-owned storage."
+                )
             if self.provider and not _is_client_owned_url(str(self.provider.base_url)):
                 raise ValueError(
                     "Client-safe mode requires a localhost, private-network, or client-owned provider URL."

@@ -25,6 +25,7 @@ injection_logger.setLevel(logging.WARNING)
 
 class ThreatLevel(str, Enum):
     """Threat level classification."""
+
     NONE = "none"
     LOW = "low"
     MEDIUM = "medium"
@@ -35,6 +36,7 @@ class ThreatLevel(str, Enum):
 @dataclass
 class InjectionAttempt:
     """Record of a potential injection attempt."""
+
     timestamp: float
     input_text: str
     pattern_matched: str
@@ -45,7 +47,9 @@ class InjectionAttempt:
     def to_dict(self) -> dict:
         return {
             "timestamp": self.timestamp,
-            "input_preview": self.input_text[:100] + "..." if len(self.input_text) > 100 else self.input_text,
+            "input_preview": self.input_text[:100] + "..."
+            if len(self.input_text) > 100
+            else self.input_text,
             "pattern": self.pattern_matched,
             "threat_level": self.threat_level.value,
             "source": self.source,
@@ -58,52 +62,85 @@ class InjectionAttempt:
 
 INJECTION_PATTERNS: list[tuple[str, ThreatLevel, str]] = [
     # Direct instruction override attempts
-    (r"ignore\s+(all\s+)?(previous|prior|above)\s+(instructions?|prompts?|rules?)",
-     ThreatLevel.CRITICAL, "instruction_override"),
-    (r"disregard\s+(all\s+)?(previous|prior)\s+(instructions?|context)",
-     ThreatLevel.CRITICAL, "instruction_override"),
-    (r"forget\s+(everything|all)\s+(you|i)\s+(told|said)",
-     ThreatLevel.CRITICAL, "instruction_override"),
-
+    (
+        r"ignore\s+(all\s+)?(previous|prior|above)\s+(instructions?|prompts?|rules?)",
+        ThreatLevel.CRITICAL,
+        "instruction_override",
+    ),
+    (
+        r"disregard\s+(all\s+)?(previous|prior)\s+(instructions?|context)",
+        ThreatLevel.CRITICAL,
+        "instruction_override",
+    ),
+    (
+        r"forget\s+(everything|all)\s+(you|i)\s+(told|said)",
+        ThreatLevel.CRITICAL,
+        "instruction_override",
+    ),
     # Role/persona hijacking
-    (r"you\s+are\s+(now|actually)\s+a?\s*(different|new|evil|bad)",
-     ThreatLevel.HIGH, "role_hijacking"),
-    (r"pretend\s+(to\s+be|you\'?re)\s+a?\s*(hacker|admin|root|system)",
-     ThreatLevel.HIGH, "role_hijacking"),
-    (r"act\s+as\s+(if\s+you\s+(are|were)|a)\s*(malicious|evil)",
-     ThreatLevel.HIGH, "role_hijacking"),
-    (r"you\s+must\s+(now\s+)?obey\s+me",
-     ThreatLevel.HIGH, "role_hijacking"),
-
+    (
+        r"you\s+are\s+(now|actually)\s+a?\s*(different|new|evil|bad)",
+        ThreatLevel.HIGH,
+        "role_hijacking",
+    ),
+    (
+        r"pretend\s+(to\s+be|you\'?re)\s+a?\s*(hacker|admin|root|system)",
+        ThreatLevel.HIGH,
+        "role_hijacking",
+    ),
+    (
+        r"act\s+as\s+(if\s+you\s+(are|were)|a)\s*(malicious|evil)",
+        ThreatLevel.HIGH,
+        "role_hijacking",
+    ),
+    (r"you\s+must\s+(now\s+)?obey\s+me", ThreatLevel.HIGH, "role_hijacking"),
     # System prompt extraction
-    (r"(reveal|show|tell|output|print)\s+(me\s+)?(your|the|system)\s*(prompt|instructions?|rules?)",
-     ThreatLevel.HIGH, "system_extraction"),
-    (r"what\s+(are|is)\s+your\s+(original|system|base)\s*(prompt|instructions?)",
-     ThreatLevel.MEDIUM, "system_extraction"),
-
+    (
+        r"(reveal|show|tell|output|print)\s+(me\s+)?(your|the|system)\s*(prompt|instructions?|rules?)",
+        ThreatLevel.HIGH,
+        "system_extraction",
+    ),
+    (
+        r"what\s+(are|is)\s+your\s+(original|system|base)\s*(prompt|instructions?)",
+        ThreatLevel.MEDIUM,
+        "system_extraction",
+    ),
     # Delimiter/format exploitation
-    (r"\[system\]|\[user\]|\[assistant\]|<\|im_start\|>|<\|im_end\|>",
-     ThreatLevel.HIGH, "delimiter_injection"),
-    (r"###\s*(system|instruction|prompt)|```\s*system",
-     ThreatLevel.MEDIUM, "delimiter_injection"),
-
+    (
+        r"\[system\]|\[user\]|\[assistant\]|<\|im_start\|>|<\|im_end\|>",
+        ThreatLevel.HIGH,
+        "delimiter_injection",
+    ),
+    (
+        r"###\s*(system|instruction|prompt)|```\s*system",
+        ThreatLevel.MEDIUM,
+        "delimiter_injection",
+    ),
     # Code execution attempts
-    (r"(exec|eval|import|subprocess|os\.system|__import__)\s*\(",
-     ThreatLevel.CRITICAL, "code_execution"),
-    (r"<script>|javascript:|onclick=|onerror=",
-     ThreatLevel.HIGH, "code_execution"),
-
+    (
+        r"(exec|eval|import|subprocess|os\.system|__import__)\s*\(",
+        ThreatLevel.CRITICAL,
+        "code_execution",
+    ),
+    (r"<script>|javascript:|onclick=|onerror=", ThreatLevel.HIGH, "code_execution"),
     # Data exfiltration
-    (r"(send|post|upload|exfiltrate)\s+(to|data|the)\s*(server|url|endpoint)",
-     ThreatLevel.HIGH, "data_exfiltration"),
-    (r"curl\s+|wget\s+|http[s]?://\S+\?",
-     ThreatLevel.MEDIUM, "data_exfiltration"),
-
+    (
+        r"(send|post|upload|exfiltrate)\s+(to|data|the)\s*(server|url|endpoint)",
+        ThreatLevel.HIGH,
+        "data_exfiltration",
+    ),
+    (r"curl\s+|wget\s+|http[s]?://\S+\?", ThreatLevel.MEDIUM, "data_exfiltration"),
     # Jailbreak keywords
-    (r"\bdan\s*mode\b|\bdev\s*mode\b|\bunlocked\s*mode\b",
-     ThreatLevel.HIGH, "jailbreak"),
-    (r"jail\s*break|bypass\s+(safety|filter|restriction)",
-     ThreatLevel.HIGH, "jailbreak"),
+    (
+        r"\bdan\s*mode\b|\bdev\s*mode\b|\bunlocked\s*mode\b",
+        ThreatLevel.HIGH,
+        "jailbreak",
+    ),
+    (
+        r"jail\s*break|bypass\s+(safety|filter|restriction)",
+        ThreatLevel.HIGH,
+        "jailbreak",
+    ),
 ]
 
 
@@ -140,7 +177,9 @@ class PromptGuard:
         for compiled, level, name in self._compiled_patterns:
             matches = compiled.findall(text)
             for match in matches:
-                matched_str = match if isinstance(match, str) else match[0] if match else ""
+                matched_str = (
+                    match if isinstance(match, str) else match[0] if match else ""
+                )
                 detections.append((matched_str, level, name))
 
         return detections
@@ -152,8 +191,13 @@ class PromptGuard:
             return ThreatLevel.NONE
 
         # Return highest threat level
-        level_order = [ThreatLevel.NONE, ThreatLevel.LOW, ThreatLevel.MEDIUM,
-                       ThreatLevel.HIGH, ThreatLevel.CRITICAL]
+        level_order = [
+            ThreatLevel.NONE,
+            ThreatLevel.LOW,
+            ThreatLevel.MEDIUM,
+            ThreatLevel.HIGH,
+            ThreatLevel.CRITICAL,
+        ]
         max_level = ThreatLevel.NONE
 
         for _, level, _ in detections:
@@ -209,8 +253,13 @@ class PromptGuard:
     def should_block(self, text: str) -> bool:
         """Check if input should be blocked based on threat level."""
         level = self.get_threat_level(text)
-        level_order = [ThreatLevel.NONE, ThreatLevel.LOW, ThreatLevel.MEDIUM,
-                       ThreatLevel.HIGH, ThreatLevel.CRITICAL]
+        level_order = [
+            ThreatLevel.NONE,
+            ThreatLevel.LOW,
+            ThreatLevel.MEDIUM,
+            ThreatLevel.HIGH,
+            ThreatLevel.CRITICAL,
+        ]
         return level_order.index(level) >= level_order.index(self._block_threshold)
 
     def get_attempt_log(self, limit: int = 100) -> list[dict]:
@@ -281,7 +330,10 @@ class PoisonedChunkScanner:
 
     # Patterns that suggest embedded instructions in chunks
     INSTRUCTION_PATTERNS = [
-        re.compile(r"ignore\s+(all\s+)?(previous|above|prior)\s+(instructions?|prompts?)", re.IGNORECASE),
+        re.compile(
+            r"ignore\s+(all\s+)?(previous|above|prior)\s+(instructions?|prompts?)",
+            re.IGNORECASE,
+        ),
         re.compile(r"system\s*:\s*", re.IGNORECASE),
         re.compile(r"you\s+are\s+(now|actually)\s+a", re.IGNORECASE),
         re.compile(r"disregard\s+(all\s+)?(previous|prior)", re.IGNORECASE),
@@ -293,6 +345,7 @@ class PoisonedChunkScanner:
     @dataclass
     class ScanResult:
         """Result of scanning a single chunk."""
+
         chunk_id: str
         is_suspicious: bool
         risk_score: float  # 0.0 to 1.0
@@ -304,7 +357,9 @@ class PoisonedChunkScanner:
         risk = 0.0
 
         if not chunk_text or not chunk_text.strip():
-            return self.ScanResult(chunk_id=chunk_id, is_suspicious=False, risk_score=0.0, flags=[])
+            return self.ScanResult(
+                chunk_id=chunk_id, is_suspicious=False, risk_score=0.0, flags=[]
+            )
 
         text = chunk_text.strip()
 
@@ -331,7 +386,9 @@ class PoisonedChunkScanner:
             special_ratio = special_count / total
             alpha_ratio = alpha_count / total
             if special_ratio > 0.3 and alpha_ratio < 0.4:
-                flags.append(f"unusual_chars: special={special_ratio:.0%}, alpha={alpha_ratio:.0%}")
+                flags.append(
+                    f"unusual_chars: special={special_ratio:.0%}, alpha={alpha_ratio:.0%}"
+                )
                 risk = max(risk, 0.5)
 
         # Check 4: Very short chunks with high information density (possible payload)
@@ -480,6 +537,7 @@ def get_poison_scanner() -> PoisonedChunkScanner:
 # ============================================================================
 # Ingestion-Time Defenses (F1: Indirect Prompt Injection)
 # ============================================================================
+
 
 def wrap_ingested_content(
     content: str,

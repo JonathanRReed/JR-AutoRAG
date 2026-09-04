@@ -12,7 +12,9 @@ from types import SimpleNamespace
 from app.core.ingest import IngestPipeline
 
 
-def _make_pipeline(strategy: str, chunk_size: int = 200, chunk_overlap: int = 20) -> IngestPipeline:
+def _make_pipeline(
+    strategy: str, chunk_size: int = 200, chunk_overlap: int = 20
+) -> IngestPipeline:
     retrieval = SimpleNamespace()
     store = SimpleNamespace()
     cfg = SimpleNamespace(

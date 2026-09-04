@@ -26,6 +26,7 @@ import subprocess
 
 try:  # pragma: no cover - optional dependency
     from pypdf import PdfReader  # type: ignore
+
     print("PDF library (pypdf) loaded successfully")
 except ImportError:  # pragma: no cover
     PdfReader = None  # type: ignore
@@ -33,6 +34,7 @@ except ImportError:  # pragma: no cover
 
 try:  # pragma: no cover
     import docx  # type: ignore
+
     print("DOCX library loaded successfully")
 except ImportError:  # pragma: no cover
     docx = None  # type: ignore
@@ -44,7 +46,11 @@ from .audit import AuditAction, AuditEntry, get_audit_log
 from .chunking import Chunk
 from .contextual_enrichment import ContextualEnricher, EnrichmentConfig
 from .documents import DocumentStore
-from .document_parser import DocumentParserRouter, parser_result_from_text, parser_result_to_metadata
+from .document_parser import (
+    DocumentParserRouter,
+    parser_result_from_text,
+    parser_result_to_metadata,
+)
 from .langextract_enricher import LangExtractEnricher
 from .local_first import LocalFirstRegistry
 from .ocr import OCRRouter
@@ -60,6 +66,7 @@ _LANGEXTRACT_SYNTHETIC_END = "[[LANGEXTRACT_SYNTHETIC_FACTS_END]]"
 @dataclass
 class IngestResult:
     """Result of document ingestion."""
+
     document_id: str
     title: str
     chunk_count: int
@@ -90,14 +97,16 @@ class IngestPipeline:
         self._langextract = LangExtractEnricher(data_dir=data_dir)
         self._policy_registry = policy_registry
         self._parser_router = DocumentParserRouter()
-        self._enricher = ContextualEnricher(EnrichmentConfig(
-            add_document_title=True,
-            add_section_header=True,
-            add_chunk_summary=True,
-            add_context_window=True,
-            use_llm_for_summary=False,  # Sync path uses heuristic summaries
-            fallback_to_heuristic=True,
-        ))
+        self._enricher = ContextualEnricher(
+            EnrichmentConfig(
+                add_document_title=True,
+                add_section_header=True,
+                add_chunk_summary=True,
+                add_context_window=True,
+                use_llm_for_summary=False,  # Sync path uses heuristic summaries
+                fallback_to_heuristic=True,
+            )
+        )
 
     def ingest_text(
         self,
@@ -119,8 +128,17 @@ class IngestPipeline:
             wrap_delimiters=False,
         )
         if injection_attempts:
-            threat_order = [ThreatLevel.NONE, ThreatLevel.LOW, ThreatLevel.MEDIUM, ThreatLevel.HIGH, ThreatLevel.CRITICAL]
-            highest_threat = max(injection_attempts, key=lambda attempt: threat_order.index(attempt.threat_level)).threat_level
+            threat_order = [
+                ThreatLevel.NONE,
+                ThreatLevel.LOW,
+                ThreatLevel.MEDIUM,
+                ThreatLevel.HIGH,
+                ThreatLevel.CRITICAL,
+            ]
+            highest_threat = max(
+                injection_attempts,
+                key=lambda attempt: threat_order.index(attempt.threat_level),
+            ).threat_level
             meta["prompt_injection_detected"] = "true"
             meta["prompt_injection_attempts"] = str(len(injection_attempts))
             meta["prompt_injection_threat_level"] = highest_threat.value
@@ -130,7 +148,9 @@ class IngestPipeline:
             profile_override=langextract_profile_override,
             prompt_override=langextract_prompt_override,
         )
-        augmented_text = self._append_langextract_sections(sanitized_text, langextract_result.get("synthetic_sections", []))
+        augmented_text = self._append_langextract_sections(
+            sanitized_text, langextract_result.get("synthetic_sections", [])
+        )
         self._apply_langextract_metadata(meta, langextract_result)
 
         # Compute content hash for change detection (A1)
@@ -149,7 +169,9 @@ class IngestPipeline:
         contextualized = self._enrich_chunks(chunks, augmented_text, title, meta)
         combined = "\n\n".join(contextualized)
 
-        doc = self._store.add(title=title, text=combined, metadata=meta, on_duplicate=on_duplicate)
+        doc = self._store.add(
+            title=title, text=combined, metadata=meta, on_duplicate=on_duplicate
+        )
 
         self._persist_langextract_artifact(doc.id, title, langextract_result, doc)
         self._log_langextract_audit(doc.id, title, langextract_result)
@@ -198,14 +220,20 @@ class IngestPipeline:
         meta = {**(metadata or {})}
         meta.setdefault("filename", title)
         meta.setdefault("original_filename", meta["filename"])
-        meta.setdefault("content_type", mimetypes.guess_type(meta["filename"])[0] or "text/plain")
+        meta.setdefault(
+            "content_type", mimetypes.guess_type(meta["filename"])[0] or "text/plain"
+        )
         meta["filesize"] = str(len(content))
         text, extraction_metadata = self._extract_text_with_metadata(content, meta)
         meta.update(extraction_metadata)
         if "parser_preview_json" not in meta:
-            extraction_confidence = self._metadata_float(extraction_metadata, "extraction_confidence")
+            extraction_confidence = self._metadata_float(
+                extraction_metadata, "extraction_confidence"
+            )
             if extraction_confidence <= 0:
-                extraction_confidence = self._metadata_float(extraction_metadata, "text_extraction_confidence")
+                extraction_confidence = self._metadata_float(
+                    extraction_metadata, "text_extraction_confidence"
+                )
             try:
                 parser_result = self._parser_router.parse(content, meta)
                 if (
@@ -219,12 +247,19 @@ class IngestPipeline:
                     preview_result = parser_result_from_text(
                         text=text,
                         provider=parser_result.provider,
-                        engine=extraction_metadata.get("extraction_engine", parser_result.engine),
+                        engine=extraction_metadata.get(
+                            "extraction_engine", parser_result.engine
+                        ),
                         confidence=max(extraction_confidence, parser_result.confidence),
-                        used_ocr=str(extraction_metadata.get("ocr_used", "")).lower() == "true",
-                        raw_metadata={"parser_warning": ",".join(parser_result.warnings)},
+                        used_ocr=str(extraction_metadata.get("ocr_used", "")).lower()
+                        == "true",
+                        raw_metadata={
+                            "parser_warning": ",".join(parser_result.warnings)
+                        },
                     )
-                meta.update(parser_result_to_metadata(preview_result, extraction_metadata))
+                meta.update(
+                    parser_result_to_metadata(preview_result, extraction_metadata)
+                )
             except Exception as exc:
                 meta["parser_provider"] = meta.get("parser_provider", "native")
                 meta["parser_warning"] = str(exc)
@@ -233,10 +268,13 @@ class IngestPipeline:
                     provider="native",
                     engine=extraction_metadata.get("extraction_engine", "stored-text"),
                     confidence=max(extraction_confidence, 0.0),
-                    used_ocr=str(extraction_metadata.get("ocr_used", "")).lower() == "true",
+                    used_ocr=str(extraction_metadata.get("ocr_used", "")).lower()
+                    == "true",
                     raw_metadata={"parser_warning": str(exc)},
                 )
-                meta.update(parser_result_to_metadata(preview_result, extraction_metadata))
+                meta.update(
+                    parser_result_to_metadata(preview_result, extraction_metadata)
+                )
         return self.ingest_text(
             title=title,
             text=text,
@@ -280,7 +318,9 @@ class IngestPipeline:
                 )
 
         # Proceed with full ingest and intentionally replace the existing title when changed.
-        return self.ingest_text(title=title, text=text, metadata=metadata, on_duplicate="replace")
+        return self.ingest_text(
+            title=title, text=text, metadata=metadata, on_duplicate="replace"
+        )
 
     def _run_langextract(
         self,
@@ -311,7 +351,9 @@ class IngestPipeline:
             return {
                 "status": "disabled",
                 "profile": "",
-                "model_source": getattr(cfg.retrieval, "langextract_model_source", "gatherer"),
+                "model_source": getattr(
+                    cfg.retrieval, "langextract_model_source", "gatherer"
+                ),
                 "entities_count": 0,
                 "relations_count": 0,
                 "claims_count": 0,
@@ -407,7 +449,9 @@ class IngestPipeline:
             doc.metadata["langextract_error"] = str(exc)
             self._store.upsert(doc)
 
-    def _log_langextract_audit(self, doc_id: str, title: str, result: dict[str, object]) -> None:
+    def _log_langextract_audit(
+        self, doc_id: str, title: str, result: dict[str, object]
+    ) -> None:
         status = str(result.get("status", "disabled"))
         details = {
             "document_id": doc_id,
@@ -440,7 +484,7 @@ class IngestPipeline:
 
     def _compute_content_hash(self, text: str) -> str:
         """Compute SHA-256 hash of document content for change detection."""
-        return hashlib.sha256(text.encode('utf-8')).hexdigest()
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
     def _metadata_float(self, metadata: dict[str, str], key: str) -> float:
         try:
@@ -455,6 +499,7 @@ class IngestPipeline:
         """
         try:
             from .prompt_guard import get_poison_scanner
+
             scanner = get_poison_scanner()
             chunk_tuples = [(str(i), text) for i, text in enumerate(chunks)]
             results = scanner.scan_chunks(chunk_tuples)
@@ -486,12 +531,14 @@ class IngestPipeline:
             for i, text in enumerate(chunks):
                 stripped = text.strip()
                 if stripped:
-                    chunk_objs.append(Chunk(
-                        text=stripped,
-                        index=i,
-                        start_char=char_pos,
-                        end_char=char_pos + len(stripped),
-                    ))
+                    chunk_objs.append(
+                        Chunk(
+                            text=stripped,
+                            index=i,
+                            start_char=char_pos,
+                            end_char=char_pos + len(stripped),
+                        )
+                    )
                 char_pos += len(text) + 2  # approximate gap
 
             enriched = self._enricher.enrich_chunks_sync(
@@ -552,11 +599,13 @@ class IngestPipeline:
                         return ".docx"
             except Exception:
                 return ""
-        if content[:8] == b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1":
+        if content[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
             return ".doc"
         return ""
 
-    def _extract_text(self, content: bytes, metadata: dict[str, str] | None = None) -> str:
+    def _extract_text(
+        self, content: bytes, metadata: dict[str, str] | None = None
+    ) -> str:
         text, _ = self._extract_text_with_metadata(content, metadata)
         return text
 
@@ -588,7 +637,9 @@ class IngestPipeline:
             if ext == ".docx":
                 text = self._extract_docx_text(content)
             if ext == ".doc":
-                print("Tip: .doc files are legacy. Convert to .docx for better extraction.")
+                print(
+                    "Tip: .doc files are legacy. Convert to .docx for better extraction."
+                )
             if text.strip():
                 return text, self._build_extraction_metadata(
                     extraction_method=method,
@@ -651,7 +702,10 @@ class IngestPipeline:
         final_text = routed.text.strip() or extracted_text.strip()
         final_method = routed.method or extraction_method
         final_engine = routed.engine or extraction_engine
-        final_confidence = max(routed.confidence, extraction_confidence if final_text == extracted_text.strip() else 0.0)
+        final_confidence = max(
+            routed.confidence,
+            extraction_confidence if final_text == extracted_text.strip() else 0.0,
+        )
 
         if not final_text:
             final_text = (
@@ -790,12 +844,19 @@ class IngestPipeline:
                 pass
 
         clean = text.replace("\r", "").replace("\f", "\n\n[PAGE_BREAK]\n\n")
-        raw_blocks = [block.strip() for block in re.split(r"\n{2,}", clean) if block.strip()]
+        raw_blocks = [
+            block.strip() for block in re.split(r"\n{2,}", clean) if block.strip()
+        ]
 
         sections: list[str] = []
         pending: list[str] = []
         for block in raw_blocks:
-            is_header = bool(re.match(r"^(#{1,6}\s+.+|[A-Z][A-Z0-9\s:/-]{4,}|Section\s+\d+[:.]?.*)$", block))
+            is_header = bool(
+                re.match(
+                    r"^(#{1,6}\s+.+|[A-Z][A-Z0-9\s:/-]{4,}|Section\s+\d+[:.]?.*)$",
+                    block,
+                )
+            )
             if is_header and pending:
                 sections.append("\n\n".join(pending))
                 pending = [block]
@@ -852,14 +913,18 @@ class IngestPipeline:
     def _read_ocr_settings(self, metadata: dict[str, str] | None = None):
         cfg = self._read_config()
         if cfg is None:
-            return type("FallbackOCRSettings", (), {
-                "policy": self._resolve_ocr_policy(metadata),
-                "extractable_text_threshold": 0.65,
-                "min_characters": 80,
-                "allow_cloud_fallback": False,
-                "preferred_backends": ["ocr.local.tesseract", "ocr.local.vision"],
-                "dual_merge_strategy": "highest_confidence",
-            })()
+            return type(
+                "FallbackOCRSettings",
+                (),
+                {
+                    "policy": self._resolve_ocr_policy(metadata),
+                    "extractable_text_threshold": 0.65,
+                    "min_characters": 80,
+                    "allow_cloud_fallback": False,
+                    "preferred_backends": ["ocr.local.tesseract", "ocr.local.vision"],
+                    "dual_merge_strategy": "highest_confidence",
+                },
+            )()
         settings = cfg.ingest.ocr.model_copy()
         policy = self._resolve_ocr_policy(metadata)
         if policy != settings.policy:
@@ -884,7 +949,11 @@ class IngestPipeline:
         provider = cfg.provider
         if provider is None:
             return None
-        return provider.generator_model or provider.gatherer_model or provider.planner_model
+        return (
+            provider.generator_model
+            or provider.gatherer_model
+            or provider.planner_model
+        )
 
     def _read_vision_max_pages(self) -> int:
         cfg = self._read_config()

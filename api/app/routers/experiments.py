@@ -13,13 +13,19 @@ from ..core.experiments import (
     LocalExperimentRunner,
     apply_winning_preset,
 )
-from ..schemas.experiments import ExperimentConfig, ExperimentPromoteResponse, ExperimentRun
+from ..schemas.experiments import (
+    ExperimentConfig,
+    ExperimentPromoteResponse,
+    ExperimentRun,
+)
 from ..services import ServiceContainer, get_container
 
 router = APIRouter(prefix="/experiments", tags=["experiments"])
 
 
-def get_experiment_store(container: ServiceContainer = Depends(get_container)) -> ExperimentRunStore:
+def get_experiment_store(
+    container: ServiceContainer = Depends(get_container),
+) -> ExperimentRunStore:
     data_dir = Path(container.config_store.path).parent
     return ExperimentRunStore(data_dir / "experiments.json")
 
@@ -45,7 +51,9 @@ def list_experiments(
     limit: int = 50,
     store: ExperimentRunStore = Depends(get_experiment_store),
 ):
-    return store.list(limit=max(1, min(limit, 200)), owner_id=_experiment_owner_filter(request))
+    return store.list(
+        limit=max(1, min(limit, 200)), owner_id=_experiment_owner_filter(request)
+    )
 
 
 @router.post("", response_model=ExperimentRun)

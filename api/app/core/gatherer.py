@@ -67,4 +67,9 @@ class Gatherer:
             )
         coverage = min(1.0, len(chunks) / top_k) if top_k else 0.0
         token_estimate = sum(len(chunk.snippet.split()) for chunk in chunks)
-        return EvidenceBundle(chunks=chunks, coverage=coverage, token_estimate=token_estimate, cache_info=cache_info)
+        return EvidenceBundle(
+            chunks=chunks,
+            coverage=coverage,
+            token_estimate=token_estimate,
+            cache_info=cache_info,
+        )

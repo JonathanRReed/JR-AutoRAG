@@ -25,6 +25,7 @@ class TraceBundle(ToDictMixin):
     Contains all information needed to understand and reproduce
     a query's execution through the RAG pipeline.
     """
+
     # Query and response
     query: str
     answer: str
@@ -51,7 +52,6 @@ class TraceBundle(ToDictMixin):
     def __post_init__(self) -> None:
         if not self.created_at:
             self.created_at = datetime.now(UTC).isoformat()
-
 
     def to_json(self, indent: int = 2) -> str:
         """Export as formatted JSON string."""
@@ -135,11 +135,13 @@ def summarize_steps(steps: list[dict[str, Any]]) -> dict[str, Any]:
         duration = step.get("duration_ms", 0.0)
         status = step.get("status", "unknown")
 
-        summary["steps"].append({
-            "name": step_name,
-            "status": status,
-            "duration_ms": duration,
-        })
+        summary["steps"].append(
+            {
+                "name": step_name,
+                "status": status,
+                "duration_ms": duration,
+            }
+        )
         summary["total_duration_ms"] += duration
 
         if duration > max_duration:

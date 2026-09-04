@@ -20,6 +20,7 @@ router = APIRouter(prefix="/providers", tags=["providers"])
 
 class OpenRouterStatus(BaseModel):
     """OpenRouter provider status."""
+
     available: bool
     api_key_configured: bool
     default_model: str
@@ -28,6 +29,7 @@ class OpenRouterStatus(BaseModel):
 
 class OpenRouterModel(BaseModel):
     """OpenRouter model info."""
+
     id: str
     name: str
     context_length: int | None = None
@@ -36,12 +38,14 @@ class OpenRouterModel(BaseModel):
 
 class OpenRouterTestRequest(BaseModel):
     """Request to test OpenRouter connection."""
+
     model: str | None = None
     prompt: str = "Say 'hello' in one word."
 
 
 class OpenRouterTestResponse(BaseModel):
     """Response from OpenRouter test."""
+
     success: bool
     model: str
     response: str | None = None

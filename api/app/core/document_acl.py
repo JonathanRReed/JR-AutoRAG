@@ -43,9 +43,11 @@ def resolve_acl_defaults(auth_enabled: bool) -> tuple[bool, bool]:
 # ACL Types
 # =============================================================================
 
+
 @dataclass
 class DocumentACL:
     """Access control list for a document."""
+
     document_id: str
     owner: str  # User ID who owns the document
     readers: list[str] = field(default_factory=list)  # User IDs or "*" for public
@@ -131,8 +133,12 @@ class DocumentACL:
             owner=data["owner"],
             readers=data.get("readers", []),
             writers=data.get("writers", []),
-            created_at=datetime.fromisoformat(data["created_at"]) if "created_at" in data else datetime.now(UTC),
-            updated_at=datetime.fromisoformat(data["updated_at"]) if "updated_at" in data else datetime.now(UTC),
+            created_at=datetime.fromisoformat(data["created_at"])
+            if "created_at" in data
+            else datetime.now(UTC),
+            updated_at=datetime.fromisoformat(data["updated_at"])
+            if "updated_at" in data
+            else datetime.now(UTC),
             metadata=data.get("metadata", {}),
         )
 
@@ -158,6 +164,7 @@ class DocumentACL:
 # ACL Store
 # =============================================================================
 
+
 class ACLStore:
     """Persistent storage for document ACLs."""
 
@@ -173,8 +180,7 @@ class ACLStore:
                 with open(self._path) as f:
                     data = json.load(f)
                 self._acls = {
-                    doc_id: DocumentACL.from_dict(acl)
-                    for doc_id, acl in data.items()
+                    doc_id: DocumentACL.from_dict(acl) for doc_id, acl in data.items()
                 }
             except Exception as e:
                 logger.warning(f"Failed to load ACLs: {e}")
@@ -218,15 +224,13 @@ class ACLStore:
 
     def list_readable_by(self, user_id: str) -> list[str]:
         """List all document IDs readable by a user."""
-        return [
-            doc_id for doc_id, acl in self._acls.items()
-            if acl.can_read(user_id)
-        ]
+        return [doc_id for doc_id, acl in self._acls.items() if acl.can_read(user_id)]
 
 
 # =============================================================================
 # ACL Enforcer
 # =============================================================================
+
 
 class ACLEnforcer:
     """Enforce document access controls at query time.
@@ -265,7 +269,10 @@ class ACLEnforcer:
         if acl is None:
             if action == "write":
                 if not user_id and self.default_public:
-                    return True, "No ACL defined, default public write (unauthenticated)"
+                    return (
+                        True,
+                        "No ACL defined, default public write (unauthenticated)",
+                    )
                 return False, "No ACL defined for write access"
             if self.default_public:
                 return True, "No ACL defined, default public access"
@@ -341,12 +348,12 @@ class ACLEnforcer:
     def _get_document_id(self, chunk: EvidenceChunk) -> str | None:
         """Extract document ID from a chunk."""
         # Try various attributes
-        if hasattr(chunk, 'document_id'):
+        if hasattr(chunk, "document_id"):
             return chunk.document_id
-        if hasattr(chunk, 'doc_id'):
+        if hasattr(chunk, "doc_id"):
             return chunk.doc_id
-        if hasattr(chunk, 'metadata') and isinstance(chunk.metadata, dict):
-            return chunk.metadata.get('document_id') or chunk.metadata.get('doc_id')
+        if hasattr(chunk, "metadata") and isinstance(chunk.metadata, dict):
+            return chunk.metadata.get("document_id") or chunk.metadata.get("doc_id")
         return None
 
     def create_acl_for_document(
@@ -395,7 +402,9 @@ def get_acl_enforcer(default_public: bool | None = None) -> ACLEnforcer:
     global _acl_enforcer
     if _acl_enforcer is None:
         initial_default = default_public if default_public is not None else True
-        _acl_enforcer = ACLEnforcer(store=get_acl_store(), default_public=initial_default)
+        _acl_enforcer = ACLEnforcer(
+            store=get_acl_store(), default_public=initial_default
+        )
     elif default_public is not None:
         _acl_enforcer.default_public = default_public
     return _acl_enforcer

@@ -22,6 +22,7 @@ from typing import Any
 # Try to import keyring for OS-level secret storage
 try:
     import keyring
+
     KEYRING_AVAILABLE = True
 except ImportError:
     KEYRING_AVAILABLE = False
@@ -31,6 +32,7 @@ try:
     from cryptography.fernet import Fernet
     from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+
     CRYPTO_AVAILABLE = True
 except ImportError:
     CRYPTO_AVAILABLE = False
@@ -48,6 +50,7 @@ VAULT_KEY_ENV = "AUTORAG_VAULT_KEY"
 @dataclass
 class SecretMetadata:
     """Metadata about a stored secret."""
+
     key: str
     created_at: datetime
     updated_at: datetime
@@ -66,12 +69,15 @@ class SecretMetadata:
 # Keychain Backend
 # =============================================================================
 
+
 class KeychainBackend:
     """OS keychain backend for secret storage."""
 
     def __init__(self, service_name: str = SERVICE_NAME) -> None:
         if not KEYRING_AVAILABLE:
-            raise RuntimeError("keyring package not installed. Install with: cd api && uv pip install keyring")
+            raise RuntimeError(
+                "keyring package not installed. Install with: cd api && uv pip install keyring"
+            )
         self.service_name = service_name
 
     def get(self, key: str) -> str | None:
@@ -108,6 +114,7 @@ class KeychainBackend:
 # =============================================================================
 # Encrypted Vault Backend
 # =============================================================================
+
 
 class EncryptedVaultBackend:
     """Encrypted local file vault for secret storage."""
@@ -258,6 +265,7 @@ class EncryptedVaultBackend:
 # =============================================================================
 # Unified Secrets Vault
 # =============================================================================
+
 
 class SecretsVault:
     """Unified secrets vault with fallback between backends.
@@ -431,7 +439,9 @@ class SecretsVault:
             "keychain_available": self._keychain is not None,
             "vault_available": self._vault is not None,
             "stored_keys": len(self.list_keys()),
-            "backend": "keychain" if self._keychain else ("vault" if self._vault else "env_only"),
+            "backend": "keychain"
+            if self._keychain
+            else ("vault" if self._vault else "env_only"),
         }
 
 

@@ -7,7 +7,11 @@ from fastapi.testclient import TestClient
 
 from app.core.config_store import ConfigStore
 from app.core.documents import Document, DocumentStore
-from app.core.experiments import ExperimentConfig, ExperimentRunStore, LocalExperimentRunner
+from app.core.experiments import (
+    ExperimentConfig,
+    ExperimentRunStore,
+    LocalExperimentRunner,
+)
 from app.core.auth import APIKeyAuth
 from app.core.ingest import IngestPipeline
 from app.core.security_middleware import _resolve_required_scope
@@ -69,7 +73,9 @@ def test_quality_endpoints_without_retrieval_startup(tmp_path: Path) -> None:
         experiment_data = experiment.json()
         assert experiment_data["status"] == "completed"
         assert experiment_data["metrics"]
-        assert any(trace.startswith("experiment:") for trace in experiment_data["traces"])
+        assert any(
+            trace.startswith("experiment:") for trace in experiment_data["traces"]
+        )
 
         promoted = client.post(f"/experiments/{experiment_data['id']}/promote")
         assert promoted.status_code == 200
@@ -88,8 +94,24 @@ def test_experiments_endpoints_require_admin_scope() -> None:
     assert _resolve_required_scope("/experiments", "POST") == "admin"
     assert _resolve_required_scope("/experiments/run-1", "GET") == "admin"
     assert _resolve_required_scope("/experiments/run-1/promote", "POST") == "admin"
-    assert auth.verify(read_key, required_scope=_resolve_required_scope("/experiments/run-1/promote", "POST")) is False
-    assert auth.verify(admin_key, required_scope=_resolve_required_scope("/experiments/run-1/promote", "POST")) is True
+    assert (
+        auth.verify(
+            read_key,
+            required_scope=_resolve_required_scope(
+                "/experiments/run-1/promote", "POST"
+            ),
+        )
+        is False
+    )
+    assert (
+        auth.verify(
+            admin_key,
+            required_scope=_resolve_required_scope(
+                "/experiments/run-1/promote", "POST"
+            ),
+        )
+        is True
+    )
 
 
 def test_document_preview_falls_back_from_stored_text(tmp_path: Path) -> None:
@@ -102,7 +124,9 @@ def test_document_preview_falls_back_from_stored_text(tmp_path: Path) -> None:
     assert loaded.text.startswith("## Heading")
 
 
-def test_binary_parser_fallback_does_not_replace_extracted_pdf_text(tmp_path: Path) -> None:
+def test_binary_parser_fallback_does_not_replace_extracted_pdf_text(
+    tmp_path: Path,
+) -> None:
     store = DocumentStore(tmp_path / "documents.db")
     retrieval = FakeRetrieval()
     pipeline = IngestPipeline(store, retrieval, data_dir=tmp_path)
@@ -123,8 +147,12 @@ def test_binary_parser_fallback_does_not_replace_extracted_pdf_text(tmp_path: Pa
 
 def test_recommendations_filter_documents_by_acl(monkeypatch, tmp_path: Path) -> None:
     container = FakeContainer(tmp_path)
-    visible = container.document_store.add("Visible", "text", {"parser_provider": "native"})
-    hidden = container.document_store.add("Hidden", "text", {"parser_provider": "docling"})
+    visible = container.document_store.add(
+        "Visible", "text", {"parser_provider": "native"}
+    )
+    hidden = container.document_store.add(
+        "Hidden", "text", {"parser_provider": "docling"}
+    )
 
     class FakeAuth:
         def require_auth(self) -> bool:
@@ -135,7 +163,10 @@ def test_recommendations_filter_documents_by_acl(monkeypatch, tmp_path: Path) ->
             return document_id == visible.id, "test"
 
     monkeypatch.setattr("app.routers.config.get_auth", lambda: FakeAuth())
-    monkeypatch.setattr("app.routers.config.get_acl_enforcer", lambda default_public=True: FakeEnforcer())
+    monkeypatch.setattr(
+        "app.routers.config.get_acl_enforcer",
+        lambda default_public=True: FakeEnforcer(),
+    )
 
     request = SimpleNamespace(state=SimpleNamespace(scopes=["read"], user_id="user-a"))
     payload = quality_recommendations(request=request, container=container)

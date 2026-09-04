@@ -36,6 +36,7 @@ if TYPE_CHECKING:
 
 class RetrievalModeV2(str, Enum):
     """Retrieval mode for v2 binary quantization."""
+
     FLOAT32 = "float32"
     BINARY = "binary"
 
@@ -49,6 +50,7 @@ class RetrievalModeV2(str, Enum):
 @dataclass
 class RetrievalTimings:
     """Per-stage timing measurements for observability."""
+
     t_embed_query_ms: float = 0.0
     t_quantize_query_ms: float = 0.0
     t_milvus_search_ms: float = 0.0
@@ -70,6 +72,7 @@ class RetrievalTimings:
 @dataclass
 class RetrievalDebug:
     """Debug payload for retrieval operations."""
+
     mode: str
     top_k: int
     candidates_searched: int
@@ -101,6 +104,7 @@ class RetrievalDebug:
 @dataclass
 class RetrievedChunk:
     """A retrieved chunk with metadata for generation layer."""
+
     chunk_id: str
     doc_id: str
     text: str
@@ -198,7 +202,7 @@ class BQRetrievalService:
 
         # Reranker (from float32 engine if available)
         self._reranker = None
-        if float32_engine and hasattr(float32_engine, '_reranker'):
+        if float32_engine and hasattr(float32_engine, "_reranker"):
             self._reranker = float32_engine._reranker
 
     @staticmethod
@@ -227,7 +231,9 @@ class BQRetrievalService:
             start = max(end - overlap, start + 1)
         return chunks
 
-    def _load_chunks_from_docs_path(self, docs_path: str) -> tuple[list[MilvusChunk], dict[str, Any]]:
+    def _load_chunks_from_docs_path(
+        self, docs_path: str
+    ) -> tuple[list[MilvusChunk], dict[str, Any]]:
         """Load text and Markdown files from a directory into embedded Milvus chunks."""
         root = Path(docs_path).expanduser()
         if not root.exists():
@@ -256,18 +262,20 @@ class BQRetrievalService:
             doc_id = sha256(rel_source.encode("utf-8")).hexdigest()[:16]
             for index, chunk_text in enumerate(text_chunks):
                 embedding, _ = self._embed_query(chunk_text)
-                chunks.append(MilvusChunk(
-                    doc_id=doc_id,
-                    chunk_id=f"{doc_id}-{index}",
-                    source=rel_source,
-                    text=chunk_text,
-                    metadata={
-                        "source_path": rel_source,
-                        "chunk_index": index,
-                        "index_source": "docs_path",
-                    },
-                    embedding=embedding,
-                ))
+                chunks.append(
+                    MilvusChunk(
+                        doc_id=doc_id,
+                        chunk_id=f"{doc_id}-{index}",
+                        source=rel_source,
+                        text=chunk_text,
+                        metadata={
+                            "source_path": rel_source,
+                            "chunk_index": index,
+                            "index_source": "docs_path",
+                        },
+                        embedding=embedding,
+                    )
+                )
 
         return chunks, {
             "documents_scanned": len(files),
@@ -307,7 +315,7 @@ class BQRetrievalService:
 
         if self._embed_fn:
             embedding = self._embed_fn(query)
-        elif self._float32_engine and hasattr(self._float32_engine, '_embedder'):
+        elif self._float32_engine and hasattr(self._float32_engine, "_embedder"):
             embedder = self._float32_engine._embedder
             if embedder:
                 embedding = embedder.encode(query).tolist()
@@ -353,9 +361,7 @@ class BQRetrievalService:
 
         # Route to appropriate retrieval mode
         if mode == RetrievalModeV2.BINARY:
-            chunks, debug = self._retrieve_binary(
-                query, embedding, k, filters, timings
-            )
+            chunks, debug = self._retrieve_binary(query, embedding, k, filters, timings)
         else:
             chunks, debug = self._retrieve_float32(
                 query, embedding, k, filters, timings
@@ -399,7 +405,7 @@ class BQRetrievalService:
                     if isinstance(value, str):
                         filter_parts.append(f'{key} == "{value}"')
                     else:
-                        filter_parts.append(f'{key} == {value}')
+                        filter_parts.append(f"{key} == {value}")
                 if filter_parts:
                     filter_expr = " and ".join(filter_parts)
 
@@ -410,8 +416,7 @@ class BQRetrievalService:
             # Fallback to float32 if Milvus fails
             if self._config.fallback_enabled and self._float32_engine:
                 return self._fallback_to_float32(
-                    query, embedding, k, filters, timings,
-                    reason=f"Milvus error: {e}"
+                    query, embedding, k, filters, timings, reason=f"Milvus error: {e}"
                 )
             raise
 
@@ -419,14 +424,25 @@ class BQRetrievalService:
         if self._config.fallback_enabled:
             if len(results) < self._config.fallback_min_results:
                 return self._fallback_to_float32(
-                    query, embedding, k, filters, timings,
-                    reason=f"Insufficient results: {len(results)}"
+                    query,
+                    embedding,
+                    k,
+                    filters,
+                    timings,
+                    reason=f"Insufficient results: {len(results)}",
                 )
 
-            if results and results[0].distance > self._config.fallback_distance_threshold:
+            if (
+                results
+                and results[0].distance > self._config.fallback_distance_threshold
+            ):
                 return self._fallback_to_float32(
-                    query, embedding, k, filters, timings,
-                    reason=f"High distance: {results[0].distance}"
+                    query,
+                    embedding,
+                    k,
+                    filters,
+                    timings,
+                    reason=f"High distance: {results[0].distance}",
                 )
 
         # Two-stage reranking if enabled
@@ -481,16 +497,18 @@ class BQRetrievalService:
         context_start = time.perf_counter()
         chunks = []
         for result in results:
-            chunks.append(RetrievedChunk(
-                chunk_id=result.chunk_id,
-                doc_id=result.document.id if result.document else "",
-                text=result.chunk_text,
-                score=result.score,
-                source=result.document.title if result.document else "",
-                metadata=result.document.metadata if result.document else {},
-                start_char=result.start_char,
-                end_char=result.end_char,
-            ))
+            chunks.append(
+                RetrievedChunk(
+                    chunk_id=result.chunk_id,
+                    doc_id=result.document.id if result.document else "",
+                    text=result.chunk_text,
+                    score=result.score,
+                    source=result.document.title if result.document else "",
+                    metadata=result.document.metadata if result.document else {},
+                    start_char=result.start_char,
+                    end_char=result.end_char,
+                )
+            )
         timings.t_context_build_ms = (time.perf_counter() - context_start) * 1000
 
         debug = RetrievalDebug(
@@ -567,14 +585,16 @@ class BQRetrievalService:
         """Convert Milvus results to RetrievedChunk format."""
         chunks = []
         for result in results:
-            chunks.append(RetrievedChunk(
-                chunk_id=result.chunk_id,
-                doc_id=result.doc_id,
-                text=result.text,
-                score=result.score,
-                source=result.source,
-                metadata=result.metadata,
-            ))
+            chunks.append(
+                RetrievedChunk(
+                    chunk_id=result.chunk_id,
+                    doc_id=result.doc_id,
+                    text=result.text,
+                    score=result.score,
+                    source=result.source,
+                    metadata=result.metadata,
+                )
+            )
         return chunks
 
     def index_documents(
@@ -657,7 +677,9 @@ class BQRetrievalService:
         # Float32 index stats
         if self._float32_engine:
             stats["float32"] = {
-                "chunks": len(self._float32_engine._chunks) if hasattr(self._float32_engine, '_chunks') else 0,
+                "chunks": len(self._float32_engine._chunks)
+                if hasattr(self._float32_engine, "_chunks")
+                else 0,
             }
 
         return stats
@@ -672,7 +694,11 @@ class BQRetrievalService:
             self._milvus_store.clear()
             self._milvus_initialized = False
 
-        if (mode is None or mode == RetrievalModeV2.FLOAT32) and self._float32_engine and hasattr(self._float32_engine, 'clear'):
+        if (
+            (mode is None or mode == RetrievalModeV2.FLOAT32)
+            and self._float32_engine
+            and hasattr(self._float32_engine, "clear")
+        ):
             self._float32_engine.clear()
 
 

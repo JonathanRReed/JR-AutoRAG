@@ -195,7 +195,9 @@ class TestBQRetrievalService:
             "# Handbook\n\nInstall locally. Keep client data in the client-owned data volume.",
             encoding="utf-8",
         )
-        (docs_dir / "notes.txt").write_text("Use API-key auth before client exposure.", encoding="utf-8")
+        (docs_dir / "notes.txt").write_text(
+            "Use API-key auth before client exposure.", encoding="utf-8"
+        )
         (docs_dir / "ignored.pdf").write_text("unsupported", encoding="utf-8")
 
         class FakeStore:
@@ -221,13 +223,22 @@ class TestBQRetrievalService:
         assert result["documents_scanned"] == 2
         assert result["collection"] == service._config.milvus_config.collection_name
         assert store.index_built is True
-        assert {chunk.source for chunk in store.inserted} == {"handbook.md", "notes.txt"}
+        assert {chunk.source for chunk in store.inserted} == {
+            "handbook.md",
+            "notes.txt",
+        }
         assert all(chunk.embedding == [0.1] * 768 for chunk in store.inserted)
-        assert all(chunk.metadata["index_source"] == "docs_path" for chunk in store.inserted)
+        assert all(
+            chunk.metadata["index_source"] == "docs_path" for chunk in store.inserted
+        )
 
-    def test_index_documents_reports_invalid_docs_path_without_milvus(self, monkeypatch):
+    def test_index_documents_reports_invalid_docs_path_without_milvus(
+        self, monkeypatch
+    ):
         service = BQRetrievalService(embed_fn=lambda _text: [0.1] * 768)
-        ensure_milvus = MagicMock(side_effect=AssertionError("should not initialize Milvus"))
+        ensure_milvus = MagicMock(
+            side_effect=AssertionError("should not initialize Milvus")
+        )
         monkeypatch.setattr(service, "_ensure_milvus", ensure_milvus)
 
         result = service.index_documents(docs_path="/does/not/exist")

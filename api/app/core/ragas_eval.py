@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 @dataclass
 class RAGASMetrics:
     """Complete RAGAS evaluation metrics."""
+
     faithfulness: float  # 0-1: claims supported by context
     answer_relevance: float  # 0-1: answer addresses query
     context_precision: float  # 0-1: context relevance to query
@@ -44,6 +45,7 @@ class RAGASMetrics:
 @dataclass
 class InvocationMetrics:
     """Metrics for retrieval invocation correctness."""
+
     should_have_retrieved: bool
     did_retrieve: bool
     correct_invocation: bool
@@ -74,12 +76,61 @@ class RAGASEvaluator:
 
     # Stopwords for overlap calculations
     STOPWORDS = {
-        'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
-        'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
-        'should', 'may', 'might', 'must', 'shall', 'can', 'and', 'but', 'or',
-        'if', 'then', 'else', 'when', 'where', 'why', 'how', 'all', 'each',
-        'for', 'to', 'of', 'in', 'on', 'at', 'by', 'with', 'from', 'as',
-        'this', 'that', 'these', 'those', 'it', 'its', 'they', 'them',
+        "the",
+        "a",
+        "an",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "will",
+        "would",
+        "could",
+        "should",
+        "may",
+        "might",
+        "must",
+        "shall",
+        "can",
+        "and",
+        "but",
+        "or",
+        "if",
+        "then",
+        "else",
+        "when",
+        "where",
+        "why",
+        "how",
+        "all",
+        "each",
+        "for",
+        "to",
+        "of",
+        "in",
+        "on",
+        "at",
+        "by",
+        "with",
+        "from",
+        "as",
+        "this",
+        "that",
+        "these",
+        "those",
+        "it",
+        "its",
+        "they",
+        "them",
     }
 
     def __init__(
@@ -99,12 +150,12 @@ class RAGASEvaluator:
 
     def _tokenize(self, text: str) -> set[str]:
         """Tokenize and filter stopwords."""
-        words = re.findall(r'\b[a-z]+\b', text.lower())
+        words = re.findall(r"\b[a-z]+\b", text.lower())
         return {w for w in words if w not in self.STOPWORDS and len(w) > 2}
 
     def _extract_sentences(self, text: str) -> list[str]:
         """Extract sentences from text."""
-        sentences = re.split(r'(?<=[.!?])\s+', text)
+        sentences = re.split(r"(?<=[.!?])\s+", text)
         return [s.strip() for s in sentences if len(s.split()) >= 4]
 
     def _extract_claims(self, answer: str) -> list[str]:
@@ -114,14 +165,16 @@ class RAGASEvaluator:
 
         # Filter to likely factual claims
         claim_patterns = [
-            r'\b(is|are|was|were|has|have|will|can)\b',
-            r'\d+',  # Contains numbers
-            r'\b(because|therefore|thus|since)\b',
+            r"\b(is|are|was|were|has|have|will|can)\b",
+            r"\d+",  # Contains numbers
+            r"\b(because|therefore|thus|since)\b",
         ]
 
         for sentence in sentences:
             # Skip meta sentences
-            if sentence.lower().startswith(('note:', 'sources:', '##', '[', 'references')):
+            if sentence.lower().startswith(
+                ("note:", "sources:", "##", "[", "references")
+            ):
                 continue
             if any(re.search(p, sentence, re.I) for p in claim_patterns):
                 claims.append(sentence)
@@ -158,21 +211,27 @@ class RAGASEvaluator:
             overlap = len(claim_terms & context_terms) / len(claim_terms)
 
             # Check for citation markers
-            has_citation = bool(re.search(r'\[\d+\]|\(Doc:|ChunkID:', claim))
+            has_citation = bool(re.search(r"\[\d+\]|\(Doc:|ChunkID:", claim))
 
             is_supported = overlap > 0.4 or has_citation
             if is_supported:
                 supported_count += 1
 
-            claim_details.append({
-                "claim": claim[:80] + "..." if len(claim) > 80 else claim,
-                "overlap": round(overlap, 3),
-                "has_citation": has_citation,
-                "supported": is_supported,
-            })
+            claim_details.append(
+                {
+                    "claim": claim[:80] + "..." if len(claim) > 80 else claim,
+                    "overlap": round(overlap, 3),
+                    "has_citation": has_citation,
+                    "supported": is_supported,
+                }
+            )
 
         score = supported_count / len(claims) if claims else 1.0
-        return score, {"claims": len(claims), "supported": supported_count, "details": claim_details[:5]}
+        return score, {
+            "claims": len(claims),
+            "supported": supported_count,
+            "details": claim_details[:5],
+        }
 
     def evaluate_answer_relevance(
         self,
@@ -195,11 +254,11 @@ class RAGASEvaluator:
 
         # Check if answer addresses question type
         wh_patterns = {
-            'what': r'\b(is|are|refers to|means|definition)\b',
-            'how': r'\b(by|through|using|steps?|process)\b',
-            'why': r'\b(because|reason|due to|since|therefore)\b',
-            'when': r'\b(in \d{4}|\d+ (days?|years?|months?))\b',
-            'where': r'\b(in|at|located|place|location)\b',
+            "what": r"\b(is|are|refers to|means|definition)\b",
+            "how": r"\b(by|through|using|steps?|process)\b",
+            "why": r"\b(because|reason|due to|since|therefore)\b",
+            "when": r"\b(in \d{4}|\d+ (days?|years?|months?))\b",
+            "where": r"\b(in|at|located|place|location)\b",
         }
 
         question_type = None
@@ -210,7 +269,9 @@ class RAGASEvaluator:
 
         type_addressed = 1.0
         if question_type and question_type in wh_patterns:
-            type_addressed = 1.0 if re.search(wh_patterns[question_type], answer, re.I) else 0.5
+            type_addressed = (
+                1.0 if re.search(wh_patterns[question_type], answer, re.I) else 0.5
+            )
 
         # Combined score
         score = 0.6 * query_coverage + 0.4 * type_addressed
@@ -244,12 +305,18 @@ class RAGASEvaluator:
         chunk_scores = []
         for chunk in chunks:
             chunk_terms = self._tokenize(chunk.snippet)
-            overlap = len(query_terms & chunk_terms) / len(query_terms) if chunk_terms else 0.0
-            chunk_scores.append({
-                "id": chunk.id,
-                "retrieval_score": chunk.score,
-                "term_overlap": round(overlap, 3),
-            })
+            overlap = (
+                len(query_terms & chunk_terms) / len(query_terms)
+                if chunk_terms
+                else 0.0
+            )
+            chunk_scores.append(
+                {
+                    "id": chunk.id,
+                    "retrieval_score": chunk.score,
+                    "term_overlap": round(overlap, 3),
+                }
+            )
 
         # Weight by position (earlier chunks matter more)
         weighted_sum = 0.0
@@ -320,10 +387,10 @@ class RAGASEvaluator:
 
         # Weighted overall score
         overall = (
-            self.weights["faithfulness"] * faithfulness +
-            self.weights["relevance"] * relevance +
-            self.weights["precision"] * precision +
-            self.weights["recall"] * recall
+            self.weights["faithfulness"] * faithfulness
+            + self.weights["relevance"] * relevance
+            + self.weights["precision"] * precision
+            + self.weights["recall"] * recall
         )
 
         return RAGASMetrics(
@@ -350,10 +417,10 @@ class InvocationEvaluator:
 
     # Queries that typically don't need retrieval
     NO_RETRIEVAL_PATTERNS = [
-        r'^(hi|hello|hey|thanks?|bye|goodbye)\b',
-        r'^what can you (do|help)',
-        r'^who are you\b',
-        r'\b(calculate|compute|math)\b.*\d+',
+        r"^(hi|hello|hey|thanks?|bye|goodbye)\b",
+        r"^what can you (do|help)",
+        r"^who are you\b",
+        r"\b(calculate|compute|math)\b.*\d+",
     ]
 
     def __init__(self):
@@ -368,9 +435,9 @@ class InvocationEvaluator:
 
         # Check if answer suggests retrieval was needed
         needs_retrieval_signals = [
-            r'\b(according to|based on|the document|source)\b',
-            r'\[\d+\]',  # Citations
-            r'\b(states|mentions|describes|explains)\b',
+            r"\b(according to|based on|the document|source)\b",
+            r"\[\d+\]",  # Citations
+            r"\b(states|mentions|describes|explains)\b",
         ]
 
         for pattern in needs_retrieval_signals:
@@ -402,7 +469,7 @@ class InvocationEvaluator:
         """
         should_retrieve = self._should_have_retrieved(query, answer)
 
-        correct = (should_retrieve == did_retrieve)
+        correct = should_retrieve == did_retrieve
 
         # Retrieval helped if quality is good and we did retrieve
         retrieval_helped = did_retrieve and answer_quality > 0.6 and chunks_used > 0

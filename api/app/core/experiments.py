@@ -68,20 +68,29 @@ class ExperimentRunStore:
         return data if isinstance(data, list) else []
 
     def _write(self, runs: list[dict[str, object]]) -> None:
-        self._path.write_text(json.dumps(runs, indent=2, sort_keys=True), encoding="utf-8")
+        self._path.write_text(
+            json.dumps(runs, indent=2, sort_keys=True), encoding="utf-8"
+        )
 
-    def list(self, limit: int = 50, owner_id: str | None = None) -> list[dict[str, object]]:
+    def list(
+        self, limit: int = 50, owner_id: str | None = None
+    ) -> list[dict[str, object]]:
         with self._lock:
             runs = self._read()
             if owner_id is not None:
-                runs = [run for run in runs if run.get("owner_id", "anonymous") == owner_id]
+                runs = [
+                    run for run in runs if run.get("owner_id", "anonymous") == owner_id
+                ]
             return list(reversed(runs))[:limit]
 
     def get(self, run_id: str, owner_id: str | None = None) -> dict[str, object] | None:
         with self._lock:
             for run in self._read():
                 if run.get("id") == run_id:
-                    if owner_id is not None and run.get("owner_id", "anonymous") != owner_id:
+                    if (
+                        owner_id is not None
+                        and run.get("owner_id", "anonymous") != owner_id
+                    ):
                         return None
                     return run
         return None
@@ -100,7 +109,9 @@ class ExperimentRunStore:
             target: dict[str, object] | None = None
             for run in runs:
                 if run.get("id") == run_id:
-                    run["promoted_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                    run["promoted_at"] = time.strftime(
+                        "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+                    )
                     target = run
                     break
             if target is not None:
@@ -143,7 +154,11 @@ class LocalExperimentRunner:
         )
         readiness = min(
             1.0,
-            0.45 + feature_score + (balance_score * 0.25) + (corpus_score * 0.15) + matrix_score,
+            0.45
+            + feature_score
+            + (balance_score * 0.25)
+            + (corpus_score * 0.15)
+            + matrix_score,
         )
         winning_preset = self._recommend_preset(app_config, readiness)
         now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -158,8 +173,16 @@ class LocalExperimentRunner:
             metrics=[
                 EvalMetricResult("faithfulness", readiness),
                 EvalMetricResult("context_precision", min(1.0, readiness + 0.06)),
-                EvalMetricResult("context_recall", min(1.0, readiness + (0.04 if doc_count else -0.2))),
-                EvalMetricResult("local_only_compliance", 1.0 if app_config.deployment_profile.value == "local_only" else 0.75),
+                EvalMetricResult(
+                    "context_recall",
+                    min(1.0, readiness + (0.04 if doc_count else -0.2)),
+                ),
+                EvalMetricResult(
+                    "local_only_compliance",
+                    1.0
+                    if app_config.deployment_profile.value == "local_only"
+                    else 0.75,
+                ),
                 EvalMetricResult("matrix_coverage", min(1.0, matrix_score / 0.11)),
             ],
             winning_preset=winning_preset,

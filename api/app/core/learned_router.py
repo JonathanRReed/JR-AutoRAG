@@ -21,18 +21,20 @@ from .utils import count_matches
 
 class RouteDecision(str, Enum):
     """Routing decisions for query handling."""
-    NO_RETRIEVAL = "no_retrieval"   # LLM can answer directly
-    SINGLE = "single"               # Single retrieval pass
-    ITERATIVE = "iterative"         # Multiple retrieval iterations
-    CLARIFY = "clarify"             # Ask for clarification first
-    GRAPH = "graph"                 # Use GraphRAG for entity queries
-    RAPTOR = "raptor"               # Use RAPTOR for hierarchical queries
-    HYBRID_HEAVY = "hybrid_heavy"   # Dense + sparse with reranking
+
+    NO_RETRIEVAL = "no_retrieval"  # LLM can answer directly
+    SINGLE = "single"  # Single retrieval pass
+    ITERATIVE = "iterative"  # Multiple retrieval iterations
+    CLARIFY = "clarify"  # Ask for clarification first
+    GRAPH = "graph"  # Use GraphRAG for entity queries
+    RAPTOR = "raptor"  # Use RAPTOR for hierarchical queries
+    HYBRID_HEAVY = "hybrid_heavy"  # Dense + sparse with reranking
 
 
 @dataclass
 class RouterFeatures:
     """Feature vector for routing decision."""
+
     query_length: int
     word_count: int
     has_wh_word: bool
@@ -74,6 +76,7 @@ class RouterFeatures:
 @dataclass
 class LearnedRouteResult:
     """Result from learned router."""
+
     decision: RouteDecision
     confidence: float
     suggested_k: int
@@ -86,6 +89,7 @@ class LearnedRouteResult:
 @dataclass
 class RoutingOutcome:
     """Recorded outcome for learning."""
+
     query: str
     features: RouterFeatures
     decision: RouteDecision
@@ -110,50 +114,87 @@ class LearnedRouter:
 
     # Question word categories
     WH_WORDS = {
-        'what': 'factual',
-        'who': 'entity',
-        'where': 'location',
-        'when': 'temporal',
-        'why': 'analytical',
-        'how': 'procedural',
-        'which': 'selection',
+        "what": "factual",
+        "who": "entity",
+        "where": "location",
+        "when": "temporal",
+        "why": "analytical",
+        "how": "procedural",
+        "which": "selection",
     }
 
     # Signal patterns
     COMPARISON_PATTERNS = [
-        r'\bvs\.?\b', r'\bversus\b', r'\bcompare\b', r'\bdifference\b',
-        r'\bbetter\b', r'\bworse\b', r'\bor\b.*\bor\b', r'\badvantages?\b',
-        r'\bdisadvantages?\b', r'\bpros?\b.*\bcons?\b',
+        r"\bvs\.?\b",
+        r"\bversus\b",
+        r"\bcompare\b",
+        r"\bdifference\b",
+        r"\bbetter\b",
+        r"\bworse\b",
+        r"\bor\b.*\bor\b",
+        r"\badvantages?\b",
+        r"\bdisadvantages?\b",
+        r"\bpros?\b.*\bcons?\b",
     ]
 
     PROCEDURAL_PATTERNS = [
-        r'\bhow to\b', r'\bsteps?\b', r'\bprocess\b', r'\bguide\b',
-        r'\btutorial\b', r'\binstructions?\b', r'\bprocedure\b',
+        r"\bhow to\b",
+        r"\bsteps?\b",
+        r"\bprocess\b",
+        r"\bguide\b",
+        r"\btutorial\b",
+        r"\binstructions?\b",
+        r"\bprocedure\b",
     ]
 
     FACTUAL_PATTERNS = [
-        r'^what is\b', r'^define\b', r'\bdefinition\b', r'\bmeaning\b',
-        r'^who is\b', r'^where is\b', r'\bfact\b',
+        r"^what is\b",
+        r"^define\b",
+        r"\bdefinition\b",
+        r"\bmeaning\b",
+        r"^who is\b",
+        r"^where is\b",
+        r"\bfact\b",
     ]
 
     ANALYTICAL_PATTERNS = [
-        r'\bwhy\b', r'\breason\b', r'\bcause\b', r'\bexplain\b',
-        r'\banalyze\b', r'\bevaluate\b', r'\bimpact\b', r'\beffect\b',
+        r"\bwhy\b",
+        r"\breason\b",
+        r"\bcause\b",
+        r"\bexplain\b",
+        r"\banalyze\b",
+        r"\bevaluate\b",
+        r"\bimpact\b",
+        r"\beffect\b",
     ]
 
     AMBIGUITY_PATTERNS = [
-        r'\bmight\b', r'\bcould\b', r'\bmaybe\b', r'\bpossibly\b',
-        r'\bsometimes\b', r'\bperhaps\b', r'\bunclear\b',
+        r"\bmight\b",
+        r"\bcould\b",
+        r"\bmaybe\b",
+        r"\bpossibly\b",
+        r"\bsometimes\b",
+        r"\bperhaps\b",
+        r"\bunclear\b",
     ]
 
     TEMPORAL_PATTERNS = [
-        r'\bwhen\b', r'\bdate\b', r'\byear\b', r'\btime\b',
-        r'\brecent\b', r'\blatest\b', r'\bhistory\b', r'\bfuture\b',
+        r"\bwhen\b",
+        r"\bdate\b",
+        r"\byear\b",
+        r"\btime\b",
+        r"\brecent\b",
+        r"\blatest\b",
+        r"\bhistory\b",
+        r"\bfuture\b",
     ]
 
     LIST_PATTERNS = [
-        r'\blist\b', r'\benumerate\b', r'\ball\b.*\b(ways|types|kinds)\b',
-        r'\bexamples?\b', r'\btop \d+\b',
+        r"\blist\b",
+        r"\benumerate\b",
+        r"\ball\b.*\b(ways|types|kinds)\b",
+        r"\bexamples?\b",
+        r"\btop \d+\b",
     ]
 
     # Decision weights (would be learned in production)
@@ -214,17 +255,17 @@ class LearnedRouter:
         wh_word_type = None
         has_wh = False
         for word in words[:3]:  # Check first 3 words
-            clean_word = re.sub(r'[^\w]', '', word)
+            clean_word = re.sub(r"[^\w]", "", word)
             if clean_word in self.WH_WORDS:
                 has_wh = True
                 wh_word_type = self.WH_WORDS[clean_word]
                 break
 
         # Count entities (capitalized words not at sentence start)
-        entity_count = len(re.findall(r'(?<!^)(?<!\. )[A-Z][a-z]+', query))
+        entity_count = len(re.findall(r"(?<!^)(?<!\. )[A-Z][a-z]+", query))
 
         # Count numbers
-        numeric_count = len(re.findall(r'\b\d+[\d,\.]*\b', query))
+        numeric_count = len(re.findall(r"\b\d+[\d,\.]*\b", query))
 
         # Detect signals
         comparison = count_matches(self._comparison_re, query) > 0
@@ -234,7 +275,7 @@ class LearnedRouter:
         ambiguity = count_matches(self._ambiguity_re, query) > 0
         temporal = count_matches(self._temporal_re, query) > 0
         list_signal = count_matches(self._list_re, query) > 0
-        negation = bool(re.search(r'\b(not|no|never|without|except)\b', query, re.I))
+        negation = bool(re.search(r"\b(not|no|never|without|except)\b", query, re.I))
 
         # Compute complexity score
         complexity = 0.0
@@ -277,7 +318,9 @@ class LearnedRouter:
         decision, confidence, reasoning = self._make_decision(features, query)
 
         # Determine parameters based on decision
-        suggested_k, use_rerank, max_iterations = self._get_parameters(decision, features)
+        suggested_k, use_rerank, max_iterations = self._get_parameters(
+            decision, features
+        )
 
         return LearnedRouteResult(
             decision=decision,
@@ -299,36 +342,52 @@ class LearnedRouter:
 
         # NO_RETRIEVAL: Simple greetings or meta-questions
         if features.word_count < 5 and not features.has_wh_word:
-            greetings = ['hello', 'hi', 'hey', 'thanks', 'bye', 'help']
+            greetings = ["hello", "hi", "hey", "thanks", "bye", "help"]
             if any(query_lower.startswith(g) for g in greetings):
                 return RouteDecision.NO_RETRIEVAL, 0.9, "Simple greeting detected"
 
         # CLARIFY: Ambiguous or incomplete queries
-        if features.ambiguity_signal or (features.word_count < 4 and not features.has_wh_word):
+        if features.ambiguity_signal or (
+            features.word_count < 4 and not features.has_wh_word
+        ):
             return RouteDecision.CLARIFY, 0.7, "Query appears ambiguous or incomplete"
 
         # ITERATIVE: Complex comparative or multi-aspect queries
         if features.comparison_signal:
-            return RouteDecision.ITERATIVE, 0.85, "Comparison query requires multiple retrievals"
+            return (
+                RouteDecision.ITERATIVE,
+                0.85,
+                "Comparison query requires multiple retrievals",
+            )
 
         if features.complexity_score > 0.6:
-            return RouteDecision.ITERATIVE, 0.75, f"High complexity score ({features.complexity_score:.2f})"
+            return (
+                RouteDecision.ITERATIVE,
+                0.75,
+                f"High complexity score ({features.complexity_score:.2f})",
+            )
 
         if features.list_signal and features.word_count > 10:
             return RouteDecision.ITERATIVE, 0.7, "List query with complexity"
 
         # GRAPH: Entity-focused or relationship queries
-        if features.entity_count >= 2 and ('relationship' in query_lower or 'between' in query_lower):
+        if features.entity_count >= 2 and (
+            "relationship" in query_lower or "between" in query_lower
+        ):
             return RouteDecision.GRAPH, 0.8, "Entity relationship query"
 
         # RAPTOR: Hierarchical or overview queries
-        hierarchical_words = ['overview', 'summary', 'section', 'chapter', 'outline']
+        hierarchical_words = ["overview", "summary", "section", "chapter", "outline"]
         if any(w in query_lower for w in hierarchical_words):
             return RouteDecision.RAPTOR, 0.75, "Hierarchical/overview query"
 
         # HYBRID_HEAVY: Queries needing precision
         if features.entity_count > 0 and features.factual_signal:
-            return RouteDecision.HYBRID_HEAVY, 0.7, "Factual entity query needs precision"
+            return (
+                RouteDecision.HYBRID_HEAVY,
+                0.7,
+                "Factual entity query needs precision",
+            )
 
         # SINGLE: Default for straightforward queries
         return RouteDecision.SINGLE, 0.6, "Standard single-pass retrieval"
@@ -386,15 +445,17 @@ class LearnedRouter:
 
         data = []
         for outcome in self._history[-1000:]:  # Keep last 1000
-            data.append({
-                "query": outcome.query,
-                "features": outcome.features.to_dict(),
-                "decision": outcome.decision.value,
-                "success": outcome.success,
-                "answer_quality": outcome.answer_quality,
-                "latency_ms": outcome.latency_ms,
-                "chunks_used": outcome.chunks_used,
-            })
+            data.append(
+                {
+                    "query": outcome.query,
+                    "features": outcome.features.to_dict(),
+                    "decision": outcome.decision.value,
+                    "success": outcome.success,
+                    "answer_quality": outcome.answer_quality,
+                    "latency_ms": outcome.latency_ms,
+                    "chunks_used": outcome.chunks_used,
+                }
+            )
 
         self._history_path.parent.mkdir(parents=True, exist_ok=True)
         with open(self._history_path, "w") as f:

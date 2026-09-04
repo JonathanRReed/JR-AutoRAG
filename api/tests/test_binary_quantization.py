@@ -173,7 +173,7 @@ class TestBatchFloat32ToBinary:
 
         assert len(results) == 3
         assert results[0][0] == 255  # All positive
-        assert results[1][0] == 0    # All negative
+        assert results[1][0] == 0  # All negative
         assert results[2][0] == 170  # Alternating
 
     def test_numpy_batch(self):

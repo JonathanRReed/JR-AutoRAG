@@ -33,6 +33,7 @@ if TYPE_CHECKING:
 # Thresholds
 # =============================================================================
 
+
 @dataclass
 class EvalThresholds:
     """Quality thresholds for evaluation gates.
@@ -40,6 +41,7 @@ class EvalThresholds:
     All values are 0.0-1.0 (percentages) except latency which is in ms.
     Default values are conservative production-ready thresholds.
     """
+
     # Retrieval quality
     citation_coverage_min: float = 0.85
     recall_at_k_min: float = 0.70
@@ -117,9 +119,11 @@ class EvalThresholds:
 # Gate Results
 # =============================================================================
 
+
 @dataclass
 class GateCheck:
     """Result of checking a single gate."""
+
     name: str
     actual: float
     threshold: float
@@ -133,13 +137,16 @@ class GateCheck:
             "threshold": self.threshold,
             "passed": self.passed,
             "margin": self.margin,
-            "margin_pct": (self.margin / self.threshold * 100) if self.threshold > 0 else 0,
+            "margin_pct": (self.margin / self.threshold * 100)
+            if self.threshold > 0
+            else 0,
         }
 
 
 @dataclass
 class EvalGateResult:
     """Result of evaluating with gates."""
+
     run_id: str
     timestamp: str
     golden_set_name: str
@@ -186,6 +193,7 @@ class EvalGateFailure(Exception):
 # =============================================================================
 # Gated Evaluator
 # =============================================================================
+
 
 class GatedEvaluator:
     """Evaluator that enforces quality thresholds as gates.
@@ -257,56 +265,74 @@ class GatedEvaluator:
         checks = []
 
         # Retrieval gates (higher is better)
-        checks.append(self._check_min(
-            "citation_coverage",
-            result.retrieval_metrics.citation_coverage,
-            thresholds.citation_coverage_min,
-        ))
-        checks.append(self._check_min(
-            "recall_at_k",
-            result.retrieval_metrics.recall_at_k,
-            thresholds.recall_at_k_min,
-        ))
-        checks.append(self._check_min(
-            "mrr",
-            result.retrieval_metrics.mrr,
-            thresholds.mrr_min,
-        ))
-        checks.append(self._check_min(
-            "ndcg",
-            result.retrieval_metrics.ndcg,
-            thresholds.ndcg_min,
-        ))
+        checks.append(
+            self._check_min(
+                "citation_coverage",
+                result.retrieval_metrics.citation_coverage,
+                thresholds.citation_coverage_min,
+            )
+        )
+        checks.append(
+            self._check_min(
+                "recall_at_k",
+                result.retrieval_metrics.recall_at_k,
+                thresholds.recall_at_k_min,
+            )
+        )
+        checks.append(
+            self._check_min(
+                "mrr",
+                result.retrieval_metrics.mrr,
+                thresholds.mrr_min,
+            )
+        )
+        checks.append(
+            self._check_min(
+                "ndcg",
+                result.retrieval_metrics.ndcg,
+                thresholds.ndcg_min,
+            )
+        )
 
         # Answer gates (higher is better)
-        checks.append(self._check_min(
-            "faithfulness",
-            result.answer_metrics.faithfulness,
-            thresholds.faithfulness_min,
-        ))
-        checks.append(self._check_min(
-            "completeness",
-            result.answer_metrics.completeness,
-            thresholds.completeness_min,
-        ))
-        checks.append(self._check_min(
-            "coherence",
-            result.answer_metrics.coherence,
-            thresholds.coherence_min,
-        ))
-        checks.append(self._check_min(
-            "refusal_accuracy",
-            result.answer_metrics.refusal_accuracy,
-            thresholds.abstention_accuracy_min,
-        ))
+        checks.append(
+            self._check_min(
+                "faithfulness",
+                result.answer_metrics.faithfulness,
+                thresholds.faithfulness_min,
+            )
+        )
+        checks.append(
+            self._check_min(
+                "completeness",
+                result.answer_metrics.completeness,
+                thresholds.completeness_min,
+            )
+        )
+        checks.append(
+            self._check_min(
+                "coherence",
+                result.answer_metrics.coherence,
+                thresholds.coherence_min,
+            )
+        )
+        checks.append(
+            self._check_min(
+                "refusal_accuracy",
+                result.answer_metrics.refusal_accuracy,
+                thresholds.abstention_accuracy_min,
+            )
+        )
 
         # Latency gates (lower is better)
         p95_latency = self._compute_p95_latency(result)
-        checks.append(self._check_max(
-            "p95_latency",
-            p95_latency,
-            thresholds.p95_latency_max_ms,
-        ))
+        checks.append(
+            self._check_max(
+                "p95_latency",
+                p95_latency,
+                thresholds.p95_latency_max_ms,
+            )
+        )
 
         return checks
 
@@ -530,6 +556,7 @@ def install_builtin_datasets(store: GoldenSetStore | None = None) -> int:
 # CLI Helper
 # =============================================================================
 
+
 def run_eval_gates_cli(
     golden_set: str,
     strict: bool = False,
@@ -559,6 +586,7 @@ def run_eval_gates_cli(
     # We need an orchestrator - this would be injected in real usage
     # For CLI, we'd use the service container
     from ..services import get_container
+
     container = get_container()
 
     # Run evaluation
@@ -578,7 +606,9 @@ def run_eval_gates_cli(
 
     for check in result.gate_checks:
         status = "PASS" if check.passed else "FAIL"
-        print(f"  {status} {check.name}: {check.actual:.3f} (threshold: {check.threshold:.3f})")
+        print(
+            f"  {status} {check.name}: {check.actual:.3f} (threshold: {check.threshold:.3f})"
+        )
 
     if not result.all_passed:
         print(f"\nBuild FAILED: {len(result.failed_gates)} gate(s) did not pass")

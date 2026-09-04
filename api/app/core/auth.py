@@ -21,6 +21,7 @@ from typing import Any
 @dataclass
 class APIKey:
     """An API key with metadata."""
+
     key_hash: str  # SHA-256 hash of the key
     name: str
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
@@ -44,7 +45,9 @@ class APIKey:
             key_hash=data["key_hash"],
             name=data["name"],
             created_at=datetime.fromisoformat(data["created_at"]),
-            last_used=datetime.fromisoformat(data["last_used"]) if data.get("last_used") else None,
+            last_used=datetime.fromisoformat(data["last_used"])
+            if data.get("last_used")
+            else None,
             enabled=data.get("enabled", True),
             scopes=data.get("scopes", []),
         )
@@ -133,7 +136,9 @@ class APIKeyAuth:
             return "write" in scopes
         return required_scope in scopes
 
-    def generate_key(self, name: str, scopes: list[str] | None = None) -> tuple[str, APIKey]:
+    def generate_key(
+        self, name: str, scopes: list[str] | None = None
+    ) -> tuple[str, APIKey]:
         """Generate a new API key.
 
         Returns:

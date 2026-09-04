@@ -60,8 +60,12 @@ class UncertaintyMonitor:
         clean = text.strip()
         if not clean:
             return 0.4
-        uncertainty_hits = sum(1 for pattern in self._uncertainty_re if pattern.search(clean))
-        confidence_hits = sum(1 for pattern in self._confidence_re if pattern.search(clean))
+        uncertainty_hits = sum(
+            1 for pattern in self._uncertainty_re if pattern.search(clean)
+        )
+        confidence_hits = sum(
+            1 for pattern in self._confidence_re if pattern.search(clean)
+        )
         base = 0.55
         penalty = 0.12 * uncertainty_hits
         bonus = 0.15 * confidence_hits

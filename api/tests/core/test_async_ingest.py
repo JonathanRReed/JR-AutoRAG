@@ -1,6 +1,7 @@
 from unittest.mock import Mock
 from app.core.async_ingest import AsyncIngestManager, JobStore, IngestJob
 
+
 def test_submit_sync():
     mock_pipeline = Mock()
     manager = AsyncIngestManager(pipeline=mock_pipeline)

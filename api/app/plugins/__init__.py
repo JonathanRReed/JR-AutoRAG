@@ -30,9 +30,11 @@ logger = logging.getLogger(__name__)
 # Core Types
 # =============================================================================
 
+
 @dataclass
 class Chunk:
     """A text chunk with metadata."""
+
     id: str
     text: str
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -50,6 +52,7 @@ class Chunk:
 @dataclass
 class RetrievalResult:
     """Result from a retriever."""
+
     chunk_id: str
     text: str
     score: float
@@ -67,6 +70,7 @@ class RetrievalResult:
 @dataclass
 class ChunkConfig:
     """Configuration for chunking."""
+
     chunk_size: int = 512
     chunk_overlap: int = 50
     separator: str = "\n"
@@ -82,6 +86,7 @@ class ChunkConfig:
 @dataclass
 class ProcessContext:
     """Context passed to post-processors."""
+
     query: str
     chunks: list[Chunk]
     answer: str
@@ -93,8 +98,10 @@ class ProcessContext:
 # Plugin Base
 # =============================================================================
 
+
 class PluginType(Enum):
     """Types of plugins."""
+
     INGESTOR = "ingestor"
     CHUNKER = "chunker"
     EMBEDDER = "embedder"
@@ -107,6 +114,7 @@ class PluginType(Enum):
 @dataclass
 class PluginInfo:
     """Metadata about a plugin."""
+
     name: str
     plugin_type: PluginType
     version: str
@@ -147,6 +155,7 @@ class Plugin(ABC):
 # Ingestor Plugin
 # =============================================================================
 
+
 class IngestorPlugin(Plugin):
     """Plugin for ingesting documents of different formats."""
 
@@ -186,6 +195,7 @@ class IngestorPlugin(Plugin):
 # Chunker Plugin
 # =============================================================================
 
+
 class ChunkerPlugin(Plugin):
     """Plugin for splitting text into chunks."""
 
@@ -210,6 +220,7 @@ class ChunkerPlugin(Plugin):
 # =============================================================================
 # Embedder Plugin
 # =============================================================================
+
 
 class EmbedderPlugin(Plugin):
     """Plugin for generating embeddings."""
@@ -246,6 +257,7 @@ class EmbedderPlugin(Plugin):
 # Retriever Plugin
 # =============================================================================
 
+
 class RetrieverPlugin(Plugin):
     """Plugin for retrieving relevant documents."""
 
@@ -280,6 +292,7 @@ class RetrieverPlugin(Plugin):
 # Reranker Plugin
 # =============================================================================
 
+
 class RerankerPlugin(Plugin):
     """Plugin for re-ranking retrieved documents."""
 
@@ -309,6 +322,7 @@ class RerankerPlugin(Plugin):
 # =============================================================================
 # Compressor Plugin
 # =============================================================================
+
 
 class CompressorPlugin(Plugin):
     """Plugin for compressing context to reduce tokens."""
@@ -341,6 +355,7 @@ class CompressorPlugin(Plugin):
 # Post-Processor Plugin
 # =============================================================================
 
+
 class PostProcessorPlugin(Plugin):
     """Plugin for post-processing answers."""
 
@@ -365,6 +380,7 @@ class PostProcessorPlugin(Plugin):
 # =============================================================================
 # Plugin Registry
 # =============================================================================
+
 
 class PluginRegistry:
     """Registry for discovering and managing plugins."""
@@ -515,6 +531,7 @@ def get_plugin_registry() -> PluginRegistry:
 # =============================================================================
 # Convenience Functions
 # =============================================================================
+
 
 def get_ingestor(name: str) -> IngestorPlugin | None:
     """Get an ingestor plugin by name."""

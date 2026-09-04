@@ -18,10 +18,10 @@ logger = logging.getLogger("autorag.retrieval_quality")
 class HallucinationRisk(str, Enum):
     """Risk level for hallucination based on evidence quality."""
 
-    LOW = "low"           # Strong evidence, high similarity
-    MEDIUM = "medium"     # Adequate evidence, decent similarity
-    HIGH = "high"         # Weak evidence or low similarity
-    CRITICAL = "critical" # No evidence or very poor quality
+    LOW = "low"  # Strong evidence, high similarity
+    MEDIUM = "medium"  # Adequate evidence, decent similarity
+    HIGH = "high"  # Weak evidence or low similarity
+    CRITICAL = "critical"  # No evidence or very poor quality
 
 
 @dataclass
@@ -142,8 +142,9 @@ class RetrievalQualityGates:
             gate_name="min_similarity",
             actual_value=round(max_score, 3),
             threshold=self.min_similarity,
-            message=f"Best match: {max_score:.2f}, avg: {avg_score:.2f}" if passed
-                    else f"No chunks above {self.min_similarity} threshold (best: {max_score:.2f})",
+            message=f"Best match: {max_score:.2f}, avg: {avg_score:.2f}"
+            if passed
+            else f"No chunks above {self.min_similarity} threshold (best: {max_score:.2f})",
         )
 
     def check_evidence_count_gate(
@@ -159,8 +160,9 @@ class RetrievalQualityGates:
             gate_name="min_evidence_count",
             actual_value=count,
             threshold=self.min_evidence_count,
-            message=f"{count} chunks retrieved" if passed
-                    else f"Only {count} chunks (need {self.min_evidence_count}+)",
+            message=f"{count} chunks retrieved"
+            if passed
+            else f"Only {count} chunks (need {self.min_evidence_count}+)",
         )
 
     def assess_hallucination_risk(
@@ -228,7 +230,9 @@ class RetrievalQualityGates:
         # Compute average similarity for risk assessment
         scores = []
         for c in chunks:
-            score = getattr(c, score_key, None) or (c.get(score_key) if isinstance(c, dict) else None)
+            score = getattr(c, score_key, None) or (
+                c.get(score_key) if isinstance(c, dict) else None
+            )
             if score is not None:
                 scores.append(float(score))
         avg_sim = sum(scores) / len(scores) if scores else 0.0

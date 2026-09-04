@@ -22,6 +22,7 @@ from typing import Any
 @dataclass
 class ToolResult:
     """Result from tool execution."""
+
     tool_name: str
     success: bool
     result: Any
@@ -87,14 +88,16 @@ class CalculatorTool(Tool):
 
     @property
     def parameters(self) -> dict[str, str]:
-        return {"expression": "Mathematical expression to evaluate (e.g., '2 + 2', '15 * 0.2')"}
+        return {
+            "expression": "Mathematical expression to evaluate (e.g., '2 + 2', '15 * 0.2')"
+        }
 
     # Patterns that suggest math
     MATH_PATTERNS = [
-        r'\b\d+\s*[\+\-\*\/\%]\s*\d+',  # 2 + 2
-        r'\b(calculate|compute|what is)\b.*\d+',
-        r'\b\d+\s*percent\b',
-        r'\b(sum|total|average|mean)\b.*\d+',
+        r"\b\d+\s*[\+\-\*\/\%]\s*\d+",  # 2 + 2
+        r"\b(calculate|compute|what is)\b.*\d+",
+        r"\b\d+\s*percent\b",
+        r"\b(sum|total|average|mean)\b.*\d+",
     ]
 
     def can_handle(self, query: str) -> float:
@@ -120,7 +123,9 @@ class CalculatorTool(Tool):
                 raise ValueError("Number is too large")
             return node.value
         if isinstance(node, ast.UnaryOp) and type(node.op) in self.ALLOWED_UNARYOPS:
-            result = self.ALLOWED_UNARYOPS[type(node.op)](self._evaluate_node(node.operand))
+            result = self.ALLOWED_UNARYOPS[type(node.op)](
+                self._evaluate_node(node.operand)
+            )
             return self._check_result(result)
         if isinstance(node, ast.BinOp) and type(node.op) in self.ALLOWED_BINOPS:
             left = self._evaluate_node(node.left)
@@ -138,6 +143,7 @@ class CalculatorTool(Tool):
 
     def execute(self, expression: str = "", **kwargs) -> ToolResult:
         import time
+
         start = time.perf_counter()
 
         try:
@@ -181,9 +187,9 @@ class DateTimeTool(Tool):
         return "Provides current date, time, or timezone information."
 
     DATE_PATTERNS = [
-        r'\b(what|current).*(date|time|day|today)\b',
-        r'\btime\s*(is|now)\b',
-        r'\b(today|now)\b.*\b(date|time)\b',
+        r"\b(what|current).*(date|time|day|today)\b",
+        r"\btime\s*(is|now)\b",
+        r"\b(today|now)\b.*\b(date|time)\b",
     ]
 
     def can_handle(self, query: str) -> float:
@@ -194,6 +200,7 @@ class DateTimeTool(Tool):
 
     def execute(self, format: str = "full", **kwargs) -> ToolResult:
         import time
+
         start = time.perf_counter()
 
         now = datetime.now(UTC)
@@ -238,6 +245,7 @@ class DocumentSearchTool(Tool):
 
     def execute(self, query: str = "", **kwargs) -> ToolResult:
         import time
+
         start = time.perf_counter()
 
         if not self._retrieval_callback:

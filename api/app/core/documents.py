@@ -23,7 +23,9 @@ class Document:
 class DocumentStore:
     """SQLite-backed document registry with title index."""
 
-    def __init__(self, path: Path | None = None, legacy_json_path: Path | None = None) -> None:
+    def __init__(
+        self, path: Path | None = None, legacy_json_path: Path | None = None
+    ) -> None:
         self._path = Path(path or Path.cwd() / "data" / "documents.db")
         self._legacy_json_path = Path(legacy_json_path) if legacy_json_path else None
         self._lock = RLock()
@@ -80,7 +82,9 @@ class DocumentStore:
         return row is None or row["count"] == 0
 
     def _get_last_mutation(self) -> float:
-        cursor = self._conn.execute("SELECT value FROM meta WHERE key = 'last_mutation'")
+        cursor = self._conn.execute(
+            "SELECT value FROM meta WHERE key = 'last_mutation'"
+        )
         row = cursor.fetchone()
         if row is None:
             return 0.0
@@ -149,7 +153,9 @@ class DocumentStore:
         for row in cursor.fetchall():
             metadata = {}
             try:
-                metadata = json.loads(row["metadata_json"]) if row["metadata_json"] else {}
+                metadata = (
+                    json.loads(row["metadata_json"]) if row["metadata_json"] else {}
+                )
             except Exception:
                 metadata = {}
             doc = Document(

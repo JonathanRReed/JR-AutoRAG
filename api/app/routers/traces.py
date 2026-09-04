@@ -25,8 +25,7 @@ async def download_trace() -> Response:
     trace_json = orchestrator.export_trace_json()
     if trace_json is None:
         raise HTTPException(
-            status_code=404,
-            detail="No trace bundle available. Run a query first."
+            status_code=404, detail="No trace bundle available. Run a query first."
         )
 
     return Response(
@@ -52,8 +51,7 @@ async def get_last_trace() -> dict:
     bundle = orchestrator.get_trace_bundle()
     if bundle is None:
         raise HTTPException(
-            status_code=404,
-            detail="No trace bundle available. Run a query first."
+            status_code=404, detail="No trace bundle available. Run a query first."
         )
 
     return bundle.to_dict()

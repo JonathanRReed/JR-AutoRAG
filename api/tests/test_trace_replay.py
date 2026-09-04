@@ -33,7 +33,9 @@ class FakeOrchestrator:
                 "latency": {},
                 "citations": [],
                 "confidence": {},
-                "config_snapshot": self._config.model_dump(mode="json") if self._config else {},
+                "config_snapshot": self._config.model_dump(mode="json")
+                if self._config
+                else {},
             },
         }
 

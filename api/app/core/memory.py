@@ -18,6 +18,7 @@ from typing import Any
 @dataclass
 class ConversationTurn:
     """A single turn in a conversation."""
+
     id: str
     role: str  # "user" or "assistant"
     content: str
@@ -32,6 +33,7 @@ class ConversationTurn:
 @dataclass
 class ConversationContext:
     """Context extracted from conversation history."""
+
     relevant_turns: list[ConversationTurn]
     summary: str
     key_entities: list[str]
@@ -124,9 +126,9 @@ class ConversationMemory:
 
         # Trim if exceeds max
         if len(self._conversations[conversation_id]) > self._max_turns:
-            self._conversations[conversation_id] = (
-                self._conversations[conversation_id][-self._max_turns:]
-            )
+            self._conversations[conversation_id] = self._conversations[conversation_id][
+                -self._max_turns :
+            ]
 
         return turn
 
@@ -160,7 +162,7 @@ class ConversationMemory:
         """Extract potential named entities from text."""
         # Simple heuristic: capitalized words not at sentence start
         # This is a simplified version - production would use NER
-        sentences = re.split(r'[.!?]\s+', text)
+        sentences = re.split(r"[.!?]\s+", text)
         entities = set()
 
         for sentence in sentences:
@@ -171,7 +173,7 @@ class ConversationMemory:
                     continue
                 # Check if capitalized (potential entity)
                 if word and word[0].isupper() and len(word) > 2:
-                    clean = re.sub(r'[^\w]', '', word)
+                    clean = re.sub(r"[^\w]", "", word)
                     if clean:
                         entities.add(clean)
 
@@ -205,7 +207,9 @@ class ConversationMemory:
         for turn in recent:
             role_label = "User" if turn.role == "user" else "Assistant"
             # Truncate long content
-            content = turn.content[:200] + "..." if len(turn.content) > 200 else turn.content
+            content = (
+                turn.content[:200] + "..." if len(turn.content) > 200 else turn.content
+            )
             summary_parts.append(f"{role_label}: {content}")
         summary = "\n".join(summary_parts)
 
@@ -238,7 +242,9 @@ class ConversationMemory:
         parts = ["Previous conversation:"]
         for turn in context.relevant_turns[-3:]:
             role = "User" if turn.role == "user" else "Assistant"
-            content = turn.content[:300] + "..." if len(turn.content) > 300 else turn.content
+            content = (
+                turn.content[:300] + "..." if len(turn.content) > 300 else turn.content
+            )
             parts.append(f"{role}: {content}")
         if episodic:
             parts.append("Important prior memories:")
@@ -263,7 +269,10 @@ class ConversationMemory:
             score += 0.2
         if self.is_follow_up(user_query):
             score += 0.1
-        if any(term in user_query.lower() for term in ("remember", "preference", "always", "never", "my ", "our ")):
+        if any(
+            term in user_query.lower()
+            for term in ("remember", "preference", "always", "never", "my ", "our ")
+        ):
             score += 0.25
         return min(score, 1.0)
 
@@ -274,7 +283,9 @@ class ConversationMemory:
         answer: str,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        user_turn = self.add_turn(conversation_id, "user", user_query, metadata=metadata or {})
+        user_turn = self.add_turn(
+            conversation_id, "user", user_query, metadata=metadata or {}
+        )
         assistant_turn = self.add_turn(
             conversation_id,
             "assistant",
@@ -296,7 +307,9 @@ class ConversationMemory:
                     metadata={"score": round(score, 3)},
                 )
             )
-            self._episodic_memories[conversation_id] = self._episodic_memories[conversation_id][-10:]
+            self._episodic_memories[conversation_id] = self._episodic_memories[
+                conversation_id
+            ][-10:]
             memory_written = True
         return {
             "user_turn_id": user_turn.id,

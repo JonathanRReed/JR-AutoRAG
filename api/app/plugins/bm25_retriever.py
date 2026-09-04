@@ -67,7 +67,7 @@ class BM25RetrieverPlugin(RetrieverPlugin):
 
     def _tokenize(self, text: str) -> list[str]:
         """Simple tokenization: lowercase and split on non-alphanumeric."""
-        return re.findall(r'\w+', text.lower())
+        return re.findall(r"\w+", text.lower())
 
     def index(self, chunks: list[Chunk]) -> None:
         """Index chunks for BM25 retrieval."""
@@ -123,7 +123,7 @@ class BM25RetrieverPlugin(RetrieverPlugin):
                 df = self._doc_freqs[token]
                 idf = (n - df + 0.5) / (df + 0.5)
                 if idf > 0:
-                    idf = (idf + 1.0)  # Log isn't needed, this is valid BM25 variant
+                    idf = idf + 1.0  # Log isn't needed, this is valid BM25 variant
 
                 # TF component with length normalization
                 freq = tf.get(token, 0)
@@ -143,12 +143,14 @@ class BM25RetrieverPlugin(RetrieverPlugin):
         results = []
         for idx, score in scores[:k]:
             chunk = self._chunks[idx]
-            results.append(RetrievalResult(
-                chunk_id=chunk.id,
-                text=chunk.text,
-                score=score,
-                metadata=chunk.metadata,
-            ))
+            results.append(
+                RetrievalResult(
+                    chunk_id=chunk.id,
+                    text=chunk.text,
+                    score=score,
+                    metadata=chunk.metadata,
+                )
+            )
 
         return results
 
@@ -161,6 +163,7 @@ class BM25RetrieverPlugin(RetrieverPlugin):
 # =============================================================================
 # Factory Function (required for auto-discovery)
 # =============================================================================
+
 
 def create_plugin() -> Plugin:
     """Factory function for auto-discovery."""

@@ -27,9 +27,16 @@ class TestAutoHybridWeights:
         assert sparse > 0.4, f"Expected sparse > 0.4, got {sparse}"
 
     def test_weights_sum_to_one(self):
-        for query in ["hello", "what is the meaning of life?", "python 3.12", "a b c d e f g h i j k"]:
+        for query in [
+            "hello",
+            "what is the meaning of life?",
+            "python 3.12",
+            "a b c d e f g h i j k",
+        ]:
             dense, sparse = AutoHybridWeights.compute_weights(query, 0.6, 0.4)
-            assert abs(dense + sparse - 1.0) < 1e-6, f"Weights don't sum to 1: {dense} + {sparse}"
+            assert abs(dense + sparse - 1.0) < 1e-6, (
+                f"Weights don't sum to 1: {dense} + {sparse}"
+            )
 
     def test_empty_query_returns_base(self):
         dense, sparse = AutoHybridWeights.compute_weights("", 0.6, 0.4)
@@ -69,7 +76,9 @@ class TestLateChunker:
         # Late chunking should not have overlapping content
         for i in range(1, len(chunks)):
             # End of previous should be <= start of current (no overlap)
-            assert chunks[i - 1].end_char <= chunks[i].start_char + 2  # small tolerance for stripping
+            assert (
+                chunks[i - 1].end_char <= chunks[i].start_char + 2
+            )  # small tolerance for stripping
 
     def test_get_chunker_returns_late_chunker(self):
         chunker = get_chunker(strategy=ChunkingStrategy.LATE, target_size=200)

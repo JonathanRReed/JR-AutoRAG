@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 
 class JobStatus(str, Enum):
     """Status of an ingestion job."""
+
     QUEUED = "queued"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -33,6 +34,7 @@ class JobStatus(str, Enum):
 @dataclass
 class JobProgress:
     """Progress update for a job."""
+
     current: int
     total: int
     stage: str
@@ -55,6 +57,7 @@ class JobProgress:
 @dataclass
 class IngestJob:
     """A background ingestion job."""
+
     id: str
     title: str
     status: JobStatus = JobStatus.QUEUED
@@ -108,10 +111,7 @@ class JobStore:
 
         # Evict oldest if at capacity
         if len(self._jobs) >= self._max_jobs:
-            oldest_id = min(
-                self._jobs.keys(),
-                key=lambda k: self._jobs[k].created_at
-            )
+            oldest_id = min(self._jobs.keys(), key=lambda k: self._jobs[k].created_at)
             del self._jobs[oldest_id]
 
         self._jobs[job_id] = job
@@ -321,7 +321,9 @@ class AsyncIngestManager:
 _manager: AsyncIngestManager | None = None
 
 
-def get_ingest_manager(pipeline: IngestPipeline | None = None) -> AsyncIngestManager | None:
+def get_ingest_manager(
+    pipeline: IngestPipeline | None = None,
+) -> AsyncIngestManager | None:
     """Get or create the global ingest manager."""
     global _manager
     if _manager is None and pipeline is not None:

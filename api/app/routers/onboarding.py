@@ -6,7 +6,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..core.auth import get_auth
 from ..core.document_acl import get_acl_enforcer, get_acl_store, resolve_acl_defaults
-from ..core.onboarding import create_onboarding_flow, get_example_queries, get_sample_documents
+from ..core.onboarding import (
+    create_onboarding_flow,
+    get_example_queries,
+    get_sample_documents,
+)
 from ..services import ServiceContainer, get_container
 
 router = APIRouter(prefix="/onboarding", tags=["onboarding"])
@@ -29,7 +33,9 @@ def _create_acl(document_id: str, request: Request) -> None:
     enforcer = get_acl_enforcer(default_public=default_public)
     if enforcer.store.get(document_id) is None:
         public = new_doc_public if (auth_enabled and user_id) else True
-        enforcer.create_acl_for_document(document_id, owner=user_id or "anonymous", public=public)
+        enforcer.create_acl_for_document(
+            document_id, owner=user_id or "anonymous", public=public
+        )
 
 
 def _ensure_document_write_access(document_id: str, request: Request) -> None:
@@ -44,7 +50,9 @@ def _ensure_document_write_access(document_id: str, request: Request) -> None:
     user_id = getattr(request.state, "user_id", None)
     allowed, _ = enforcer.check_access(document_id, user_id, "write")
     if not allowed:
-        raise HTTPException(status_code=403, detail="Insufficient permissions to update this document")
+        raise HTTPException(
+            status_code=403, detail="Insufficient permissions to update this document"
+        )
 
 
 @router.get("")
@@ -115,7 +123,8 @@ def clear_demo_corpus(
 ) -> dict:
     """Remove only demo-tagged documents."""
     demo_docs = [
-        doc for doc in list(container.document_store.list())
+        doc
+        for doc in list(container.document_store.list())
         if doc.metadata.get("demo_corpus") == "true"
     ]
     for doc in demo_docs:

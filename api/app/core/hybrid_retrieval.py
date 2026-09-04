@@ -58,6 +58,7 @@ def _get_sentence_transformer():
     if _sentence_transformer is None:
         try:
             from sentence_transformers import SentenceTransformer
+
             _sentence_transformer = SentenceTransformer
         except ImportError:
             _sentence_transformer = False
@@ -70,6 +71,7 @@ def _get_cross_encoder():
     if _cross_encoder is None:
         try:
             from sentence_transformers import CrossEncoder
+
             _cross_encoder = CrossEncoder
         except ImportError:
             _cross_encoder = False
@@ -82,6 +84,7 @@ def _get_bm25():
     if _bm25_class is None:
         try:
             from rank_bm25 import BM25Okapi
+
             _bm25_class = BM25Okapi
         except ImportError:
             _bm25_class = False
@@ -105,13 +108,17 @@ class RemoteEmbeddingClient:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
 
-    def encode(self, texts, convert_to_numpy: bool = False, show_progress_bar: bool = False):
+    def encode(
+        self, texts, convert_to_numpy: bool = False, show_progress_bar: bool = False
+    ):
         inputs = [texts] if isinstance(texts, str) else list(texts)
 
         headers = {"Authorization": f"Bearer {self.api_key}"}
         payload = {"model": self.model, "input": inputs}
         with httpx.Client(timeout=self.timeout) as client:
-            response = client.post(f"{self.base_url}/embeddings", json=payload, headers=headers)
+            response = client.post(
+                f"{self.base_url}/embeddings", json=payload, headers=headers
+            )
         response.raise_for_status()
         data = response.json()
         items = sorted(data.get("data", []), key=lambda item: item.get("index", 0))
@@ -125,14 +132,15 @@ class RemoteEmbeddingClient:
 @dataclass
 class RetrievalResult:
     """A single retrieval result with score and source info."""
+
     document: Document
     score: float
     chunk_text: str
     retrieval_method: str = "hybrid"
     # Span-level citation metadata
-    chunk_id: str = ""       # Unique ID for this chunk (doc_id-chunk_index)
-    start_char: int = 0      # Start offset in original document text
-    end_char: int = 0        # End offset in original document text
+    chunk_id: str = ""  # Unique ID for this chunk (doc_id-chunk_index)
+    start_char: int = 0  # Start offset in original document text
+    end_char: int = 0  # End offset in original document text
 
 
 class EmbeddingModelPreset:
@@ -141,6 +149,7 @@ class EmbeddingModelPreset:
     These models are selected based on MTEB leaderboard performance
     as of late 2025, balancing accuracy, speed, and resource usage.
     """
+
     # Solid baseline - good balance of speed and accuracy
     BGE_BASE = "BAAI/bge-base-en-v1.5"
     # Multi-lingual, multi-granularity - excellent for diverse corpora
@@ -160,14 +169,20 @@ class EmbeddingModelPreset:
         BGE_M3: {"dimensions": 1024, "max_tokens": 8192, "requires_api": False},
         GTE_QWEN: {"dimensions": 1536, "max_tokens": 32768, "requires_api": False},
         E5_MISTRAL: {"dimensions": 4096, "max_tokens": 32768, "requires_api": False},
-        TEXT_EMBEDDING_3_LARGE: {"dimensions": 3072, "max_tokens": 8191, "requires_api": True},
+        TEXT_EMBEDDING_3_LARGE: {
+            "dimensions": 3072,
+            "max_tokens": 8191,
+            "requires_api": True,
+        },
         SENTENCE_MINI: {"dimensions": 384, "max_tokens": 512, "requires_api": False},
     }
 
     @classmethod
     def get_info(cls, model: str) -> dict:
         """Get model metadata for configuration."""
-        return cls.MODEL_INFO.get(model, {"dimensions": 768, "max_tokens": 512, "requires_api": False})
+        return cls.MODEL_INFO.get(
+            model, {"dimensions": 768, "max_tokens": 512, "requires_api": False}
+        )
 
 
 class AutoHybridWeights:
@@ -180,7 +195,23 @@ class AutoHybridWeights:
     """
 
     # Question words indicate semantic/conceptual intent
-    QUESTION_WORDS = frozenset({"what", "why", "how", "when", "where", "who", "which", "explain", "describe", "compare", "difference", "summarize", "overview"})
+    QUESTION_WORDS = frozenset(
+        {
+            "what",
+            "why",
+            "how",
+            "when",
+            "where",
+            "who",
+            "which",
+            "explain",
+            "describe",
+            "compare",
+            "difference",
+            "summarize",
+            "overview",
+        }
+    )
 
     @classmethod
     def compute_weights(
@@ -245,9 +276,12 @@ class AutoHybridWeights:
 @dataclass
 class HybridConfig:
     """Configuration for hybrid retrieval."""
+
     # Model configuration - use preset for easy 2025 model selection
     embedding_model: str = "BAAI/bge-base-en-v1.5"
-    model_preset: str | None = None  # Set to EmbeddingModelPreset value to auto-configure
+    model_preset: str | None = (
+        None  # Set to EmbeddingModelPreset value to auto-configure
+    )
     reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
     # Retrieval parameters
@@ -335,7 +369,9 @@ class HybridRetrievalEngine:
         self._corpus_version: str = ""
         self._config_hash: str = ""
         self._corpus_version_counter: int = 0  # Monotonically increasing on any change
-        self._doc_content_hashes: dict[str, str] = {}  # doc_id -> content_hash for incremental
+        self._doc_content_hashes: dict[
+            str, str
+        ] = {}  # doc_id -> content_hash for incremental
         self._index_lock = threading.RLock()
 
         # Phase 4/6/5: Hierarchical & Graph structures
@@ -350,14 +386,22 @@ class HybridRetrievalEngine:
 
     def _init_models(self) -> None:
         """Lazy load heavy models."""
-        if self._config.embedding_model and not self._embedder_failed and self._embedder is None:
+        if (
+            self._config.embedding_model
+            and not self._embedder_failed
+            and self._embedder is None
+        ):
             model_info = EmbeddingModelPreset.get_info(self._config.embedding_model)
             if model_info.get("requires_api"):
                 vault = get_secrets_vault()
                 api_key = vault.get("OPENAI_API_KEY") or ""
-                base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+                base_url = os.environ.get(
+                    "OPENAI_BASE_URL", "https://api.openai.com/v1"
+                )
                 if not api_key:
-                    print("Error: OPENAI_API_KEY not set for API-backed embedding model.")
+                    print(
+                        "Error: OPENAI_API_KEY not set for API-backed embedding model."
+                    )
                     self._embedder_failed = True
                 else:
                     self._embedder = RemoteEmbeddingClient(
@@ -365,26 +409,34 @@ class HybridRetrievalEngine:
                         api_key=api_key,
                         base_url=base_url,
                     )
-                    print(f"Embedding model configured via API: {self._config.embedding_model} ({base_url})")
+                    print(
+                        f"Embedding model configured via API: {self._config.embedding_model} ({base_url})"
+                    )
             else:
                 SentenceTransformer = _get_sentence_transformer()
                 if SentenceTransformer:
                     try:
                         is_local = os.path.isdir(self._config.embedding_model)
-                        location = "Local path" if is_local else "HuggingFace cache/remote"
-                        print(f"Loading embedding model: {self._config.embedding_model} ({location})...")
+                        location = (
+                            "Local path" if is_local else "HuggingFace cache/remote"
+                        )
+                        print(
+                            f"Loading embedding model: {self._config.embedding_model} ({location})..."
+                        )
                         try:
                             # Force non-meta device loading for CPU stability
                             self._embedder = SentenceTransformer(
                                 self._config.embedding_model,
                                 device="cpu",
-                                model_kwargs={"low_cpu_mem_usage": False, "device_map": None}
+                                model_kwargs={
+                                    "low_cpu_mem_usage": False,
+                                    "device_map": None,
+                                },
                             )
                         except (TypeError, Exception):
                             # Fallback for older versions or unexpected errors
                             self._embedder = SentenceTransformer(
-                                self._config.embedding_model,
-                                device="cpu"
+                                self._config.embedding_model, device="cpu"
                             )
                         print(f"Embedding model loaded successfully from {location}.")
                     except Exception as e:
@@ -392,15 +444,24 @@ class HybridRetrievalEngine:
                         self._embedder = None
                         self._embedder_failed = True
                 else:
-                    print("Warning: sentence-transformers not installed. Dense retrieval disabled.")
+                    print(
+                        "Warning: sentence-transformers not installed. Dense retrieval disabled."
+                    )
 
-        if self._config.use_reranking and self._config.reranker_model and not self._reranker_failed and self._reranker is None:
+        if (
+            self._config.use_reranking
+            and self._config.reranker_model
+            and not self._reranker_failed
+            and self._reranker is None
+        ):
             CrossEncoder = _get_cross_encoder()
             if CrossEncoder:
                 try:
                     is_local = os.path.isdir(self._config.reranker_model)
                     location = "Local path" if is_local else "HuggingFace cache/remote"
-                    print(f"Loading reranker model: {self._config.reranker_model} ({location})...")
+                    print(
+                        f"Loading reranker model: {self._config.reranker_model} ({location})..."
+                    )
                     try:
                         # Force non-meta device loading for CPU stability
                         self._reranker = CrossEncoder(
@@ -408,12 +469,14 @@ class HybridRetrievalEngine:
                             device="cpu",
                             # Note: CrossEncoder usually kwargs are passed to AutoModel,
                             # checking support varies but this is the safest 'meta' fix attempt
-                            model_kwargs={"low_cpu_mem_usage": False, "device_map": None}
+                            model_kwargs={
+                                "low_cpu_mem_usage": False,
+                                "device_map": None,
+                            },
                         )
                     except (TypeError, Exception):
                         self._reranker = CrossEncoder(
-                            self._config.reranker_model,
-                            device="cpu"
+                            self._config.reranker_model, device="cpu"
                         )
                     print(f"Reranker model loaded successfully from {location}.")
                 except Exception as e:
@@ -448,7 +511,10 @@ class HybridRetrievalEngine:
             ):
                 self._reranker = None
                 self._reranker_failed = False
-            if previous.use_colbert != config.use_colbert or previous.colbert_model != config.colbert_model:
+            if (
+                previous.use_colbert != config.use_colbert
+                or previous.colbert_model != config.colbert_model
+            ):
                 self._colbert_model = None
                 self._colbert_tokenizer = None
                 self._colbert_failed = False
@@ -538,9 +604,7 @@ class HybridRetrievalEngine:
     def _build_field_tokens(self, docs: list[Document]) -> None:
         """Precompute title and heading tokens for field-aware scoring."""
         self._doc_title_tokens = {
-            doc.id: set(self._tokenize_terms(doc.title))
-            for doc in docs
-            if doc.title
+            doc.id: set(self._tokenize_terms(doc.title)) for doc in docs if doc.title
         }
         self._chunk_heading_tokens = {}
         if not self._trees:
@@ -572,7 +636,9 @@ class HybridRetrievalEngine:
                     existing = self._chunk_heading_tokens.get(global_idx, set())
                     self._chunk_heading_tokens[global_idx] = existing | heading_tokens
 
-    def _normalize_routing_params(self, routing_params: dict[str, Any] | None) -> dict[str, float]:
+    def _normalize_routing_params(
+        self, routing_params: dict[str, Any] | None
+    ) -> dict[str, float]:
         """Normalize per-query routing params and merge with defaults."""
         params = dict(routing_params or {})
         # If no explicit weight overrides are provided, compute per-query
@@ -587,26 +653,43 @@ class HybridRetrievalEngine:
             params["dense_weight"] = dense_w
             params["sparse_weight"] = sparse_w
 
-        sparse_weight = float(params.get("sparse_weight", self._config.sparse_weight) or 0.0)
-        dense_weight = float(params.get("dense_weight", self._config.dense_weight) or 0.0)
+        sparse_weight = float(
+            params.get("sparse_weight", self._config.sparse_weight) or 0.0
+        )
+        dense_weight = float(
+            params.get("dense_weight", self._config.dense_weight) or 0.0
+        )
         if "dense_weight" not in params and "sparse_weight" in params:
             dense_weight = max(0.0, 1.0 - sparse_weight)
         total = dense_weight + sparse_weight
         if total > 0:
             dense_weight /= total
             sparse_weight /= total
-        literal_weight = float(params.get("literal_weight", max(0.2, min(0.6, sparse_weight))))
+        literal_weight = float(
+            params.get("literal_weight", max(0.2, min(0.6, sparse_weight)))
+        )
         return {
             "dense_weight": dense_weight,
             "sparse_weight": sparse_weight,
             "literal_weight": literal_weight,
             "diversity": float(params.get("diversity", self._config.diversity) or 0.0),
-            "title_boost": float(params.get("title_boost", self._config.title_boost) or 0.0),
-            "heading_boost": float(params.get("heading_boost", self._config.heading_boost) or 0.0),
-            "proximity_weight": float(params.get("proximity_weight", self._config.proximity_weight) or 0.0),
-            "recency_weight": float(params.get("recency_weight", self._config.recency_weight) or 0.0),
+            "title_boost": float(
+                params.get("title_boost", self._config.title_boost) or 0.0
+            ),
+            "heading_boost": float(
+                params.get("heading_boost", self._config.heading_boost) or 0.0
+            ),
+            "proximity_weight": float(
+                params.get("proximity_weight", self._config.proximity_weight) or 0.0
+            ),
+            "recency_weight": float(
+                params.get("recency_weight", self._config.recency_weight) or 0.0
+            ),
             "recency_half_life_days": float(
-                params.get("recency_half_life_days", self._config.recency_half_life_days) or 1.0
+                params.get(
+                    "recency_half_life_days", self._config.recency_half_life_days
+                )
+                or 1.0
             ),
         }
 
@@ -716,7 +799,11 @@ class HybridRetrievalEngine:
 
         def embedding_sim(idx_a: int, idx_b: int) -> float:
             """Cosine similarity between chunk embeddings (if available)."""
-            if self._embeddings is None or idx_a >= len(self._embeddings) or idx_b >= len(self._embeddings):
+            if (
+                self._embeddings is None
+                or idx_a >= len(self._embeddings)
+                or idx_b >= len(self._embeddings)
+            ):
                 return -1.0  # Signal that embeddings are not available
             a = self._embeddings[idx_a]
             b = self._embeddings[idx_b]
@@ -777,7 +864,8 @@ class HybridRetrievalEngine:
         """Return availability of dense and rerank models."""
         return {
             "dense_enabled": self._embedder is not None,
-            "reranker_enabled": self._reranker is not None and self._config.use_reranking,
+            "reranker_enabled": self._reranker is not None
+            and self._config.use_reranking,
         }
 
     # =========================================================================
@@ -810,12 +898,15 @@ class HybridRetrievalEngine:
         Used in cache keys to prevent stale hits when modes are toggled.
         """
         from .cache import RetrievalMode
-        return int(RetrievalMode.from_config(
-            raptor=self._config.raptor,
-            graph=self._config.graph,
-            rerank=self._config.use_reranking,
-            colbert=self._config.use_colbert,
-        ))
+
+        return int(
+            RetrievalMode.from_config(
+                raptor=self._config.raptor,
+                graph=self._config.graph,
+                rerank=self._config.use_reranking,
+                colbert=self._config.use_colbert,
+            )
+        )
 
     def compute_content_hash(self, text: str) -> str:
         """Compute SHA-256 hash of document content for change detection.
@@ -823,7 +914,8 @@ class HybridRetrievalEngine:
         Used by incremental ingestion to skip re-processing unchanged docs.
         """
         import hashlib
-        return hashlib.sha256(text.encode('utf-8')).hexdigest()
+
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
     def is_doc_changed(self, doc_id: str, content_hash: str) -> bool:
         """Check if document content has changed since last indexing.
@@ -924,7 +1016,9 @@ class HybridRetrievalEngine:
                 continue
 
             chunks = chunker.chunk(doc.text)
-            print(f"HybridRetrievalEngine: Processing '{doc.title}' -> {len(chunks)} chunks")
+            print(
+                f"HybridRetrievalEngine: Processing '{doc.title}' -> {len(chunks)} chunks"
+            )
             for chunk in chunks:
                 self._chunks.append((doc.id, chunk))
                 corpus_texts.append(chunk.text)
@@ -932,7 +1026,9 @@ class HybridRetrievalEngine:
         emit("chunking_documents", len(docs), len(docs))
 
         if not corpus_texts:
-            print("HybridRetrievalEngine: No text chunks generated (all docs might be empty).")
+            print(
+                "HybridRetrievalEngine: No text chunks generated (all docs might be empty)."
+            )
             return
 
         # Build dense embeddings with batching for progress feedback
@@ -943,14 +1039,18 @@ class HybridRetrievalEngine:
                 total_chunks = len(corpus_texts)
 
                 for i in range(0, total_chunks, batch_size):
-                    batch = corpus_texts[i:i + batch_size]
+                    batch = corpus_texts[i : i + batch_size]
                     batch_embeddings = self._embedder.encode(
                         batch,
                         convert_to_numpy=True,
                         show_progress_bar=False,
                     )
                     all_embeddings.append(batch_embeddings)
-                    emit("embedding_chunks", min(i + batch_size, total_chunks), total_chunks)
+                    emit(
+                        "embedding_chunks",
+                        min(i + batch_size, total_chunks),
+                        total_chunks,
+                    )
 
                 if all_embeddings:
                     self._embeddings = np.vstack(all_embeddings)
@@ -979,7 +1079,10 @@ class HybridRetrievalEngine:
         emit("building_sparse_index", 1, 1)
 
         # Build hierarchy in parallel if enabled
-        if self._config.raptor or self._config.chunking_strategy != ChunkingStrategy.FIXED:
+        if (
+            self._config.raptor
+            or self._config.chunking_strategy != ChunkingStrategy.FIXED
+        ):
             self._rebuild_trees_parallel(on_progress=on_progress)
 
         # Build GraphRAG if enabled (restricted to max chunks for build time)
@@ -994,17 +1097,14 @@ class HybridRetrievalEngine:
                 # We need a provider for building. Default to OpenAI if not fixed.
                 # In JR-AutoRAG, Orchestrator usually provides this, but here we try factory.
                 factory = ProviderFactory()
-                provider = factory.get_default_provider() # Simplified for build phase
+                provider = factory.get_default_provider()  # Simplified for build phase
 
                 if provider:
                     self._graph_rag = GraphRAG()
-                    max_graph_chunks = 100 # Safety limit for build phase
+                    max_graph_chunks = 100  # Safety limit for build phase
                     evidence = [
                         EvidenceChunk(
-                            id=f"{did}-{c.index}",
-                            title=did,
-                            snippet=c.text,
-                            score=1.0
+                            id=f"{did}-{c.index}", title=did, snippet=c.text, score=1.0
                         )
                         for did, c in self._chunks[:max_graph_chunks]
                     ]
@@ -1058,7 +1158,7 @@ class HybridRetrievalEngine:
             for i, tokens in enumerate(self._tokenized_corpus):
                 # Focus on significant terms (nouns/entities - simplified)
                 for token in set(tokens):
-                    if len(token) > 4: # Heuristic for keywords
+                    if len(token) > 4:  # Heuristic for keywords
                         if token not in self._graph:
                             self._graph[token] = set()
                         self._graph[token].add(i)
@@ -1090,7 +1190,11 @@ class HybridRetrievalEngine:
         doc_ids = {doc.id for doc in docs if doc.id}
         with self._index_lock:
             if doc_ids and self._chunks:
-                keep_indices = [i for i, (doc_id, _) in enumerate(self._chunks) if doc_id not in doc_ids]
+                keep_indices = [
+                    i
+                    for i, (doc_id, _) in enumerate(self._chunks)
+                    if doc_id not in doc_ids
+                ]
                 if len(keep_indices) != len(self._chunks):
                     self._chunks = [self._chunks[i] for i in keep_indices]
                     if self._embeddings is not None:
@@ -1099,13 +1203,17 @@ class HybridRetrievalEngine:
                         except Exception:
                             self._embeddings = None
                     if self._tokenized_corpus:
-                        self._tokenized_corpus = [self._tokenized_corpus[i] for i in keep_indices]
+                        self._tokenized_corpus = [
+                            self._tokenized_corpus[i] for i in keep_indices
+                        ]
                     BM25Class = _get_bm25()
                     if BM25Class and self._tokenized_corpus:
                         try:
                             self._bm25 = BM25Class(self._tokenized_corpus)
                         except Exception as e:
-                            print(f"Warning: BM25 rebuild failed after doc removal: {e}")
+                            print(
+                                f"Warning: BM25 rebuild failed after doc removal: {e}"
+                            )
                             self._bm25 = None
                     else:
                         self._bm25 = None
@@ -1154,7 +1262,9 @@ class HybridRetrievalEngine:
                     if self._embeddings is None or len(self._embeddings) == 0:
                         self._embeddings = np.array(batch_embeddings)
                     else:
-                        self._embeddings = np.vstack([self._embeddings, batch_embeddings])
+                        self._embeddings = np.vstack(
+                            [self._embeddings, batch_embeddings]
+                        )
             except Exception as e:
                 print(f"Warning: Incremental embedding failed: {e}")
                 with self._index_lock:
@@ -1193,7 +1303,10 @@ class HybridRetrievalEngine:
                             self._graph.setdefault(token, set()).add(idx)
 
         # Update hierarchical trees if enabled
-        if self._config.raptor or self._config.chunking_strategy != ChunkingStrategy.FIXED:
+        if (
+            self._config.raptor
+            or self._config.chunking_strategy != ChunkingStrategy.FIXED
+        ):
             from .hierarchy import HierarchyBuilder
 
             hb = HierarchyBuilder()
@@ -1236,6 +1349,7 @@ class HybridRetrievalEngine:
         """Lazy-load persistence manager."""
         if self._index_persistence is None and self._persist_path:
             from .persistence import IndexPersistence
+
             with self._index_lock:
                 if self._index_persistence is None:
                     self._index_persistence = IndexPersistence(self._persist_path)
@@ -1274,8 +1388,16 @@ class HybridRetrievalEngine:
             embeddings = self._embeddings
             bm25 = self._bm25
             tokenized_corpus = list(self._tokenized_corpus)
-            trees = {id: t.to_dict() for id, t in self._trees.items()} if self._trees else {}
-            graph_data = self._graph_rag.to_dict() if self._graph_rag and self._graph_ready else None
+            trees = (
+                {id: t.to_dict() for id, t in self._trees.items()}
+                if self._trees
+                else {}
+            )
+            graph_data = (
+                self._graph_rag.to_dict()
+                if self._graph_rag and self._graph_ready
+                else None
+            )
 
         if not chunks or embeddings is None:
             print("HybridRetrievalEngine: No index to save")
@@ -1349,7 +1471,11 @@ class HybridRetrievalEngine:
 
         return True
 
-    def load_index(self, index_name: str = "default", on_progress: Callable[[str, int, int, str | None], None] | None = None) -> bool:
+    def load_index(
+        self,
+        index_name: str = "default",
+        on_progress: Callable[[str, int, int, str | None], None] | None = None,
+    ) -> bool:
         """Load index from disk if valid for current corpus/config."""
         persistence = self._get_persistence()
         if not persistence:
@@ -1387,17 +1513,25 @@ class HybridRetrievalEngine:
                     self._tokenized_corpus = tokenized
                 print("HybridRetrievalEngine: Loaded sparse index")
                 if len(self._tokenized_corpus) != len(self._chunks):
-                    print("HybridRetrievalEngine: Sparse index size mismatch; rebuilding")
+                    print(
+                        "HybridRetrievalEngine: Sparse index size mismatch; rebuilding"
+                    )
                     with self._index_lock:
-                        self._tokenized_corpus = [self._tokenize(c.text) for _, c in self._chunks]
+                        self._tokenized_corpus = [
+                            self._tokenize(c.text) for _, c in self._chunks
+                        ]
                         BM25Class = _get_bm25()
-                        self._bm25 = BM25Class(self._tokenized_corpus) if BM25Class else None
+                        self._bm25 = (
+                            BM25Class(self._tokenized_corpus) if BM25Class else None
+                        )
         except Exception as e:
             print(f"HybridRetrievalEngine: Failed to load sparse index: {e}")
             # Rebuild BM25 if load fails but chunks exist
             if self._chunks:
                 with self._index_lock:
-                    self._tokenized_corpus = [self._tokenize(c.text) for _, c in self._chunks]
+                    self._tokenized_corpus = [
+                        self._tokenize(c.text) for _, c in self._chunks
+                    ]
                     BM25Class = _get_bm25()
                     if BM25Class:
                         self._bm25 = BM25Class(self._tokenized_corpus)
@@ -1408,6 +1542,7 @@ class HybridRetrievalEngine:
                 graph_data, _ = persistence.load_graph(index_name)
                 if graph_data:
                     from .graph_rag import GraphRAG
+
                     with self._index_lock:
                         self._graph_rag = GraphRAG.from_dict(graph_data)
                         self._graph_ready = True
@@ -1416,14 +1551,23 @@ class HybridRetrievalEngine:
                 print(f"HybridRetrievalEngine: Failed to load graph: {e}")
 
         # 4. Load RAPTOR trees
-        if self._config.raptor or self._config.chunking_strategy != ChunkingStrategy.FIXED:
+        if (
+            self._config.raptor
+            or self._config.chunking_strategy != ChunkingStrategy.FIXED
+        ):
             try:
                 trees_data, _ = persistence.load_trees(index_name)
                 if trees_data:
                     from .hierarchy import DocumentTree
+
                     with self._index_lock:
-                        self._trees = {id: DocumentTree.from_dict(d) for id, d in trees_data.items()}
-                    print(f"HybridRetrievalEngine: Loaded {len(self._trees)} document trees")
+                        self._trees = {
+                            id: DocumentTree.from_dict(d)
+                            for id, d in trees_data.items()
+                        }
+                    print(
+                        f"HybridRetrievalEngine: Loaded {len(self._trees)} document trees"
+                    )
                 else:
                     # Rebuild trees in parallel if missing but config says we need them
                     self._rebuild_trees_parallel()
@@ -1442,13 +1586,16 @@ class HybridRetrievalEngine:
 
         return True
 
-    def _rebuild_trees_parallel(self, on_progress: Callable[[str, int, int, str | None], None] | None = None) -> None:
+    def _rebuild_trees_parallel(
+        self, on_progress: Callable[[str, int, int, str | None], None] | None = None
+    ) -> None:
         """Rebuild document trees in parallel."""
         docs = self._docs.list()
         if not docs or not self._chunks:
             return
 
         from .hierarchy import HierarchyBuilder
+
         hb = HierarchyBuilder()
         print(f"HybridRetrievalEngine: Rebuilding {len(docs)} trees in parallel...")
 
@@ -1533,8 +1680,12 @@ class HybridRetrievalEngine:
                 if proximity_weight > 0 and query_terms:
                     chunk_idx = int(idx)
                     if chunk_idx < len(self._chunks):
-                        chunk_terms = self._tokenize_terms(self._chunks[chunk_idx][1].text)
-                        base_score += proximity_weight * self._term_proximity(query_terms, chunk_terms)
+                        chunk_terms = self._tokenize_terms(
+                            self._chunks[chunk_idx][1].text
+                        )
+                        base_score += proximity_weight * self._term_proximity(
+                            query_terms, chunk_terms
+                        )
                 adjusted.append((int(idx), base_score))
             return adjusted
 
@@ -1567,7 +1718,9 @@ class HybridRetrievalEngine:
                     )
                     if proximity_weight > 0 and query_terms and idx < len(self._chunks):
                         chunk_terms = self._tokenize_terms(self._chunks[idx][1].text)
-                        base_score += proximity_weight * self._term_proximity(query_terms, chunk_terms)
+                        base_score += proximity_weight * self._term_proximity(
+                            query_terms, chunk_terms
+                        )
                     scores.append((idx, base_score))
             if not scores:
                 return []
@@ -1582,16 +1735,20 @@ class HybridRetrievalEngine:
     def get_keyword_graph_index(self) -> dict[str, set[int]]:
         """Expose keyword graph index (term -> chunk indices)."""
         with self._index_lock:
-            return {
-                term: set(indices) for term, indices in self._graph.items()
-            } if self._graph else {}
+            return (
+                {term: set(indices) for term, indices in self._graph.items()}
+                if self._graph
+                else {}
+            )
 
     def get_chunk_records(self) -> list[tuple[str, Chunk]]:
         """Return chunk records for downstream multi-resolution retrieval."""
         with self._index_lock:
             return list(self._chunks)
 
-    def _literal_search(self, query: str, top_k: int) -> tuple[list[tuple[int, float]], int]:
+    def _literal_search(
+        self, query: str, top_k: int
+    ) -> tuple[list[tuple[int, float]], int]:
         """Literal grep-style scoring for exact phrase/token matches."""
         with self._index_lock:
             if not self._chunks:
@@ -1638,7 +1795,9 @@ class HybridRetrievalEngine:
         sorted_results = sorted(scores.items(), key=lambda x: x[1], reverse=True)
         return sorted_results
 
-    def _rerank(self, query: str, candidates: list[tuple[int, float]], top_k: int) -> list[tuple[int, float]]:
+    def _rerank(
+        self, query: str, candidates: list[tuple[int, float]], top_k: int
+    ) -> list[tuple[int, float]]:
         """Rerank candidates using cross-encoder."""
         if self._reranker is None or not candidates:
             return candidates[:top_k]
@@ -1659,7 +1818,9 @@ class HybridRetrievalEngine:
             scores = self._reranker.predict(pairs)
 
             # Combine with indices
-            reranked = [(candidates[i][0], float(scores[i])) for i in range(len(scores))]
+            reranked = [
+                (candidates[i][0], float(scores[i])) for i in range(len(scores))
+            ]
             reranked.sort(key=lambda x: x[1], reverse=True)
 
             return reranked[:top_k]
@@ -1737,7 +1898,9 @@ class HybridRetrievalEngine:
             print("Warning: transformers/torch not available. ColBERT disabled.")
             return False
         try:
-            self._colbert_tokenizer = AutoTokenizer.from_pretrained(self._config.colbert_model)
+            self._colbert_tokenizer = AutoTokenizer.from_pretrained(
+                self._config.colbert_model
+            )
             self._colbert_model = AutoModel.from_pretrained(self._config.colbert_model)
             self._colbert_model.eval()
             if torch.cuda.is_available():
@@ -1745,13 +1908,20 @@ class HybridRetrievalEngine:
                 self._colbert_model.to(self._colbert_device)
             return True
         except Exception as exc:
-            print(f"Warning: Failed to load ColBERT model '{self._config.colbert_model}': {exc}")
+            print(
+                f"Warning: Failed to load ColBERT model '{self._config.colbert_model}': {exc}"
+            )
             self._colbert_failed = True
             return False
 
     def _encode_colbert(self, text: str):
         """Encode text into token embeddings for ColBERT scoring."""
-        if self._colbert_tokenizer is None or self._colbert_model is None or torch is None or F is None:
+        if (
+            self._colbert_tokenizer is None
+            or self._colbert_model is None
+            or torch is None
+            or F is None
+        ):
             raise RuntimeError("ColBERT model not available")
         inputs = self._colbert_tokenizer(
             text,
@@ -1818,6 +1988,7 @@ class HybridRetrievalEngine:
         3. RRF fusion to combine results
         4. Cross-encoder reranking for precision
         """
+
         def emit(msg: str, val: float) -> None:
             if on_progress:
                 on_progress(msg, val)
@@ -1845,21 +2016,31 @@ class HybridRetrievalEngine:
 
         async def run_sparse():
             emit("Keyword search (sparse)...", 0.3)
-            return await loop.run_in_executor(None, self._sparse_search, text, rerank_k,
-                                           overrides["title_boost"], overrides["heading_boost"],
-                                           overrides.get("proximity_weight", 0.0))
+            return await loop.run_in_executor(
+                None,
+                self._sparse_search,
+                text,
+                rerank_k,
+                overrides["title_boost"],
+                overrides["heading_boost"],
+                overrides.get("proximity_weight", 0.0),
+            )
 
         async def run_literal():
             emit("Literal search...", 0.4)
-            return await loop.run_in_executor(None, self._literal_search, text, rerank_k)
+            return await loop.run_in_executor(
+                None, self._literal_search, text, rerank_k
+            )
 
         dense_task = asyncio.create_task(run_dense())
         sparse_task = asyncio.create_task(run_sparse())
         literal_task = asyncio.create_task(run_literal())
 
-        dense_results, sparse_results, (literal_results, literal_hits) = await asyncio.gather(
-            dense_task, sparse_task, literal_task
-        )
+        (
+            dense_results,
+            sparse_results,
+            (literal_results, literal_hits),
+        ) = await asyncio.gather(dense_task, sparse_task, literal_task)
 
         if literal_hits:
             self._last_cache["literal_hits"] = literal_hits
@@ -1870,7 +2051,9 @@ class HybridRetrievalEngine:
 
         # Combine with RRF
         emit("Fusing results...", 0.5)
-        result_lists = [lst for lst in (dense_results, sparse_results, literal_results) if lst]
+        result_lists = [
+            lst for lst in (dense_results, sparse_results, literal_results) if lst
+        ]
         if len(result_lists) > 1:
             weights: list[float] = []
             for result_list in result_lists:
@@ -1887,7 +2070,9 @@ class HybridRetrievalEngine:
         # Rerank if enabled (Slowest step, run in executor)
         if self._config.use_reranking and self._reranker:
             emit("Reranking candidates...", 0.6)
-            final_results = await loop.run_in_executor(None, self._rerank, text, fused, top_k)
+            final_results = await loop.run_in_executor(
+                None, self._rerank, text, fused, top_k
+            )
         else:
             final_results = fused[:top_k]
 
@@ -1898,7 +2083,9 @@ class HybridRetrievalEngine:
         }
         if self._config.use_colbert:
             emit("Applying ColBERT rerank...", 0.8)
-            final_results = await loop.run_in_executor(None, self._apply_colbert_rerank, text, final_results, top_k)
+            final_results = await loop.run_in_executor(
+                None, self._apply_colbert_rerank, text, final_results, top_k
+            )
 
         emit("Finalizing results...", 0.9)
         final_results = self._apply_recency_boost(
@@ -1912,7 +2099,7 @@ class HybridRetrievalEngine:
             self._apply_diversity_rerank,
             final_results,
             top_k,
-            overrides["diversity"]
+            overrides["diversity"],
         )
 
         # Build result objects
@@ -1932,8 +2119,16 @@ class HybridRetrievalEngine:
                         # Add top related chunks for each keyword
                         expanded_indices.update(list(self._graph[token])[:2])
 
-            retrieval_method = "hybrid" if len(result_lists) > 1 else (
-                "dense" if dense_results else "sparse" if sparse_results else "literal"
+            retrieval_method = (
+                "hybrid"
+                if len(result_lists) > 1
+                else (
+                    "dense"
+                    if dense_results
+                    else "sparse"
+                    if sparse_results
+                    else "literal"
+                )
             )
 
             for idx, score in final_results:
@@ -1949,6 +2144,7 @@ class HybridRetrievalEngine:
                     extra_context = []
                     if self._config.raptor and doc_id in self._trees:
                         from .hierarchy import HierarchicalRetriever
+
                         hr = HierarchicalRetriever(self._trees[doc_id])
                         extra_context = hr.get_context_chain(f"{chunk.index}")
 
@@ -1965,15 +2161,17 @@ class HybridRetrievalEngine:
                         text=chunk_text,
                         metadata=doc.metadata,
                     )
-                    results.append(RetrievalResult(
-                        document=chunk_doc,
-                        score=score,
-                        chunk_text=chunk.text,
-                        retrieval_method=retrieval_method,
-                        chunk_id=f"{doc.id}-{chunk.index}",
-                        start_char=chunk.start_char,
-                        end_char=chunk.end_char,
-                    ))
+                    results.append(
+                        RetrievalResult(
+                            document=chunk_doc,
+                            score=score,
+                            chunk_text=chunk.text,
+                            retrieval_method=retrieval_method,
+                            chunk_id=f"{doc.id}-{chunk.index}",
+                            start_char=chunk.start_char,
+                            end_char=chunk.end_char,
+                        )
+                    )
 
         return results
 
@@ -1987,16 +2185,24 @@ class HybridRetrievalEngine:
             "backend_map": dict(self._config.backend_map),
             "embedding_model": {
                 "name": self._config.embedding_model,
-                "status": "ready" if self._embedder else ("failed" if self._embedder_failed else "pending"),
-                "is_local": os.path.isdir(self._config.embedding_model) if self._config.embedding_model else False,
+                "status": "ready"
+                if self._embedder
+                else ("failed" if self._embedder_failed else "pending"),
+                "is_local": os.path.isdir(self._config.embedding_model)
+                if self._config.embedding_model
+                else False,
                 "backend_id": self._config.backend_map.get("embedding", ""),
             },
             "reranker_model": {
                 "name": self._config.reranker_model,
-                "status": "ready" if self._reranker else ("failed" if self._reranker_failed else "pending"),
-                "is_local": os.path.isdir(self._config.reranker_model) if self._config.reranker_model else False,
+                "status": "ready"
+                if self._reranker
+                else ("failed" if self._reranker_failed else "pending"),
+                "is_local": os.path.isdir(self._config.reranker_model)
+                if self._config.reranker_model
+                else False,
                 "backend_id": self._config.backend_map.get("reranker", ""),
-            }
+            },
         }
         return status
 
@@ -2004,7 +2210,9 @@ class HybridRetrievalEngine:
         """Return non-invasive retrieval readiness facts."""
         docs = self._docs.list()
         chunk_count = len(self._chunks)
-        embedding_count = int(len(self._embeddings)) if self._embeddings is not None else 0
+        embedding_count = (
+            int(len(self._embeddings)) if self._embeddings is not None else 0
+        )
         sparse_ready = bool(self._bm25 and self._tokenized_corpus)
         dense_ready = self._embeddings is not None and embedding_count > 0
         model_status = self.get_model_status()
@@ -2036,12 +2244,22 @@ class HybridRetrievalEngine:
         """Return a content-safe corpus manifest for eval reproducibility."""
         documents = sorted(self._docs.list(), key=lambda doc: doc.id)
         document_hashes = []
-        secret_terms = ("apikey", "authorization", "token", "secret", "password", "credential")
+        secret_terms = (
+            "apikey",
+            "authorization",
+            "token",
+            "secret",
+            "password",
+            "credential",
+        )
         for doc in documents:
             metadata = {
                 key: value
                 for key, value in sorted((doc.metadata or {}).items())
-                if not any(term in re.sub(r"[^a-z0-9]", "", key.lower()) for term in secret_terms)
+                if not any(
+                    term in re.sub(r"[^a-z0-9]", "", key.lower())
+                    for term in secret_terms
+                )
             }
             payload = {
                 "id": doc.id,
@@ -2050,25 +2268,33 @@ class HybridRetrievalEngine:
                 "metadata": metadata,
             }
             digest = hashlib.sha256(
-                json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+                json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(
+                    "utf-8"
+                )
             ).hexdigest()
             document_hashes.append({"id": doc.id, "title": doc.title, "sha256": digest})
 
         fingerprint_payload = {
             "documents": document_hashes,
             "chunk_count": len(self._chunks),
-            "embedding_count": int(len(self._embeddings)) if self._embeddings is not None else 0,
+            "embedding_count": int(len(self._embeddings))
+            if self._embeddings is not None
+            else 0,
             "corpus_version": self.get_corpus_version(),
         }
         fingerprint = hashlib.sha256(
-            json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            json.dumps(
+                fingerprint_payload, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
         ).hexdigest()
 
         return {
             "fingerprint": fingerprint,
             "document_count": len(documents),
             "chunk_count": len(self._chunks),
-            "embedding_count": int(len(self._embeddings)) if self._embeddings is not None else 0,
+            "embedding_count": int(len(self._embeddings))
+            if self._embeddings is not None
+            else 0,
             "corpus_version": self.get_corpus_version(),
             "documents": document_hashes,
         }

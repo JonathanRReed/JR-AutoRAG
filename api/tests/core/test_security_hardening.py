@@ -30,7 +30,9 @@ class TestCanaryTokenManager:
         mgr = CanaryTokenManager()
         mgr.generate_canary()
         # Simulate output that preserved the canary
-        output = f"Here is the answer. {mgr._canary_format.format(token=mgr._active_token)}"
+        output = (
+            f"Here is the answer. {mgr._canary_format.format(token=mgr._active_token)}"
+        )
         assert mgr.verify_output(output) is True
 
     def test_verify_output_missing(self):
@@ -91,7 +93,10 @@ class TestPoisonedChunkScanner:
     def test_excessive_repetition_detected(self):
         scanner = PoisonedChunkScanner()
         # Highly repetitive text (adversarial padding)
-        result = scanner.scan_chunk("buy now buy now buy now buy now buy now buy now buy now buy now buy now buy now", "chunk-4")
+        result = scanner.scan_chunk(
+            "buy now buy now buy now buy now buy now buy now buy now buy now buy now buy now",
+            "chunk-4",
+        )
         assert result.is_suspicious
         assert any("repetition" in f for f in result.flags)
 

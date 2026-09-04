@@ -18,6 +18,7 @@ from typing import Any
 @dataclass
 class TokenBucket:
     """Token bucket state for rate limiting."""
+
     tokens: float
     last_update: float
     capacity: float
@@ -52,6 +53,7 @@ class TokenBucket:
 @dataclass
 class RateLimitConfig:
     """Configuration for rate limiter."""
+
     requests_per_minute: int = 60
     burst_capacity: int = 10
     enabled: bool = True
@@ -158,7 +160,9 @@ class RateLimiter:
         # Update without consuming to get current state
         now = time.time()
         elapsed = now - bucket.last_update
-        current_tokens = min(bucket.capacity, bucket.tokens + elapsed * bucket.refill_rate)
+        current_tokens = min(
+            bucket.capacity, bucket.tokens + elapsed * bucket.refill_rate
+        )
 
         if current_tokens >= 1.0:
             return 0.0
@@ -175,7 +179,9 @@ class RateLimiter:
         bucket = self._get_bucket(key)
         now = time.time()
         elapsed = now - bucket.last_update
-        current_tokens = min(bucket.capacity, bucket.tokens + elapsed * bucket.refill_rate)
+        current_tokens = min(
+            bucket.capacity, bucket.tokens + elapsed * bucket.refill_rate
+        )
 
         return int(current_tokens)
 
@@ -231,8 +237,16 @@ def get_rate_limiter() -> RateLimiter:
     global _rate_limiter
     if _rate_limiter is None:
         import os
-        default_enabled = "false" if os.environ.get("JR_DEMO_MODE", "").lower() in {"1", "true", "yes"} else "true"
-        enabled = os.environ.get("AUTORAG_RATE_LIMIT_ENABLED", default_enabled).lower() == "true"
+
+        default_enabled = (
+            "false"
+            if os.environ.get("JR_DEMO_MODE", "").lower() in {"1", "true", "yes"}
+            else "true"
+        )
+        enabled = (
+            os.environ.get("AUTORAG_RATE_LIMIT_ENABLED", default_enabled).lower()
+            == "true"
+        )
         rpm = int(os.environ.get("AUTORAG_RATE_LIMIT_RPM", "600"))
         burst = int(os.environ.get("AUTORAG_RATE_LIMIT_BURST", "80"))
         _rate_limiter = RateLimiter(

@@ -8,7 +8,9 @@ from pydantic import BaseModel, Field
 
 
 SecurityCheckStatus = Literal["pass", "warn", "fail"]
-SecurityPostureLevel = Literal["local_only", "client_ready", "needs_attention", "unsafe"]
+SecurityPostureLevel = Literal[
+    "local_only", "client_ready", "needs_attention", "unsafe"
+]
 
 
 class SecurityPostureCheck(BaseModel):

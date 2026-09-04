@@ -12,7 +12,9 @@ MAX_DOCUMENT_IDS = 100
 
 
 class QueryRequest(BaseModel):
-    question: str = Field(..., max_length=MAX_QUESTION_LENGTH, description="The question to answer")
+    question: str = Field(
+        ..., max_length=MAX_QUESTION_LENGTH, description="The question to answer"
+    )
     document_ids: list[str] | None = Field(
         default=None,
         max_length=MAX_DOCUMENT_IDS,
@@ -32,6 +34,7 @@ class ChunkOut(BaseModel):
 
 class PipelineStepOut(BaseModel):
     """A single step in the RAG pipeline with timing and details."""
+
     name: str
     duration_ms: float
     details: dict[str, Any] = Field(default_factory=dict)
@@ -43,7 +46,9 @@ class PipelineStepOut(BaseModel):
 class QueryResponse(BaseModel):
     answer: str
     chunks: list[ChunkOut]
-    sources: list[dict[str, Any]] = Field(default_factory=list)  # Phase 2: Citation info
+    sources: list[dict[str, Any]] = Field(
+        default_factory=list
+    )  # Phase 2: Citation info
     trace_id: str
     metrics: dict[str, Any]  # Allow strings like query_type
     confidence: dict[str, Any] | None = None
@@ -54,6 +59,7 @@ class QueryResponse(BaseModel):
 
 class TraceStepOut(BaseModel):
     """Step info for trace display."""
+
     name: str
     duration_ms: float
     details: dict[str, Any] = Field(default_factory=dict)

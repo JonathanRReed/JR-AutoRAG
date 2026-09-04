@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 @dataclass
 class EnrichmentContext:
     """Context added to each chunk."""
+
     document_title: str = ""
     document_summary: str = ""
     section_header: str = ""
@@ -37,6 +38,7 @@ class EnrichmentContext:
 @dataclass
 class EnrichedChunk:
     """A chunk with contextual enrichment."""
+
     original_text: str
     enriched_text: str
     context: EnrichmentContext
@@ -54,6 +56,7 @@ class EnrichedChunk:
 @dataclass
 class EnrichmentConfig:
     """Configuration for contextual enrichment."""
+
     # Enable/disable specific enrichment types
     add_document_title: bool = True
     add_section_header: bool = True
@@ -113,12 +116,12 @@ Summary:"""
         2. Filename without extension
         """
         # Try to find markdown heading
-        heading_match = re.search(r'^#\s+(.+?)$', document_text, re.MULTILINE)
+        heading_match = re.search(r"^#\s+(.+?)$", document_text, re.MULTILINE)
         if heading_match:
             return heading_match.group(1).strip()
 
         # Try first line if it looks like a title
-        lines = document_text.split('\n')
+        lines = document_text.split("\n")
         if lines:
             first_line = lines[0].strip()
             if len(first_line) < 100 and first_line:
@@ -126,11 +129,13 @@ Summary:"""
 
         # Fall back to filename
         if filename:
-            return re.sub(r'\.[^.]+$', '', filename).replace('_', ' ').replace('-', ' ')
+            return re.sub(r"\.[^.]+$", "", filename).replace("_", " ").replace("-", " ")
 
         return "Untitled Document"
 
-    def extract_section_header(self, chunk_text: str, document_text: str, chunk_start: int) -> str:
+    def extract_section_header(
+        self, chunk_text: str, document_text: str, chunk_start: int
+    ) -> str:
         """Find the section header for a chunk.
 
         Looks backwards from chunk position to find the nearest heading.
@@ -139,8 +144,11 @@ Summary:"""
         preceding_text = document_text[:chunk_start]
 
         # Find all headings (markdown or all-caps lines)
-        headings = list(re.finditer(r'^#+\s+(.+?)$|^([A-Z][A-Z\s]{5,})$',
-                                     preceding_text, re.MULTILINE))
+        headings = list(
+            re.finditer(
+                r"^#+\s+(.+?)$|^([A-Z][A-Z\s]{5,})$", preceding_text, re.MULTILINE
+            )
+        )
 
         if headings:
             last_heading = headings[-1]
@@ -167,9 +175,11 @@ Summary:"""
         if provider is not None and self.config.use_llm_for_summary:
             try:
                 prompt = self.SUMMARY_PROMPT.format(chunk_text=chunk_text[:1000])
-                response = await provider.chat([
-                    {"role": "user", "content": prompt},
-                ])
+                response = await provider.chat(
+                    [
+                        {"role": "user", "content": prompt},
+                    ]
+                )
                 summary = response.strip()[:200]
             except Exception:
                 if self.config.fallback_to_heuristic:
@@ -186,14 +196,14 @@ Summary:"""
         Takes the first complete sentence and key terms.
         """
         # Get first sentence
-        sentences = re.split(r'[.!?]+', chunk_text.strip())
+        sentences = re.split(r"[.!?]+", chunk_text.strip())
         first_sentence = sentences[0].strip() if sentences else ""
 
         if len(first_sentence) > 100:
             first_sentence = first_sentence[:97] + "..."
 
         # Extract key terms (capitalized words, numbers with context)
-        key_terms = re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', chunk_text)
+        key_terms = re.findall(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b", chunk_text)
         unique_terms = list(dict.fromkeys(key_terms))[:3]
 
         if unique_terms and first_sentence:
@@ -217,12 +227,12 @@ Summary:"""
             # Get preceding context from previous chunk
             if chunk_index > 0:
                 prev_chunk = all_chunks[chunk_index - 1]
-                preceding = prev_chunk.text[-self.config.preceding_chars:]
+                preceding = prev_chunk.text[-self.config.preceding_chars :]
 
             # Get following context from next chunk
             if chunk_index < len(all_chunks) - 1:
                 next_chunk = all_chunks[chunk_index + 1]
-                following = next_chunk.text[:self.config.following_chars]
+                following = next_chunk.text[: self.config.following_chars]
 
         return preceding, following
 
@@ -346,7 +356,7 @@ Summary:"""
         enriched: list[EnrichedChunk] = []
 
         for start in range(0, len(chunks), max_concurrent):
-            batch = chunks[start:start + max_concurrent]
+            batch = chunks[start : start + max_concurrent]
             tasks = [
                 self.enrich_chunk(
                     chunk=chunk,
@@ -392,9 +402,7 @@ Summary:"""
             if self.config.add_chunk_summary:
                 chunk_summary = self._heuristic_summary(chunk.text)
 
-            preceding, following = self.get_context_window(
-                i, chunks, document_text
-            )
+            preceding, following = self.get_context_window(i, chunks, document_text)
 
             context = EnrichmentContext(
                 document_title=document_title,
@@ -411,15 +419,17 @@ Summary:"""
             enriched_text = self.format_enriched_text(chunk.text, context)
             content_hash = hashlib.sha256(chunk.text.encode()).hexdigest()
 
-            enriched.append(EnrichedChunk(
-                original_text=chunk.text,
-                enriched_text=enriched_text,
-                context=context,
-                index=i,
-                start_char=chunk.start_char,
-                end_char=chunk.end_char,
-                content_hash=content_hash,
-            ))
+            enriched.append(
+                EnrichedChunk(
+                    original_text=chunk.text,
+                    enriched_text=enriched_text,
+                    context=context,
+                    index=i,
+                    start_char=chunk.start_char,
+                    end_char=chunk.end_char,
+                    content_hash=content_hash,
+                )
+            )
 
         return enriched
 
@@ -428,7 +438,9 @@ Summary:"""
 _enricher: ContextualEnricher | None = None
 
 
-def get_contextual_enricher(config: EnrichmentConfig | None = None) -> ContextualEnricher:
+def get_contextual_enricher(
+    config: EnrichmentConfig | None = None,
+) -> ContextualEnricher:
     """Get or create the contextual enricher instance."""
     global _enricher
     if _enricher is None or config is not None:

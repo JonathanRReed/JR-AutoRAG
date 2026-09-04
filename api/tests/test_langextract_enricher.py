@@ -74,7 +74,11 @@ def test_synthetic_sections_are_deterministic_and_capped() -> None:
             SimpleNamespace(
                 extraction_class="relation",
                 extraction_text="Acme signs with Northwind",
-                attributes={"source": "Acme", "target": "Northwind", "type": "contract"},
+                attributes={
+                    "source": "Acme",
+                    "target": "Northwind",
+                    "type": "contract",
+                },
             ),
             SimpleNamespace(
                 extraction_class="entity",
@@ -144,7 +148,9 @@ def test_ingest_fail_open_when_extraction_fails(tmp_path: Path) -> None:
 
     pipeline._langextract.extract = fail_extract  # type: ignore[method-assign]
 
-    result = pipeline.ingest_text(title="Policy", text="Security policy text.", sync=True)
+    result = pipeline.ingest_text(
+        title="Policy", text="Security policy text.", sync=True
+    )
     doc = store.get(result.document_id)
 
     assert doc is not None
@@ -187,7 +193,9 @@ def test_ingest_appends_synthetic_sections_on_success(tmp_path: Path) -> None:
 
     pipeline._langextract.extract = success_extract  # type: ignore[method-assign]
 
-    result = pipeline.ingest_text(title="Agreement", text="Agreement text body.", sync=True)
+    result = pipeline.ingest_text(
+        title="Agreement", text="Agreement text body.", sync=True
+    )
     doc = store.get(result.document_id)
 
     assert doc is not None

@@ -17,6 +17,7 @@ from typing import Any
 
 class ImageType(str, Enum):
     """Types of images in documents."""
+
     PHOTO = "photo"
     DIAGRAM = "diagram"
     CHART = "chart"
@@ -28,6 +29,7 @@ class ImageType(str, Enum):
 @dataclass
 class ExtractedImage:
     """Information about an extracted image."""
+
     image_id: str
     source_path: str | None
     image_type: ImageType
@@ -58,15 +60,12 @@ class ImageExtractor:
     """Extracts image references from documents."""
 
     # Markdown image pattern
-    MD_IMAGE_PATTERN = re.compile(
-        r'!\[([^\]]*)\]\(([^)]+)\)',
-        re.MULTILINE
-    )
+    MD_IMAGE_PATTERN = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)", re.MULTILINE)
 
     # HTML image pattern
     HTML_IMAGE_PATTERN = re.compile(
         r'<img[^>]+src=["\']([^"\']+)["\'][^>]*(?:alt=["\']([^"\']*)["\'])?[^>]*>',
-        re.IGNORECASE
+        re.IGNORECASE,
     )
 
     def extract_markdown_images(self, text: str) -> list[tuple[str, str, int]]:
@@ -121,6 +120,7 @@ class OCRProcessor:
         """Check if tesseract is available."""
         try:
             import pytesseract
+
             # Quick check
             pytesseract.get_tesseract_version()
             self._tesseract_available = True
@@ -152,19 +152,19 @@ class ImageTypeClassifier:
 
     # File extension hints
     EXTENSION_HINTS = {
-        '.png': ImageType.SCREENSHOT,
-        '.jpg': ImageType.PHOTO,
-        '.jpeg': ImageType.PHOTO,
-        '.gif': ImageType.ICON,
-        '.svg': ImageType.DIAGRAM,
+        ".png": ImageType.SCREENSHOT,
+        ".jpg": ImageType.PHOTO,
+        ".jpeg": ImageType.PHOTO,
+        ".gif": ImageType.ICON,
+        ".svg": ImageType.DIAGRAM,
     }
 
     # Filename pattern hints
     FILENAME_PATTERNS = {
-        r'diagram|flowchart|chart|graph': ImageType.DIAGRAM,
-        r'screenshot|screen|capture': ImageType.SCREENSHOT,
-        r'icon|logo|badge': ImageType.ICON,
-        r'photo|image|img': ImageType.PHOTO,
+        r"diagram|flowchart|chart|graph": ImageType.DIAGRAM,
+        r"screenshot|screen|capture": ImageType.SCREENSHOT,
+        r"icon|logo|badge": ImageType.ICON,
+        r"photo|image|img": ImageType.PHOTO,
     }
 
     def classify(self, src: str, alt_text: str = "") -> ImageType:
@@ -209,12 +209,14 @@ class MultimodalProcessor:
         """
         images = []
 
-        for i, (alt_text, src, position) in enumerate(self.image_extractor.extract_all(text)):
+        for i, (alt_text, src, position) in enumerate(
+            self.image_extractor.extract_all(text)
+        ):
             image_id = f"img_{i}"
 
             # Resolve path if base provided
             image_path = None
-            if base_path and not src.startswith(('http://', 'https://', 'data:')):
+            if base_path and not src.startswith(("http://", "https://", "data:")):
                 full_path = Path(base_path) / src
                 if full_path.exists():
                     image_path = str(full_path)
@@ -227,19 +229,21 @@ class MultimodalProcessor:
             if image_path and self.ocr_processor.available:
                 ocr_text = self.ocr_processor.extract_text(image_path)
 
-            images.append(ExtractedImage(
-                image_id=image_id,
-                source_path=image_path,
-                image_type=image_type,
-                position=position,
-                alt_text=alt_text,
-                caption=alt_text,  # Use alt as caption if none provided
-                ocr_text=ocr_text,
-                description="",
-                metadata={
-                    "vision_description_status": "not_configured",
-                },
-            ))
+            images.append(
+                ExtractedImage(
+                    image_id=image_id,
+                    source_path=image_path,
+                    image_type=image_type,
+                    position=position,
+                    alt_text=alt_text,
+                    caption=alt_text,  # Use alt as caption if none provided
+                    ocr_text=ocr_text,
+                    description="",
+                    metadata={
+                        "vision_description_status": "not_configured",
+                    },
+                )
+            )
 
         return images
 

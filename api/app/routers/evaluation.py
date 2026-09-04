@@ -64,8 +64,11 @@ def get_evaluator() -> GoldenSetEvaluator:
 # Original Evaluation Endpoint (preserved)
 # ============================================================================
 
+
 @router.post("", response_model=EvaluationRun)
-async def run_evaluation(payload: EvaluationRequest, container: ServiceContainer = Depends(get_container)):
+async def run_evaluation(
+    payload: EvaluationRequest, container: ServiceContainer = Depends(get_container)
+):
     """Run ad-hoc evaluation on a list of questions."""
     if not payload.questions:
         raise HTTPException(status_code=400, detail="Must supply at least one question")
@@ -75,20 +78,22 @@ async def run_evaluation(payload: EvaluationRequest, container: ServiceContainer
     if not container.document_store.list():
         responses = []
         for _question in payload.questions:
-            responses.append({
-                "answer": "Demo mode: No documents ingested yet. Upload files to enable retrieval.",
-                "chunks": [],
-                "sources": [],
-                "trace_id": "demo",
-                "metrics": {
-                    "chunks": 0,
-                    "coverage": 0.0,
-                    "tokens": 0,
-                    "duration_ms": 0.0,
-                    "query_type": "demo",
-                },
-                "steps": [],
-            })
+            responses.append(
+                {
+                    "answer": "Demo mode: No documents ingested yet. Upload files to enable retrieval.",
+                    "chunks": [],
+                    "sources": [],
+                    "trace_id": "demo",
+                    "metrics": {
+                        "chunks": 0,
+                        "coverage": 0.0,
+                        "tokens": 0,
+                        "duration_ms": 0.0,
+                        "query_type": "demo",
+                    },
+                    "steps": [],
+                }
+            )
         return EvaluationRun(
             name=payload.name,
             responses=responses,
@@ -100,8 +105,12 @@ async def run_evaluation(payload: EvaluationRequest, container: ServiceContainer
     tasks = [container.orchestrator.answer(q) for q in payload.questions]
     responses = await asyncio.gather(*tasks)
 
-    avg_coverage = sum(r["metrics"].get("coverage", 0.0) for r in responses) / len(responses)
-    avg_tokens = sum(r["metrics"].get("tokens", 0.0) for r in responses) / len(responses)
+    avg_coverage = sum(r["metrics"].get("coverage", 0.0) for r in responses) / len(
+        responses
+    )
+    avg_tokens = sum(r["metrics"].get("tokens", 0.0) for r in responses) / len(
+        responses
+    )
 
     return EvaluationRun(
         name=payload.name,
@@ -114,6 +123,7 @@ async def run_evaluation(payload: EvaluationRequest, container: ServiceContainer
 # ============================================================================
 # Golden Set Management Endpoints
 # ============================================================================
+
 
 @router.post("/golden-sets", response_model=GoldenSetInfo)
 async def create_golden_set(payload: GoldenSetCreateRequest):
@@ -160,7 +170,9 @@ async def get_golden_set(set_name: str):
     store = get_golden_store()
     cases = store.get_set(set_name)
     if not cases:
-        raise HTTPException(status_code=404, detail=f"Golden set '{set_name}' not found")
+        raise HTTPException(
+            status_code=404, detail=f"Golden set '{set_name}' not found"
+        )
 
     return [
         GoldenTestCaseSchema(
@@ -179,13 +191,16 @@ async def delete_golden_set(set_name: str):
     """Delete a golden set."""
     store = get_golden_store()
     if not store.delete_set(set_name):
-        raise HTTPException(status_code=404, detail=f"Golden set '{set_name}' not found")
+        raise HTTPException(
+            status_code=404, detail=f"Golden set '{set_name}' not found"
+        )
     return {"deleted": set_name}
 
 
 # ============================================================================
 # Batch Evaluation Endpoints
 # ============================================================================
+
 
 @router.post("/batch/{set_name}", response_model=EvalRunResultSchema)
 async def run_batch_evaluation(
@@ -216,7 +231,9 @@ async def run_batch_evaluation(
                 question=r.question,
                 answer=r.answer,
                 retrieved_source_ids=r.retrieved_source_ids,
-                retrieval_metrics=RetrievalMetricsSchema(**r.retrieval_metrics.to_dict()),
+                retrieval_metrics=RetrievalMetricsSchema(
+                    **r.retrieval_metrics.to_dict()
+                ),
                 answer_metrics=AnswerMetricsSchema(**r.answer_metrics.to_dict()),
                 duration_ms=r.duration_ms,
                 trace_id=r.trace_id,
@@ -244,7 +261,9 @@ async def get_eval_run_report(run_id: str):
     store = get_eval_run_store()
     report = store.get_report(run_id)
     if report is None:
-        raise HTTPException(status_code=404, detail=f"Evaluation report '{run_id}' not found")
+        raise HTTPException(
+            status_code=404, detail=f"Evaluation report '{run_id}' not found"
+        )
     return report
 
 

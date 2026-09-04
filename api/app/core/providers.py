@@ -68,7 +68,9 @@ async def close_shared_client() -> None:
 
 
 @asynccontextmanager
-async def get_client(timeout: float | httpx.Timeout | None = None, headers: dict[str, str] | None = None):
+async def get_client(
+    timeout: float | httpx.Timeout | None = None, headers: dict[str, str] | None = None
+):
     """Get a client for making requests.
 
     Uses the shared client with connection pooling for better performance.
@@ -77,13 +79,19 @@ async def get_client(timeout: float | httpx.Timeout | None = None, headers: dict
     if timeout is None and headers is None:
         yield get_shared_client()
     else:
-        effective_timeout = timeout if isinstance(timeout, httpx.Timeout) else httpx.Timeout(
-            connect=30.0,
-            read=timeout or DEFAULT_PROVIDER_TIMEOUT,
-            write=60.0,
-            pool=5.0,
+        effective_timeout = (
+            timeout
+            if isinstance(timeout, httpx.Timeout)
+            else httpx.Timeout(
+                connect=30.0,
+                read=timeout or DEFAULT_PROVIDER_TIMEOUT,
+                write=60.0,
+                pool=5.0,
+            )
         )
-        async with httpx.AsyncClient(timeout=effective_timeout, headers=headers) as client:
+        async with httpx.AsyncClient(
+            timeout=effective_timeout, headers=headers
+        ) as client:
             yield client
 
 
@@ -105,7 +113,11 @@ def _normalized_origin(base_url: str) -> str:
     if not scheme or not host:
         return ""
     port = parsed.port
-    if port is None or (scheme == "https" and port == 443) or (scheme == "http" and port == 80):
+    if (
+        port is None
+        or (scheme == "https" and port == 443)
+        or (scheme == "http" and port == 80)
+    ):
         return f"{scheme}://{host}"
     return f"{scheme}://{host}:{port}"
 
@@ -116,7 +128,9 @@ def _infer_secret_key_name(name: str, base_url: str) -> str:
     if trusted_key:
         return trusted_key
 
-    sanitized = "".join(ch if ch.isalnum() else "_" for ch in (name or "PROVIDER").upper())
+    sanitized = "".join(
+        ch if ch.isalnum() else "_" for ch in (name or "PROVIDER").upper()
+    )
     origin_digest = hashlib.sha256(origin.encode()).hexdigest()[:16].upper()
     return f"PROVIDER_{sanitized}_{origin_digest}_API_KEY"
 
@@ -160,12 +174,16 @@ class LLMProvider:
     async def complete(self, prompt: str, **kwargs: Any) -> str:
         raise NotImplementedError
 
-    async def chat_stream(self, messages: Iterable[dict[str, Any]], **kwargs: Any) -> AsyncIterator[str]:
+    async def chat_stream(
+        self, messages: Iterable[dict[str, Any]], **kwargs: Any
+    ) -> AsyncIterator[str]:
         raise NotImplementedError
 
     # Optional: surface token-level stats for uncertainty monitoring.
     # Subclasses can override; default returns empty stats.
-    def get_token_stats(self, text: str) -> dict[str, float | None]:  # pragma: no cover - optional hook
+    def get_token_stats(
+        self, text: str
+    ) -> dict[str, float | None]:  # pragma: no cover - optional hook
         return {"avg_logprob": None, "entropy": None, "logit_margin": None}
 
 
@@ -183,15 +201,24 @@ class _HTTPProvider(LLMProvider):
             response.raise_for_status()
             return response.json()
         except httpx.HTTPStatusError as exc:
-            raise ProviderError(f"Provider error {exc.response.status_code}: {exc}") from exc
+            raise ProviderError(
+                f"Provider error {exc.response.status_code}: {exc}"
+            ) from exc
         except httpx.HTTPError as exc:
-            raise ProviderError(f"Provider request failed ({type(exc).__name__}): {exc}") from exc
+            raise ProviderError(
+                f"Provider request failed ({type(exc).__name__}): {exc}"
+            ) from exc
 
 
 class OllamaProvider(_HTTPProvider):
     """Provider for local Ollama instances."""
 
-    def __init__(self, base_url: str, default_model: str | None = None, api_key: str | None = None) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        default_model: str | None = None,
+        api_key: str | None = None,
+    ) -> None:
         super().__init__(base_url, default_model)
         self.api_key = api_key
 
@@ -214,9 +241,13 @@ class OllamaProvider(_HTTPProvider):
             response.raise_for_status()
             return response.json()
         except httpx.HTTPStatusError as exc:
-            raise ProviderError(f"Ollama error {exc.response.status_code}: {exc}") from exc
+            raise ProviderError(
+                f"Ollama error {exc.response.status_code}: {exc}"
+            ) from exc
         except httpx.HTTPError as exc:
-            raise ProviderError(f"Ollama request failed ({type(exc).__name__}): {exc}") from exc
+            raise ProviderError(
+                f"Ollama request failed ({type(exc).__name__}): {exc}"
+            ) from exc
 
     async def chat(self, messages: Iterable[dict[str, Any]], **kwargs: Any) -> str:
         model = kwargs.get("model") or self.default_model or "llama3"
@@ -239,9 +270,10 @@ class OllamaProvider(_HTTPProvider):
         headers = self._get_headers()
         try:
             timeout = _get_timeout("JR_PROVIDER_STREAM_TIMEOUT", DEFAULT_STREAM_TIMEOUT)
-            async with httpx.AsyncClient(timeout=timeout, headers=headers) as client, client.stream(
-                "POST", url, json=payload
-            ) as response:
+            async with (
+                httpx.AsyncClient(timeout=timeout, headers=headers) as client,
+                client.stream("POST", url, json=payload) as response,
+            ):
                 response.raise_for_status()
                 async for line in response.aiter_lines():
                     if not line:
@@ -257,9 +289,13 @@ class OllamaProvider(_HTTPProvider):
                     if data.get("done") is True:
                         break
         except httpx.HTTPStatusError as exc:
-            raise ProviderError(f"Provider error {exc.response.status_code}: {exc}") from exc
+            raise ProviderError(
+                f"Provider error {exc.response.status_code}: {exc}"
+            ) from exc
         except httpx.HTTPError as exc:
-            raise ProviderError(f"Provider request failed ({type(exc).__name__}): {exc}") from exc
+            raise ProviderError(
+                f"Provider request failed ({type(exc).__name__}): {exc}"
+            ) from exc
 
     async def complete(self, prompt: str, **kwargs: Any) -> str:
         model = kwargs.get("model") or self.default_model or "llama3"
@@ -295,7 +331,9 @@ class OllamaCloudProvider(OllamaProvider):
         resolved_key = resolve_provider_api_key("ollama cloud", resolved_url, api_key)
         super().__init__(resolved_url, default_model or "llama3", resolved_key)
         if not self.api_key:
-            raise ProviderError("Ollama Cloud requires an API key. Set OLLAMA_API_KEY or provide api_key parameter.")
+            raise ProviderError(
+                "Ollama Cloud requires an API key. Set OLLAMA_API_KEY or provide api_key parameter."
+            )
 
     async def list_models(self) -> list[str]:
         """Fetch available cloud models from Ollama."""
@@ -305,7 +343,11 @@ class OllamaCloudProvider(OllamaProvider):
                 response = await client.get(f"{self.base_url}/api/tags")
             response.raise_for_status()
             data = response.json()
-            return [model.get("name", "") for model in data.get("models", []) if model.get("name")]
+            return [
+                model.get("name", "")
+                for model in data.get("models", [])
+                if model.get("name")
+            ]
         except httpx.HTTPError as exc:
             raise ProviderError(f"Failed to list Ollama Cloud models: {exc}") from exc
 
@@ -327,7 +369,12 @@ class LMStudioProvider(_HTTPProvider):
 
 
 class CloudProvider(_HTTPProvider):
-    def __init__(self, base_url: str, default_model: str | None = None, api_key: str | None = None) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        default_model: str | None = None,
+        api_key: str | None = None,
+    ) -> None:
         super().__init__(base_url, default_model)
         self.api_key = api_key
 
@@ -341,9 +388,13 @@ class CloudProvider(_HTTPProvider):
             response.raise_for_status()
             return response.json()
         except httpx.HTTPStatusError as exc:
-            raise ProviderError(f"Cloud provider error {exc.response.status_code}: {exc}") from exc
+            raise ProviderError(
+                f"Cloud provider error {exc.response.status_code}: {exc}"
+            ) from exc
         except httpx.HTTPError as exc:
-            raise ProviderError(f"Cloud provider request failed ({type(exc).__name__}): {exc}") from exc
+            raise ProviderError(
+                f"Cloud provider request failed ({type(exc).__name__}): {exc}"
+            ) from exc
 
     async def chat(self, messages: Iterable[dict[str, Any]], **kwargs: Any) -> str:
         model = kwargs.get("model") or self.default_model or "gpt-4o-mini"
@@ -398,9 +449,13 @@ class OpenRouterProvider(_HTTPProvider):
             response.raise_for_status()
             return response.json()
         except httpx.HTTPStatusError as exc:
-            raise ProviderError(f"OpenRouter error {exc.response.status_code}: {exc}") from exc
+            raise ProviderError(
+                f"OpenRouter error {exc.response.status_code}: {exc}"
+            ) from exc
         except httpx.HTTPError as exc:
-            raise ProviderError(f"OpenRouter request failed ({type(exc).__name__}): {exc}") from exc
+            raise ProviderError(
+                f"OpenRouter request failed ({type(exc).__name__}): {exc}"
+            ) from exc
 
     async def chat(self, messages: Iterable[dict[str, Any]], **kwargs: Any) -> str:
         model = kwargs.get("model") or self.default_model
@@ -417,7 +472,9 @@ class OpenRouterProvider(_HTTPProvider):
         choices = data.get("choices") or []
         return choices[0]["message"]["content"] if choices else ""
 
-    async def chat_stream(self, messages: Iterable[dict[str, Any]], **kwargs: Any) -> AsyncIterator[str]:
+    async def chat_stream(
+        self, messages: Iterable[dict[str, Any]], **kwargs: Any
+    ) -> AsyncIterator[str]:
         model = kwargs.get("model") or self.default_model
         payload = {
             "model": model,
@@ -428,9 +485,10 @@ class OpenRouterProvider(_HTTPProvider):
         headers = self._get_headers()
         try:
             timeout = _get_timeout("JR_PROVIDER_STREAM_TIMEOUT", DEFAULT_STREAM_TIMEOUT)
-            async with httpx.AsyncClient(timeout=timeout, headers=headers) as client, client.stream(
-                "POST", url, json=payload
-            ) as response:
+            async with (
+                httpx.AsyncClient(timeout=timeout, headers=headers) as client,
+                client.stream("POST", url, json=payload) as response,
+            ):
                 response.raise_for_status()
                 async for line in response.aiter_lines():
                     if not line or not line.startswith("data: "):
@@ -449,9 +507,13 @@ class OpenRouterProvider(_HTTPProvider):
                         if content:
                             yield content
         except httpx.HTTPStatusError as exc:
-            raise ProviderError(f"OpenRouter error {exc.response.status_code}: {exc}") from exc
+            raise ProviderError(
+                f"OpenRouter error {exc.response.status_code}: {exc}"
+            ) from exc
         except httpx.HTTPError as exc:
-            raise ProviderError(f"OpenRouter request failed ({type(exc).__name__}): {exc}") from exc
+            raise ProviderError(
+                f"OpenRouter request failed ({type(exc).__name__}): {exc}"
+            ) from exc
 
     async def complete(self, prompt: str, **kwargs: Any) -> str:
         messages = [{"role": "user", "content": prompt}]
@@ -479,7 +541,9 @@ class ProviderFactory:
     def build(self, cfg: ProviderConfig) -> LLMProvider:
         name = (cfg.name or "").lower()
         base_url = str(cfg.base_url).lower()
-        resolved_key = resolve_provider_api_key(cfg.name, str(cfg.base_url), cfg.api_key, self.api_key)
+        resolved_key = resolve_provider_api_key(
+            cfg.name, str(cfg.base_url), cfg.api_key, self.api_key
+        )
 
         # Check for Ollama Cloud (ollama.com URL or explicit "ollama cloud" name)
         if "ollama.com" in base_url or "ollama_cloud" in name or "ollama cloud" in name:
@@ -490,7 +554,11 @@ class ProviderFactory:
             )
         # Local Ollama
         if "ollama" in name:
-            return OllamaProvider(str(cfg.base_url), cfg.planner_model or cfg.generator_model, resolved_key)
+            return OllamaProvider(
+                str(cfg.base_url),
+                cfg.planner_model or cfg.generator_model,
+                resolved_key,
+            )
         if "lm" in name or "studio" in name:
             return LMStudioProvider(str(cfg.base_url), cfg.generator_model)
         if "openrouter" in name:
@@ -499,7 +567,9 @@ class ProviderFactory:
                 default_model=cfg.generator_model,
                 base_url=str(cfg.base_url),
             )
-        return CloudProvider(str(cfg.base_url), cfg.generator_model, api_key=resolved_key)
+        return CloudProvider(
+            str(cfg.base_url), cfg.generator_model, api_key=resolved_key
+        )
 
     def get_default_provider(self) -> LLMProvider | None:
         """Get a default local provider for background tasks like GraphRAG.
@@ -516,7 +586,9 @@ class ProviderFactory:
                 resp = client.get(f"{ollama_url}/api/tags")
                 resp.raise_for_status()
                 data = resp.json()
-                models = [m.get("name") for m in data.get("models", []) if m.get("name")]
+                models = [
+                    m.get("name") for m in data.get("models", []) if m.get("name")
+                ]
                 if models:
                     return OllamaProvider(ollama_url, models[0])
         except (httpx.HTTPError, httpx.RequestError):
@@ -547,28 +619,42 @@ async def discover_models(
     base = str(cfg.base_url).rstrip("/")
     base_lower = base.lower()
     kind = (cfg.name or "").lower()
-    if deployment_profile == DeploymentProfile.LOCAL_ONLY and not is_local_provider_url(base):
-        raise ProviderError("Local-only mode permits model discovery only from localhost providers.")
+    if deployment_profile == DeploymentProfile.LOCAL_ONLY and not is_local_provider_url(
+        base
+    ):
+        raise ProviderError(
+            "Local-only mode permits model discovery only from localhost providers."
+        )
     if (
         deployment_profile == DeploymentProfile.CLIENT_SAFE
         and not is_client_owned_provider_url(base)
     ):
-        raise ProviderError("Client-safe mode permits model discovery only from client-owned providers.")
+        raise ProviderError(
+            "Client-safe mode permits model discovery only from client-owned providers."
+        )
 
     ollama_cloud = _normalized_origin(base) == "https://ollama.com"
-    local_provider = "lm" in kind or "studio" in kind or ("ollama" in kind and not ollama_cloud)
+    local_provider = (
+        "lm" in kind or "studio" in kind or ("ollama" in kind and not ollama_cloud)
+    )
     if local_provider:
         permitted_local_url = is_local_provider_url(base) or (
             deployment_profile == DeploymentProfile.CLIENT_SAFE
             and is_client_owned_provider_url(base)
         )
         if not permitted_local_url:
-            raise ProviderError("Local provider discovery requires a localhost or loopback URL.")
+            raise ProviderError(
+                "Local provider discovery requires a localhost or loopback URL."
+            )
     else:
         if not is_public_provider_url(base):
-            raise ProviderError("Cloud provider discovery URL must resolve to a public network address.")
+            raise ProviderError(
+                "Cloud provider discovery URL must resolve to a public network address."
+            )
         if not _is_trusted_cloud_provider_url(base):
-            raise ProviderError("Model discovery is limited to a trusted cloud provider origin.")
+            raise ProviderError(
+                "Model discovery is limited to a trusted cloud provider origin."
+            )
     api_key = resolve_provider_api_key(cfg.name, base, cfg.api_key)
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
 
@@ -583,24 +669,38 @@ async def discover_models(
                 resp = await client.get(f"{base}/api/tags")
                 resp.raise_for_status()
                 data = resp.json()
-                return [model.get("name", "") for model in data.get("models", []) if model.get("name")]
+                return [
+                    model.get("name", "")
+                    for model in data.get("models", [])
+                    if model.get("name")
+                ]
             if "openrouter" in kind or "openrouter.ai" in base_lower:
                 if not api_key:
                     raise ProviderError("OpenRouter requires an API key.")
                 resp = await client.get(_models_url(base))
                 resp.raise_for_status()
                 data = resp.json()
-                return [item.get("id", "") for item in data.get("data", []) if item.get("id")]
+                return [
+                    item.get("id", "")
+                    for item in data.get("data", [])
+                    if item.get("id")
+                ]
             if "lm" in kind or "studio" in kind:
                 resp = await client.get(_models_url(base))
                 resp.raise_for_status()
                 data = resp.json()
-                return [item.get("id", "") for item in data.get("data", []) if item.get("id")]
+                return [
+                    item.get("id", "")
+                    for item in data.get("data", [])
+                    if item.get("id")
+                ]
             # Fallback for OpenAI-compatible clouds
             resp = await client.get(_models_url(base))
             resp.raise_for_status()
             data = resp.json()
-            return [item.get("id", "") for item in data.get("data", []) if item.get("id")]
+            return [
+                item.get("id", "") for item in data.get("data", []) if item.get("id")
+            ]
         except httpx.HTTPError as exc:
             raise ProviderError(f"Failed to discover models: {exc}") from exc
 
@@ -619,13 +719,21 @@ async def _probe_ollama(base_url: str) -> LocalProviderInfo:
         except (httpx.HTTPError, httpx.RequestError) as exc:
             raise ProviderError(f"Ollama tags request failed: {exc}") from exc
 
-        models = [model.get("name", "") for model in data.get("models", []) if model.get("name")]
+        models = [
+            model.get("name", "")
+            for model in data.get("models", [])
+            if model.get("name")
+        ]
 
         running: list[str] = []
         try:
             ps_resp = await client.get(f"{base}/api/ps")
             ps_resp.raise_for_status()
-            running = [model.get("model", "") for model in ps_resp.json().get("models", []) if model.get("model")]
+            running = [
+                model.get("model", "")
+                for model in ps_resp.json().get("models", [])
+                if model.get("model")
+            ]
         except (httpx.HTTPError, httpx.RequestError):
             running = []
 
@@ -659,7 +767,11 @@ async def _probe_lmstudio(base_url: str) -> LocalProviderInfo:
         payload = models_resp.json()
         entries = payload.get("data", [])
         models = [entry.get("id", "") for entry in entries if entry.get("id")]
-        running = [entry.get("id", "") for entry in entries if entry.get("state") == "loaded" and entry.get("id")]
+        running = [
+            entry.get("id", "")
+            for entry in entries
+            if entry.get("state") == "loaded" and entry.get("id")
+        ]
 
         version: str | None = None
         try:

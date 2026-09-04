@@ -24,6 +24,7 @@ from app.core.hallucination_firewall import FirewallResult, HallucinationFirewal
 # Test Fixtures
 # ============================================================================
 
+
 @pytest.fixture
 def sample_chunks():
     """Create sample evidence chunks for testing."""
@@ -72,6 +73,7 @@ def conflicting_chunks():
 # FLARE Integration Tests
 # ============================================================================
 
+
 class TestFLAREIntegration:
     """Tests for FLARE active retrieval triggering."""
 
@@ -85,13 +87,15 @@ class TestFLAREIntegration:
         confident_signal = generator._estimate_confidence(confident)
 
         # Uncertain text
-        uncertain = "I'm not sure, but perhaps the revenue might have been around $10 billion."
+        uncertain = (
+            "I'm not sure, but perhaps the revenue might have been around $10 billion."
+        )
         uncertain_signal = generator._estimate_confidence(uncertain)
 
         # Confident should score higher than uncertain (compare aggregate values)
-        assert confident_signal.aggregate > uncertain_signal.aggregate, \
+        assert confident_signal.aggregate > uncertain_signal.aggregate, (
             f"Confident ({confident_signal.aggregate}) should > Uncertain ({uncertain_signal.aggregate})"
-
+        )
 
     def test_sentence_splitting(self):
         """Test proper sentence segmentation for FLARE."""
@@ -126,7 +130,9 @@ class TestFLAREIntegration:
         steps = [
             FLAREStep(text="Maybe fact 1.", confidence=0.2, triggered_retrieval=True),
             FLAREStep(text="Perhaps fact 2.", confidence=0.2, triggered_retrieval=True),
-            FLAREStep(text="Possibly fact 3.", confidence=0.2, triggered_retrieval=False),  # Should not trigger
+            FLAREStep(
+                text="Possibly fact 3.", confidence=0.2, triggered_retrieval=False
+            ),  # Should not trigger
         ]
 
         triggered_count = sum(1 for s in steps if s.triggered_retrieval)
@@ -136,6 +142,7 @@ class TestFLAREIntegration:
 # ============================================================================
 # GraphRAG Integration Tests
 # ============================================================================
+
 
 class TestGraphRAGIntegration:
     """Tests for GraphRAG entity extraction and graph queries."""
@@ -173,14 +180,17 @@ class TestGraphRAGIntegration:
 
         # Add some entities manually
         graph.entities["apple"] = Entity(name="Apple", type=EntityType.ORGANIZATION)
-        graph.entities["microsoft"] = Entity(name="Microsoft", type=EntityType.ORGANIZATION)
+        graph.entities["microsoft"] = Entity(
+            name="Microsoft", type=EntityType.ORGANIZATION
+        )
         graph.entities["ai"] = Entity(name="AI", type=EntityType.CONCEPT)
 
         # Query should match entities
-        matches = graph.query_entities("Apple and Microsoft are competing in AI", top_k=3)
+        matches = graph.query_entities(
+            "Apple and Microsoft are competing in AI", top_k=3
+        )
 
         assert len(matches) > 0
-
 
     def test_graph_serialization_preserves_chunk_document_scope(self):
         """Graph serialization preserves chunk-to-document ownership for scoped retrieval."""
@@ -205,7 +215,9 @@ class TestGraphRAGIntegration:
                 self.prompts = []
 
             async def chat(self, messages):
-                self.prompts.append("\n".join(message["content"] for message in messages))
+                self.prompts.append(
+                    "\n".join(message["content"] for message in messages)
+                )
                 return '{"entities": [{"name": "Allowed", "type": "CONCEPT", "description": "allowed"}], "relationships": []}'
 
         orchestrator = Orchestrator.__new__(Orchestrator)
@@ -254,7 +266,9 @@ class TestGraphRAGIntegration:
         orchestrator._graph_rag = graph
         orchestrator._graph_scope_document_ids = ("allowed",)
 
-        chunks = await orchestrator._retrieve_with_graph("allowed secret project", ["allowed"])
+        chunks = await orchestrator._retrieve_with_graph(
+            "allowed secret project", ["allowed"]
+        )
 
         assert [chunk.snippet for chunk in chunks] == ["allowed summary"]
 
@@ -292,6 +306,7 @@ class TestGraphRAGIntegration:
 # ============================================================================
 # Hallucination Firewall Tests
 # ============================================================================
+
 
 class TestHallucinationFirewallIntegration:
     """Tests for hallucination detection edge cases."""
@@ -367,12 +382,15 @@ class TestHallucinationFirewallIntegration:
         result = firewall.verify(answer, sample_chunks, "What happened?")
 
         assert 0.0 <= result.pass_rate <= 1.0
-        assert result.verified_claims + len(result.flagged_claims) == result.total_claims
+        assert (
+            result.verified_claims + len(result.flagged_claims) == result.total_claims
+        )
 
 
 # ============================================================================
 # Cache Invalidation Tests
 # ============================================================================
+
 
 class TestCacheInvalidation:
     """Tests for cache key generation and invalidation."""
@@ -455,6 +473,7 @@ class TestCacheInvalidation:
 # Embedding Model Preset Tests
 # ============================================================================
 
+
 class TestEmbeddingModelPresets:
     """Tests for new embedding model preset system."""
 
@@ -465,7 +484,10 @@ class TestEmbeddingModelPresets:
         assert EmbeddingModelPreset.BGE_BASE == "BAAI/bge-base-en-v1.5"
         assert EmbeddingModelPreset.BGE_M3 == "BAAI/bge-m3"
         assert EmbeddingModelPreset.GTE_QWEN == "Alibaba-NLP/gte-Qwen2-1.5B-instruct"
-        assert EmbeddingModelPreset.SENTENCE_MINI == "sentence-transformers/all-MiniLM-L6-v2"
+        assert (
+            EmbeddingModelPreset.SENTENCE_MINI
+            == "sentence-transformers/all-MiniLM-L6-v2"
+        )
 
     def test_model_info_retrieval(self):
         """Test model metadata retrieval."""

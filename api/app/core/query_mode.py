@@ -129,7 +129,9 @@ def build_no_evidence_answer(
 
     # Customize message based on corpus state
     if corpus_doc_count == 0:
-        no_evidence.message = "Your corpus is empty. Please upload documents before querying."
+        no_evidence.message = (
+            "Your corpus is empty. Please upload documents before querying."
+        )
         no_evidence.suggested_actions = [
             SuggestedAction(
                 label="Upload documents",

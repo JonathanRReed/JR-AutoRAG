@@ -217,9 +217,9 @@ async def ask_stream(
                 cache_scope=cache_scope,
             )
             if payload.conversation_id:
-                result.setdefault("metrics", {})[
-                    "conversation_id"
-                ] = payload.conversation_id
+                result.setdefault("metrics", {})["conversation_id"] = (
+                    payload.conversation_id
+                )
             await queue.put({"type": "result", "data": result})
         except Exception as exc:
             await queue.put({"type": "error", "data": {"message": str(exc)}})

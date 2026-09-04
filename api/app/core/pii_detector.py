@@ -29,8 +29,10 @@ logger = logging.getLogger("autorag.pii")
 # PII Types
 # =============================================================================
 
+
 class PIIType(Enum):
     """Types of PII that can be detected."""
+
     EMAIL = "email"
     PHONE = "phone"
     SSN = "ssn"
@@ -45,6 +47,7 @@ class PIIType(Enum):
 @dataclass
 class PIIMatch:
     """A detected PII instance."""
+
     pii_type: PIIType
     text: str
     start: int
@@ -54,7 +57,9 @@ class PIIMatch:
     def to_dict(self) -> dict[str, Any]:
         return {
             "type": self.pii_type.value,
-            "text": self.text[:4] + "..." if len(self.text) > 4 else "...",  # Partial for safety
+            "text": self.text[:4] + "..."
+            if len(self.text) > 4
+            else "...",  # Partial for safety
             "start": self.start,
             "end": self.end,
             "confidence": round(self.confidence, 3),
@@ -68,6 +73,7 @@ class PIIMatch:
 @dataclass
 class DetectionResult:
     """Result of PII detection."""
+
     original_text: str
     matches: list[PIIMatch] = field(default_factory=list)
     has_pii: bool = False
@@ -89,37 +95,30 @@ class DetectionResult:
 # Compiled regex patterns for PII detection
 PII_PATTERNS = {
     PIIType.EMAIL: re.compile(
-        r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b',
-        re.IGNORECASE
+        r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b", re.IGNORECASE
     ),
     PIIType.PHONE: re.compile(
-        r'''
+        r"""
         (?:
             (?:\+?1[-.\s]?)?        # Optional country code
             (?:\(?\d{3}\)?[-.\s]?)  # Area code
             \d{3}[-.\s]?\d{4}       # Local number
         )
-        ''',
-        re.VERBOSE
+        """,
+        re.VERBOSE,
     ),
-    PIIType.SSN: re.compile(
-        r'\b\d{3}[-.\s]?\d{2}[-.\s]?\d{4}\b'
-    ),
-    PIIType.CREDIT_CARD: re.compile(
-        r'\b(?:\d{4}[-.\s]?){3}\d{4}\b'
-    ),
-    PIIType.IP_ADDRESS: re.compile(
-        r'\b(?:\d{1,3}\.){3}\d{1,3}\b'
-    ),
+    PIIType.SSN: re.compile(r"\b\d{3}[-.\s]?\d{2}[-.\s]?\d{4}\b"),
+    PIIType.CREDIT_CARD: re.compile(r"\b(?:\d{4}[-.\s]?){3}\d{4}\b"),
+    PIIType.IP_ADDRESS: re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"),
     PIIType.DATE_OF_BIRTH: re.compile(
-        r'''
+        r"""
         \b(?:
             (?:0?[1-9]|1[0-2])[/\-](?:0?[1-9]|[12]\d|3[01])[/\-](?:19|20)\d{2} |  # MM/DD/YYYY
             (?:0?[1-9]|[12]\d|3[01])[/\-](?:0?[1-9]|1[0-2])[/\-](?:19|20)\d{2} |  # DD/MM/YYYY
             (?:19|20)\d{2}[/\-](?:0?[1-9]|1[0-2])[/\-](?:0?[1-9]|[12]\d|3[01])    # YYYY/MM/DD
         )\b
-        ''',
-        re.VERBOSE
+        """,
+        re.VERBOSE,
     ),
 }
 
@@ -141,6 +140,7 @@ SENSITIVE_KEYWORDS = {
 # =============================================================================
 # PII Detector
 # =============================================================================
+
 
 class PIIDetector:
     """Detect PII in text.
@@ -186,13 +186,15 @@ class PIIDetector:
                 confidence = self._validate_match(pii_type, match.group())
 
                 if confidence >= self.min_confidence:
-                    matches.append(PIIMatch(
-                        pii_type=pii_type,
-                        text=match.group(),
-                        start=match.start(),
-                        end=match.end(),
-                        confidence=confidence,
-                    ))
+                    matches.append(
+                        PIIMatch(
+                            pii_type=pii_type,
+                            text=match.group(),
+                            start=match.start(),
+                            end=match.end(),
+                            confidence=confidence,
+                        )
+                    )
 
         # Check for sensitive keywords
         text_lower = text.lower()
@@ -204,13 +206,15 @@ class PIIDetector:
                     idx = text_lower.find(keyword, pos)
                     if idx == -1:
                         break
-                    matches.append(PIIMatch(
-                        pii_type=PIIType.UNKNOWN,
-                        text=text[idx:idx + len(keyword)],
-                        start=idx,
-                        end=idx + len(keyword),
-                        confidence=0.6,  # Lower confidence for keywords
-                    ))
+                    matches.append(
+                        PIIMatch(
+                            pii_type=PIIType.UNKNOWN,
+                            text=text[idx : idx + len(keyword)],
+                            start=idx,
+                            end=idx + len(keyword),
+                            confidence=0.6,  # Lower confidence for keywords
+                        )
+                    )
                     pos = idx + 1
 
         # Remove duplicates and sort by position
@@ -239,14 +243,14 @@ class PIIDetector:
         if pii_type == PIIType.SSN:
             # SSN should have proper format: XXX-XX-XXXX
             # Check it's not all same digits
-            digits = re.sub(r'\D', '', text)
+            digits = re.sub(r"\D", "", text)
             if len(set(digits)) == 1:
                 return 0.0  # All same digit, probably not SSN
             return 0.9
 
         elif pii_type == PIIType.CREDIT_CARD:
             # Luhn algorithm check
-            digits = re.sub(r'\D', '', text)
+            digits = re.sub(r"\D", "", text)
             if len(digits) not in (15, 16):
                 return 0.0
             if self._luhn_check(digits):
@@ -255,11 +259,11 @@ class PIIDetector:
 
         elif pii_type == PIIType.IP_ADDRESS:
             # Check octets are valid (0-255)
-            parts = text.split('.')
+            parts = text.split(".")
             try:
                 if all(0 <= int(p) <= 255 for p in parts):
                     # Some IPs are more likely to be PII
-                    if text.startswith(('10.', '192.168.', '172.')):
+                    if text.startswith(("10.", "192.168.", "172.")):
                         return 0.7  # Private IP
                     return 0.5  # Could be any IP
             except ValueError:
@@ -268,14 +272,14 @@ class PIIDetector:
 
         elif pii_type == PIIType.PHONE:
             # Validate phone number format
-            digits = re.sub(r'\D', '', text)
+            digits = re.sub(r"\D", "", text)
             if len(digits) < 7 or len(digits) > 15:
                 return 0.0
             return 0.8
 
         elif pii_type == PIIType.EMAIL:
             # Basic email validation
-            if '@' in text and '.' in text:
+            if "@" in text and "." in text:
                 return 0.95
             return 0.0
 
@@ -283,6 +287,7 @@ class PIIDetector:
 
     def _luhn_check(self, card_number: str) -> bool:
         """Luhn algorithm for credit card validation."""
+
         def digits_of(n):
             return [int(d) for d in str(n)]
 
@@ -326,7 +331,7 @@ class PIIDetector:
         for match in sorted_matches:
             # Use type-specific replacement if desired
             repl = f"[{match.pii_type.value.upper()}_REDACTED]"
-            redacted = redacted[:match.start] + repl + redacted[match.end:]
+            redacted = redacted[: match.start] + repl + redacted[match.end :]
 
         return redacted
 
@@ -361,11 +366,13 @@ class PIIDetector:
         for match in sorted_matches:
             pii_text = match.text
             if len(pii_text) > show_last:
-                masked_pii = mask_char * (len(pii_text) - show_last) + pii_text[-show_last:]
+                masked_pii = (
+                    mask_char * (len(pii_text) - show_last) + pii_text[-show_last:]
+                )
             else:
                 masked_pii = mask_char * len(pii_text)
 
-            masked = masked[:match.start] + masked_pii + masked[match.end:]
+            masked = masked[: match.start] + masked_pii + masked[match.end :]
 
         return masked
 

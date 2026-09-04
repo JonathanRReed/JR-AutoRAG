@@ -15,9 +15,13 @@ router = APIRouter(prefix="/install", tags=["install"])
 
 
 @router.get("/report", response_model=InstallReportResponse)
-async def get_install_report(container: ServiceContainer = Depends(get_container)) -> InstallReportResponse:
+async def get_install_report(
+    container: ServiceContainer = Depends(get_container),
+) -> InstallReportResponse:
     """Return a redacted client handoff report for the current local install."""
-    readiness = ReadinessResponse.model_validate(container.orchestrator.get_readiness_status())
+    readiness = ReadinessResponse.model_validate(
+        container.orchestrator.get_readiness_status()
+    )
     security = build_security_posture()
     evaluations = get_eval_run_store().list_runs(limit=10)
     artifacts = container.orchestrator.get_artifact_build_status()

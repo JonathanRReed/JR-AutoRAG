@@ -75,7 +75,9 @@ ROUTE_SCOPES = {
 }
 
 # Request size limits (bytes)
-MAX_REQUEST_SIZE = int(os.environ.get("AUTORAG_MAX_REQUEST_SIZE", 50 * 1024 * 1024))  # 50MB default
+MAX_REQUEST_SIZE = int(
+    os.environ.get("AUTORAG_MAX_REQUEST_SIZE", 50 * 1024 * 1024)
+)  # 50MB default
 
 # Per-route timeout configurations (seconds)
 ROUTE_TIMEOUTS = {
@@ -125,7 +127,9 @@ def _resolve_required_scope(path: str, method: str) -> str | None:
         return "read" if method in read_methods else "eval"
     if path.startswith("/onboarding"):
         return "read" if method in read_methods else "write"
-    for prefix, scope in sorted(ROUTE_SCOPES.items(), key=lambda item: len(item[0]), reverse=True):
+    for prefix, scope in sorted(
+        ROUTE_SCOPES.items(), key=lambda item: len(item[0]), reverse=True
+    ):
         if path.startswith(prefix):
             return scope
     return None
@@ -147,6 +151,7 @@ def _resolve_route_timeout(path: str) -> int:
 # =============================================================================
 # Authentication Dependency
 # =============================================================================
+
 
 async def verify_api_key(
     request: Request,
@@ -250,6 +255,7 @@ async def verify_api_key(
 # Rate Limiting Middleware
 # =============================================================================
 
+
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """Middleware that enforces rate limiting per client."""
 
@@ -296,13 +302,16 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 # Exposed Mode Docs Guard
 # =============================================================================
 
+
 class ExposedDocsBlockerMiddleware(BaseHTTPMiddleware):
     """Middleware that disables interactive docs when the API is exposed."""
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         if request.url.path in DOCS_PATHS and is_exposed_mode():
             return JSONResponse(
-                {"detail": "Interactive API docs are disabled while AUTORAG_EXPOSE=true."},
+                {
+                    "detail": "Interactive API docs are disabled while AUTORAG_EXPOSE=true."
+                },
                 status_code=404,
             )
         return await call_next(request)
@@ -311,6 +320,7 @@ class ExposedDocsBlockerMiddleware(BaseHTTPMiddleware):
 # =============================================================================
 # Request Size Limit Middleware
 # =============================================================================
+
 
 class RequestSizeLimitMiddleware:
     """Enforce the body limit against declared and actually received bytes."""
@@ -334,10 +344,14 @@ class RequestSizeLimitMiddleware:
             try:
                 declared_size = int(declared_length)
             except ValueError:
-                await Response(content="Invalid Content-Length header.", status_code=400)(scope, receive, send)
+                await Response(
+                    content="Invalid Content-Length header.", status_code=400
+                )(scope, receive, send)
                 return
             if declared_size < 0:
-                await Response(content="Invalid Content-Length header.", status_code=400)(scope, receive, send)
+                await Response(
+                    content="Invalid Content-Length header.", status_code=400
+                )(scope, receive, send)
                 return
             if declared_size > MAX_REQUEST_SIZE:
                 await self._reject(scope, receive, send)
@@ -409,6 +423,7 @@ class UnsafeOriginGuardMiddleware:
 # Timeout Middleware
 # =============================================================================
 
+
 class TimeoutMiddleware(BaseHTTPMiddleware):
     """Middleware that enforces route-level timeouts."""
 
@@ -441,6 +456,7 @@ class TimeoutMiddleware(BaseHTTPMiddleware):
 # Security Headers Middleware
 # =============================================================================
 
+
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Middleware that adds security headers to responses."""
 
@@ -464,6 +480,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 # Apply Security to App
 # =============================================================================
 
+
 def configure_security(app: FastAPI, *, strict: bool = False) -> None:
     """Configure all security middleware for the application.
 
@@ -486,7 +503,7 @@ def configure_security(app: FastAPI, *, strict: bool = False) -> None:
     print("Security configured:")
     print(f"  - Authentication: {'enabled' if auth.require_auth() else 'disabled'}")
     print(f"  - Rate limiting: {'enabled' if rate_limiter.enabled else 'disabled'}")
-    print(f"  - Max request size: {MAX_REQUEST_SIZE // (1024*1024)}MB")
+    print(f"  - Max request size: {MAX_REQUEST_SIZE // (1024 * 1024)}MB")
     print(f"  - Allowed origins: {get_allowed_origins()}")
     print(f"  - Exposed mode: {is_exposed_mode()}")
 

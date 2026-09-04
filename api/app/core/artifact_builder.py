@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 
 class ArtifactStatus(str, Enum):
     """Status of an artifact build."""
+
     NOT_BUILT = "not_built"
     BUILDING = "building"
     READY = "ready"
@@ -39,6 +40,7 @@ class ArtifactStatus(str, Enum):
 @dataclass
 class ArtifactState:
     """State of a single artifact type (graph or hierarchy)."""
+
     status: ArtifactStatus = ArtifactStatus.NOT_BUILT
     progress: float = 0.0  # Percentage 0-100
     started_at: float | None = None
@@ -67,6 +69,7 @@ class ArtifactState:
 @dataclass
 class BuildProgress:
     """Progress of all artifact builds."""
+
     graph_rag: ArtifactState = field(default_factory=ArtifactState)
     raptor: ArtifactState = field(default_factory=ArtifactState)
 
@@ -79,15 +82,15 @@ class BuildProgress:
     def is_any_building(self) -> bool:
         """Check if any artifact is currently building."""
         return (
-            self.graph_rag.status == ArtifactStatus.BUILDING or
-            self.raptor.status == ArtifactStatus.BUILDING
+            self.graph_rag.status == ArtifactStatus.BUILDING
+            or self.raptor.status == ArtifactStatus.BUILDING
         )
 
     def all_ready(self) -> bool:
         """Check if all artifacts are ready."""
         return (
-            self.graph_rag.status == ArtifactStatus.READY and
-            self.raptor.status == ArtifactStatus.READY
+            self.graph_rag.status == ArtifactStatus.READY
+            and self.raptor.status == ArtifactStatus.READY
         )
 
 
@@ -161,7 +164,9 @@ class ArtifactBuilder:
             return self._trees
         return {}
 
-    def set_status(self, artifact_type: str, status: ArtifactStatus, corpus_version: str = "") -> None:
+    def set_status(
+        self, artifact_type: str, status: ArtifactStatus, corpus_version: str = ""
+    ) -> None:
         """Manually set artifact status (e.g. when loaded from external cache)."""
         if artifact_type == "graph_rag":
             self._progress.graph_rag.status = status
@@ -201,8 +206,10 @@ class ArtifactBuilder:
             force_rebuild: If True, rebuild even if already built
         """
         # Check if we need to rebuild
-        if not force_rebuild and (self.is_graph_ready() and
-            self._progress.graph_rag.corpus_version == corpus_version):
+        if not force_rebuild and (
+            self.is_graph_ready()
+            and self._progress.graph_rag.corpus_version == corpus_version
+        ):
             return  # Already built for this corpus version
 
         # Cancel any existing build
@@ -245,7 +252,9 @@ class ArtifactBuilder:
 
         # Progress callback to bridge GraphRAG callbacks to our percentage
         # GraphRAG stages: extracting_graph (80%), summarizing_communities (20%)
-        def on_graph_progress(stage: str, cur: int, total: int, msg: str | None = None) -> None:
+        def on_graph_progress(
+            stage: str, cur: int, total: int, msg: str | None = None
+        ) -> None:
             if total == 0:
                 return
 
@@ -273,7 +282,9 @@ class ArtifactBuilder:
             graph = GraphRAG()
 
             # Build from chunks (async method)
-            await graph.build_from_chunks(chunks, provider, on_progress=on_graph_progress)
+            await graph.build_from_chunks(
+                chunks, provider, on_progress=on_graph_progress
+            )
 
             # Detect communities and summarize
             graph.detect_communities()
@@ -322,7 +333,7 @@ class ArtifactBuilder:
             # Group chunks by document
             doc_chunks: dict[str, list] = {}
             for chunk in chunks:
-                doc_id = getattr(chunk, 'doc_id', 'default')
+                doc_id = getattr(chunk, "doc_id", "default")
                 if doc_id not in doc_chunks:
                     doc_chunks[doc_id] = []
                 doc_chunks[doc_id].append(chunk)
@@ -335,21 +346,24 @@ class ArtifactBuilder:
             ):
                 # Combine chunk texts for hierarchy building
                 text = "\n\n".join(
-                    getattr(c, 'snippet', str(c)) for c in doc_chunk_list
+                    getattr(c, "snippet", str(c)) for c in doc_chunk_list
                 )
-                tree = await asyncio.to_thread(
-                    builder.build, text, doc_id, doc_id
-                )
+                tree = await asyncio.to_thread(builder.build, text, doc_id, doc_id)
                 trees[doc_id] = tree
                 if total_docs:
-                    self._progress.raptor.progress = min(99.9, (completed / total_docs) * 100.0)
+                    self._progress.raptor.progress = min(
+                        99.9, (completed / total_docs) * 100.0
+                    )
                     self._notify_progress()
 
             # Persist to disk
             hierarchy_path = self._persist_path / f"hierarchy_{corpus_version}.json"
             # Serialize trees (simplified - actual impl may vary)
             tree_data = {
-                doc_id: {"doc_id": doc_id, "node_count": len(getattr(tree, 'nodes', {}))}
+                doc_id: {
+                    "doc_id": doc_id,
+                    "node_count": len(getattr(tree, "nodes", {})),
+                }
                 for doc_id, tree in trees.items()
             }
             hierarchy_path.write_text(json.dumps(tree_data, indent=2))
@@ -361,7 +375,7 @@ class ArtifactBuilder:
             self._progress.raptor.completed_at = time.time()
             self._progress.raptor.progress = 100.0
             self._progress.raptor.item_count = sum(
-                len(getattr(t, 'nodes', {})) for t in trees.values()
+                len(getattr(t, "nodes", {})) for t in trees.values()
             )
 
         except Exception as e:
@@ -390,6 +404,7 @@ class ArtifactBuilder:
         if graph_path.exists():
             try:
                 from .graph_rag import GraphRAG
+
                 data = json.loads(graph_path.read_text())
                 self._graph = GraphRAG.from_dict(data)
                 self._progress.graph_rag.status = ArtifactStatus.READY

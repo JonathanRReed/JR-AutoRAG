@@ -27,6 +27,7 @@ from typing import Any
 # Version Detection
 # =============================================================================
 
+
 def get_tool_versions() -> dict[str, str]:
     """Get versions of key libraries for reproducibility."""
     versions = {}
@@ -73,9 +74,11 @@ def compute_corpus_hash(document_hashes: list[str]) -> str:
 # Config Snapshot
 # =============================================================================
 
+
 @dataclass(frozen=True)
 class RetrievalSnapshot(ToDictMixin):
     """Immutable snapshot of retrieval configuration."""
+
     dense_k: int
     sparse_k: int
     hybrid_alpha: float
@@ -88,7 +91,6 @@ class RetrievalSnapshot(ToDictMixin):
     use_compression: bool
     chunk_size: int
     chunk_overlap: int
-
 
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> RetrievalSnapshot:
@@ -112,13 +114,13 @@ class RetrievalSnapshot(ToDictMixin):
 @dataclass(frozen=True)
 class ModelSnapshot(ToDictMixin):
     """Immutable snapshot of model configuration."""
+
     provider: str
     model_id: str
     model_version: str | None
     embedding_model: str
     temperature: float
     max_tokens: int
-
 
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> ModelSnapshot:
@@ -136,10 +138,10 @@ class ModelSnapshot(ToDictMixin):
 @dataclass(frozen=True)
 class PromptSnapshot(ToDictMixin):
     """Immutable snapshot of prompt templates."""
+
     system_prompt_hash: str
     query_template_hash: str
     citation_template_hash: str
-
 
     @classmethod
     def from_prompts(
@@ -151,8 +153,12 @@ class PromptSnapshot(ToDictMixin):
         """Create snapshot from prompt strings."""
         return cls(
             system_prompt_hash=hashlib.sha256(system_prompt.encode()).hexdigest()[:12],
-            query_template_hash=hashlib.sha256(query_template.encode()).hexdigest()[:12],
-            citation_template_hash=hashlib.sha256(citation_template.encode()).hexdigest()[:12],
+            query_template_hash=hashlib.sha256(query_template.encode()).hexdigest()[
+                :12
+            ],
+            citation_template_hash=hashlib.sha256(
+                citation_template.encode()
+            ).hexdigest()[:12],
         )
 
 
@@ -163,6 +169,7 @@ class ConfigSnapshot:
     This captures the complete state of the system at query time,
     enabling exact reproduction of results.
     """
+
     snapshot_id: str  # SHA-256 of contents
     timestamp: str  # ISO format
 
@@ -245,13 +252,16 @@ class ConfigSnapshot:
         tool_versions = tuple(sorted(get_tool_versions().items()))
 
         # Compute snapshot ID from all components
-        id_content = json.dumps({
-            "model": model.to_dict(),
-            "retrieval": retrieval.to_dict(),
-            "prompts": prompts.to_dict(),
-            "corpus_hash": corpus_hash,
-            "tool_versions": dict(tool_versions),
-        }, sort_keys=True)
+        id_content = json.dumps(
+            {
+                "model": model.to_dict(),
+                "retrieval": retrieval.to_dict(),
+                "prompts": prompts.to_dict(),
+                "corpus_hash": corpus_hash,
+                "tool_versions": dict(tool_versions),
+            },
+            sort_keys=True,
+        )
         snapshot_id = hashlib.sha256(id_content.encode()).hexdigest()[:16]
 
         return cls(
@@ -270,6 +280,7 @@ class ConfigSnapshot:
 # =============================================================================
 # Snapshot Store
 # =============================================================================
+
 
 class ConfigSnapshotStore:
     """Persistent storage for configuration snapshots."""

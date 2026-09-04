@@ -14,7 +14,13 @@ from app.core import auth as auth_module
 from app.core.auth import APIKeyAuth
 from app.core.document_acl import DocumentACL, get_acl_store
 from app.core.documents import Document
-from app.core.golden_eval import AnswerMetrics, EvalRunResult, EvalRunStore, GoldenSetStore, RetrievalMetrics
+from app.core.golden_eval import (
+    AnswerMetrics,
+    EvalRunResult,
+    EvalRunStore,
+    GoldenSetStore,
+    RetrievalMetrics,
+)
 from app.main import app
 from app.routers import config as config_router
 from app.routers import evaluation
@@ -128,7 +134,9 @@ def test_config_rejects_cloud_provider_in_local_only_mode(client: TestClient) ->
     assert "local-only" in str(detail).lower()
 
 
-def test_config_rejects_remote_active_profile_in_local_only_mode(client: TestClient) -> None:
+def test_config_rejects_remote_active_profile_in_local_only_mode(
+    client: TestClient,
+) -> None:
     resp = client.get("/config")
     assert resp.status_code == 200
     config = resp.json()
@@ -248,8 +256,12 @@ def test_install_report_accepts_client_readiness_receipt(
         run_id="client-ready-run",
         golden_set_name="client_readiness",
         timestamp=datetime.now(timezone.utc),
-        retrieval_metrics=RetrievalMetrics(recall_at_k=1.0, mrr=1.0, ndcg=1.0, citation_coverage=1.0),
-        answer_metrics=AnswerMetrics(faithfulness=1.0, completeness=1.0, refusal_accuracy=1.0, coherence=1.0),
+        retrieval_metrics=RetrievalMetrics(
+            recall_at_k=1.0, mrr=1.0, ndcg=1.0, citation_coverage=1.0
+        ),
+        answer_metrics=AnswerMetrics(
+            faithfulness=1.0, completeness=1.0, refusal_accuracy=1.0, coherence=1.0
+        ),
         audit={
             "schema_version": "eval_run_audit_v1",
             "golden_set": {
@@ -296,8 +308,12 @@ def test_install_report_warns_on_weak_client_readiness_metrics(
         run_id="client-weak-run",
         golden_set_name="client_readiness",
         timestamp=datetime.now(timezone.utc),
-        retrieval_metrics=RetrievalMetrics(recall_at_k=0.2, mrr=1.0, ndcg=1.0, citation_coverage=0.3),
-        answer_metrics=AnswerMetrics(faithfulness=0.4, completeness=0.5, refusal_accuracy=1.0, coherence=1.0),
+        retrieval_metrics=RetrievalMetrics(
+            recall_at_k=0.2, mrr=1.0, ndcg=1.0, citation_coverage=0.3
+        ),
+        answer_metrics=AnswerMetrics(
+            faithfulness=0.4, completeness=0.5, refusal_accuracy=1.0, coherence=1.0
+        ),
         audit={
             "schema_version": "eval_run_audit_v1",
             "golden_set": {
@@ -335,7 +351,9 @@ def test_install_report_warns_on_weak_client_readiness_metrics(
     assert "run-client-readiness-benchmark" in actions
 
 
-def test_install_report_fails_closed_when_exposed_without_auth(monkeypatch: pytest.MonkeyPatch, client: TestClient) -> None:
+def test_install_report_fails_closed_when_exposed_without_auth(
+    monkeypatch: pytest.MonkeyPatch, client: TestClient
+) -> None:
     monkeypatch.setenv("AUTORAG_EXPOSE", "true")
     monkeypatch.setenv("AUTORAG_AUTH_ENABLED", "false")
 
@@ -344,7 +362,9 @@ def test_install_report_fails_closed_when_exposed_without_auth(monkeypatch: pyte
     assert "Refusing unauthenticated access" in resp.json()["detail"]
 
 
-def test_exposed_mode_blocks_public_docs(monkeypatch: pytest.MonkeyPatch, client: TestClient) -> None:
+def test_exposed_mode_blocks_public_docs(
+    monkeypatch: pytest.MonkeyPatch, client: TestClient
+) -> None:
     monkeypatch.setenv("AUTORAG_EXPOSE", "true")
     resp = client.get("/docs")
     assert resp.status_code == 404
@@ -526,12 +546,17 @@ def test_onboarding_demo_respects_document_write_acl(
         metadata={"demo_corpus": "false"},
     )
     container.document_store.upsert(protected_doc)
-    get_acl_store().set(DocumentACL.create_private(protected_doc.id, owner="admin-user"))
+    get_acl_store().set(
+        DocumentACL.create_private(protected_doc.id, owner="admin-user")
+    )
 
     response = client.post("/onboarding/demo/seed", headers={"X-API-Key": write_key})
 
     assert response.status_code == 403
-    assert container.document_store.get(protected_doc.id).metadata["demo_corpus"] == "false"
+    assert (
+        container.document_store.get(protected_doc.id).metadata["demo_corpus"]
+        == "false"
+    )
 
     writer_id = hashlib.sha256(write_key.encode()).hexdigest()[:16]
     get_acl_store().set(DocumentACL.create_private(protected_doc.id, owner=writer_id))
@@ -539,7 +564,9 @@ def test_onboarding_demo_respects_document_write_acl(
     allowed = client.post("/onboarding/demo/seed", headers={"X-API-Key": write_key})
 
     assert allowed.status_code == 200
-    assert container.document_store.get(protected_doc.id).metadata["demo_corpus"] == "true"
+    assert (
+        container.document_store.get(protected_doc.id).metadata["demo_corpus"] == "true"
+    )
 
 
 def test_onboarding_demo_clear_respects_document_write_acl(
@@ -558,7 +585,9 @@ def test_onboarding_demo_clear_respects_document_write_acl(
         metadata={"demo_corpus": "true"},
     )
     container.document_store.upsert(protected_doc)
-    get_acl_store().set(DocumentACL.create_private(protected_doc.id, owner="admin-user"))
+    get_acl_store().set(
+        DocumentACL.create_private(protected_doc.id, owner="admin-user")
+    )
 
     response = client.delete("/onboarding/demo", headers={"X-API-Key": write_key})
 
@@ -591,7 +620,9 @@ def test_onboarding_demo_seed_query_and_clear(client: TestClient) -> None:
 
     docs = client.get("/documents")
     assert docs.status_code == 200
-    demo_docs = [doc for doc in docs.json() if doc["metadata"].get("demo_corpus") == "true"]
+    demo_docs = [
+        doc for doc in docs.json() if doc["metadata"].get("demo_corpus") == "true"
+    ]
     assert demo_docs
     assert {doc["metadata"].get("retention") for doc in demo_docs} == {"disposable"}
 
@@ -614,7 +645,9 @@ def test_onboarding_demo_seed_query_and_clear(client: TestClient) -> None:
 
     after = client.get("/documents")
     assert after.status_code == 200
-    assert not [doc for doc in after.json() if doc["metadata"].get("demo_corpus") == "true"]
+    assert not [
+        doc for doc in after.json() if doc["metadata"].get("demo_corpus") == "true"
+    ]
 
 
 def test_demo_seed_supports_client_readiness_benchmark(client: TestClient) -> None:
@@ -660,7 +693,9 @@ def test_streaming_query_accepts_grounded_mode(client: TestClient) -> None:
 
 
 def test_query_mode_rejects_unknown_value(client: TestClient) -> None:
-    resp = client.post("/query", json={"question": "What is JR AutoRAG?", "query_mode": "offline_web"})
+    resp = client.post(
+        "/query", json={"question": "What is JR AutoRAG?", "query_mode": "offline_web"}
+    )
     assert resp.status_code == 422
 
 

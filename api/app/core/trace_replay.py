@@ -27,9 +27,11 @@ if TYPE_CHECKING:
 # Delta Types
 # =============================================================================
 
+
 @dataclass
 class RetrievalDelta:
     """Differences in retrieval results between two runs."""
+
     added_docs: list[str]  # Doc IDs in new but not old
     removed_docs: list[str]  # Doc IDs in old but not new
     score_changes: dict[str, tuple[float, float]]  # doc_id -> (old_score, new_score)
@@ -63,6 +65,7 @@ class RetrievalDelta:
 @dataclass
 class RerankerDelta:
     """Differences in reranking results between two runs."""
+
     score_changes: dict[str, tuple[float, float]]  # doc_id -> (old_score, new_score)
     order_changed: bool
     new_order: list[str]
@@ -84,6 +87,7 @@ class RerankerDelta:
 @dataclass
 class PromptDelta:
     """Differences in prompts between two runs."""
+
     system_prompt_diff: list[str]  # Unified diff lines
     query_template_diff: list[str]
     final_prompt_diff: list[str]
@@ -98,15 +102,16 @@ class PromptDelta:
     @property
     def has_changes(self) -> bool:
         return bool(
-            self.system_prompt_diff or
-            self.query_template_diff or
-            self.final_prompt_diff
+            self.system_prompt_diff
+            or self.query_template_diff
+            or self.final_prompt_diff
         )
 
 
 @dataclass
 class LatencyDelta:
     """Differences in latency between two runs."""
+
     total_ms: tuple[float, float]  # (old, new)
     per_stage: dict[str, tuple[float, float]]  # stage -> (old_ms, new_ms)
 
@@ -127,6 +132,7 @@ class LatencyDelta:
 @dataclass
 class OutputDelta:
     """Differences in output between two runs."""
+
     answer_diff: list[str]  # Unified diff lines
     citations_added: list[str]
     citations_removed: list[str]
@@ -143,20 +149,18 @@ class OutputDelta:
 
     @property
     def has_changes(self) -> bool:
-        return bool(
-            self.answer_diff or
-            self.citations_added or
-            self.citations_removed
-        )
+        return bool(self.answer_diff or self.citations_added or self.citations_removed)
 
 
 # =============================================================================
 # Trace Diff
 # =============================================================================
 
+
 @dataclass
 class TraceDiff:
     """Complete diff between two trace bundles."""
+
     trace_a_id: str
     trace_b_id: str
     timestamp: str
@@ -211,11 +215,11 @@ class TraceDiff:
     def is_identical(self) -> bool:
         """Check if the two runs are functionally identical."""
         return (
-            self.config_identical and
-            self.corpus_identical and
-            not self.retrieval.has_changes and
-            not self.reranker.has_changes and
-            not self.output.has_changes
+            self.config_identical
+            and self.corpus_identical
+            and not self.retrieval.has_changes
+            and not self.reranker.has_changes
+            and not self.output.has_changes
         )
 
 
@@ -243,9 +247,7 @@ class TraceDiffer:
         # Compare configs
         config_a = trace_a.get("config_snapshot", {})
         config_b = trace_b.get("config_snapshot", {})
-        config_identical = (
-            config_a.get("snapshot_id") == config_b.get("snapshot_id")
-        )
+        config_identical = config_a.get("snapshot_id") == config_b.get("snapshot_id")
 
         # Compare corpus
         corpus_a = config_a.get("corpus_hash", "")
@@ -371,21 +373,27 @@ class TraceDiffer:
         final_b = b.get("final_prompt", "")
 
         return PromptDelta(
-            system_prompt_diff=list(difflib.unified_diff(
-                system_a.splitlines(),
-                system_b.splitlines(),
-                lineterm="",
-            )),
-            query_template_diff=list(difflib.unified_diff(
-                query_a.splitlines(),
-                query_b.splitlines(),
-                lineterm="",
-            )),
-            final_prompt_diff=list(difflib.unified_diff(
-                final_a.splitlines(),
-                final_b.splitlines(),
-                lineterm="",
-            )),
+            system_prompt_diff=list(
+                difflib.unified_diff(
+                    system_a.splitlines(),
+                    system_b.splitlines(),
+                    lineterm="",
+                )
+            ),
+            query_template_diff=list(
+                difflib.unified_diff(
+                    query_a.splitlines(),
+                    query_b.splitlines(),
+                    lineterm="",
+                )
+            ),
+            final_prompt_diff=list(
+                difflib.unified_diff(
+                    final_a.splitlines(),
+                    final_b.splitlines(),
+                    lineterm="",
+                )
+            ),
         )
 
     def _diff_latency(
@@ -429,11 +437,13 @@ class TraceDiffer:
         confidence_b = b.get("confidence", 0)
 
         return OutputDelta(
-            answer_diff=list(difflib.unified_diff(
-                answer_a.splitlines(),
-                answer_b.splitlines(),
-                lineterm="",
-            )),
+            answer_diff=list(
+                difflib.unified_diff(
+                    answer_a.splitlines(),
+                    answer_b.splitlines(),
+                    lineterm="",
+                )
+            ),
             citations_added=list(citations_b - citations_a),
             citations_removed=list(citations_a - citations_b),
             confidence_change=(confidence_a, confidence_b),
@@ -444,9 +454,11 @@ class TraceDiffer:
 # Trace Replayer
 # =============================================================================
 
+
 @dataclass
 class ReplayResult:
     """Result of replaying a trace."""
+
     original_trace_id: str
     replay_trace_id: str
     timestamp: str
@@ -484,11 +496,20 @@ class TraceReplayer:
     @staticmethod
     def _contains_redacted_secret(value: Any) -> bool:
         """Return true when a snapshot cannot be safely replayed exactly."""
-        secret_terms = ("apikey", "authorization", "token", "secret", "password", "credential")
+        secret_terms = (
+            "apikey",
+            "authorization",
+            "token",
+            "secret",
+            "password",
+            "credential",
+        )
         if isinstance(value, dict):
             for key, item in value.items():
                 normalized = re.sub(r"[^a-z0-9]", "", str(key).lower())
-                if item == "[redacted]" and any(term in normalized for term in secret_terms):
+                if item == "[redacted]" and any(
+                    term in normalized for term in secret_terms
+                ):
                     return True
                 if TraceReplayer._contains_redacted_secret(item):
                     return True
@@ -503,11 +524,17 @@ class TraceReplayer:
         if not isinstance(snapshot, dict):
             return False, "Trace config_snapshot is not an object."
         if self._contains_redacted_secret(snapshot):
-            return False, "Trace config_snapshot contains redacted secret fields; replay used current config."
+            return (
+                False,
+                "Trace config_snapshot contains redacted secret fields; replay used current config.",
+            )
         try:
             replay_config = AppConfig.model_validate(snapshot)
         except Exception as exc:
-            return False, f"Trace config_snapshot is not compatible with current config schema: {exc}"
+            return (
+                False,
+                f"Trace config_snapshot is not compatible with current config schema: {exc}",
+            )
 
         self._orchestrator.rebuild(replay_config)
         return True, None
@@ -550,7 +577,9 @@ class TraceReplayer:
                     config_snapshot_error=None,
                 )
 
-            config_snapshot_applied, config_snapshot_error = self._apply_config_snapshot(config_snapshot)
+            config_snapshot_applied, config_snapshot_error = (
+                self._apply_config_snapshot(config_snapshot)
+            )
 
             # Run the query
             result = await self._orchestrator.answer(

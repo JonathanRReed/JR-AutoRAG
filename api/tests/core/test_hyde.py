@@ -2,6 +2,7 @@ import pytest
 from app.core.hyde import get_hyde_generator, HyDEConfig
 import app.core.hyde as hyde_module
 
+
 @pytest.fixture(autouse=True)
 def reset_hyde_generator():
     """Reset the global HyDE generator before and after each test."""
@@ -9,6 +10,7 @@ def reset_hyde_generator():
     hyde_module._hyde_generator = None
     yield
     hyde_module._hyde_generator = original_generator
+
 
 def test_get_hyde_generator_singleton():
     """Test that get_hyde_generator returns a singleton instance unless config is provided."""

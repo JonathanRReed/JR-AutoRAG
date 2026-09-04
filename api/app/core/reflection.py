@@ -19,15 +19,17 @@ if TYPE_CHECKING:
 
 class AnswerQuality(str, Enum):
     """Quality classification for answers."""
-    HIGH = "high"           # Confident, well-supported
-    MEDIUM = "medium"       # Reasonable but could be better
-    LOW = "low"             # Uncertain or poorly supported
+
+    HIGH = "high"  # Confident, well-supported
+    MEDIUM = "medium"  # Reasonable but could be better
+    LOW = "low"  # Uncertain or poorly supported
     INSUFFICIENT = "insufficient"  # Cannot answer from context
 
 
 @dataclass
 class ReflectionResult:
     """Result of self-reflection on an answer."""
+
     quality: AnswerQuality
     confidence: float  # 0-1
     issues: list[str]
@@ -83,9 +85,7 @@ class SelfReflector:
         self._uncertainty_re = [
             re.compile(p, re.IGNORECASE) for p in self.UNCERTAINTY_PATTERNS
         ]
-        self._refusal_re = [
-            re.compile(p, re.IGNORECASE) for p in self.REFUSAL_PATTERNS
-        ]
+        self._refusal_re = [re.compile(p, re.IGNORECASE) for p in self.REFUSAL_PATTERNS]
 
     def _count_uncertainty(self, text: str) -> int:
         """Count uncertainty markers in text."""
@@ -97,7 +97,7 @@ class SelfReflector:
 
     def _count_citations(self, text: str) -> int:
         """Count citation references like [1], [2]."""
-        return len(re.findall(r'\[\d+\]', text))
+        return len(re.findall(r"\[\d+\]", text))
 
     def reflect(
         self,
@@ -150,7 +150,9 @@ class SelfReflector:
 
         # Check evidence support
         if len(chunks) < self.min_chunks_for_confidence:
-            issues.append(f"Only {len(chunks)} evidence chunks (minimum: {self.min_chunks_for_confidence})")
+            issues.append(
+                f"Only {len(chunks)} evidence chunks (minimum: {self.min_chunks_for_confidence})"
+            )
             confidence -= 0.2
             suggestions.append("Increase retrieval depth")
 
@@ -161,9 +163,11 @@ class SelfReflector:
             confidence -= 0.1
 
         # Check query terms appear in answer
-        query_terms = set(re.findall(r'\b[a-z]{4,}\b', query.lower()))
-        answer_terms = set(re.findall(r'\b[a-z]{4,}\b', answer.lower()))
-        term_overlap = len(query_terms & answer_terms) / len(query_terms) if query_terms else 0
+        query_terms = set(re.findall(r"\b[a-z]{4,}\b", query.lower()))
+        answer_terms = set(re.findall(r"\b[a-z]{4,}\b", answer.lower()))
+        term_overlap = (
+            len(query_terms & answer_terms) / len(query_terms) if query_terms else 0
+        )
         if term_overlap < 0.3:
             issues.append("Low overlap between query and answer terms")
             confidence -= 0.15

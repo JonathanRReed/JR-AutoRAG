@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 
 class RetrievalDecision(str, Enum):
     """Self-RAG retrieve token decision."""
+
     RETRIEVE = "retrieve"  # Need to retrieve for this segment
     NO_RETRIEVE = "no_retrieve"  # Can generate without retrieval
     CONTINUE = "continue"  # Continue with existing context
@@ -30,6 +31,7 @@ class RetrievalDecision(str, Enum):
 
 class RelevanceScore(str, Enum):
     """Self-RAG ISREL token."""
+
     RELEVANT = "relevant"
     PARTIALLY_RELEVANT = "partially_relevant"
     IRRELEVANT = "irrelevant"
@@ -37,6 +39,7 @@ class RelevanceScore(str, Enum):
 
 class SupportScore(str, Enum):
     """Self-RAG ISSUP token for grounding."""
+
     FULLY_SUPPORTED = "fully_supported"
     PARTIALLY_SUPPORTED = "partially_supported"
     NO_SUPPORT = "no_support"
@@ -45,6 +48,7 @@ class SupportScore(str, Enum):
 
 class UtilityScore(int, Enum):
     """Self-RAG ISUSE utility score (1-5)."""
+
     EXCELLENT = 5
     GOOD = 4
     ADEQUATE = 3
@@ -55,6 +59,7 @@ class UtilityScore(int, Enum):
 @dataclass
 class CriticResult:
     """Result of Self-RAG critic evaluation."""
+
     relevance: RelevanceScore
     support: SupportScore
     utility: UtilityScore
@@ -68,6 +73,7 @@ class CriticResult:
 @dataclass
 class SelfRAGConfig:
     """Configuration for Self-RAG critic."""
+
     # Thresholds for regeneration
     min_support_for_accept: SupportScore = SupportScore.PARTIALLY_SUPPORTED
     min_utility_for_accept: UtilityScore = UtilityScore.ADEQUATE
@@ -150,13 +156,13 @@ SUGGESTIONS: [comma-separated improvements]"""
 
         # Heuristic patterns for fallback
         self._unsupported_patterns = [
-            re.compile(r'\b(I think|I believe|probably|might be)\b', re.I),
-            re.compile(r'\b(generally|typically|usually)\b', re.I),
-            re.compile(r'\b(it is (possible|likely) that)\b', re.I),
+            re.compile(r"\b(I think|I believe|probably|might be)\b", re.I),
+            re.compile(r"\b(generally|typically|usually)\b", re.I),
+            re.compile(r"\b(it is (possible|likely) that)\b", re.I),
         ]
         self._hedging_patterns = [
-            re.compile(r'\b(however|although|but)\b', re.I),
-            re.compile(r'\b(some|many|few)\b', re.I),
+            re.compile(r"\b(however|although|but)\b", re.I),
+            re.compile(r"\b(some|many|few)\b", re.I),
         ]
 
     async def critique(
@@ -199,8 +205,7 @@ SUGGESTIONS: [comma-separated improvements]"""
         """Use LLM for Self-RAG critique."""
         # Format evidence
         evidence_text = "\n\n".join(
-            f"[{i+1}] {c.title}: {c.snippet[:500]}"
-            for i, c in enumerate(chunks[:8])
+            f"[{i + 1}] {c.title}: {c.snippet[:500]}" for i, c in enumerate(chunks[:8])
         )
 
         prompt = self.CRITIQUE_PROMPT.format(
@@ -209,10 +214,15 @@ SUGGESTIONS: [comma-separated improvements]"""
             response=response[:2000],  # Truncate long responses
         )
 
-        llm_response = await provider.chat([
-            {"role": "system", "content": "You are a precise quality evaluator for RAG systems."},
-            {"role": "user", "content": prompt},
-        ])
+        llm_response = await provider.chat(
+            [
+                {
+                    "role": "system",
+                    "content": "You are a precise quality evaluator for RAG systems.",
+                },
+                {"role": "user", "content": prompt},
+            ]
+        )
 
         return self._parse_critique_response(llm_response, query, response, chunks)
 
@@ -225,43 +235,50 @@ SUGGESTIONS: [comma-separated improvements]"""
     ) -> CriticResult:
         """Parse LLM critique response into CriticResult."""
         # Extract relevance
-        rel_match = re.search(r'RELEVANCE:\s*(RELEVANT|PARTIALLY_RELEVANT|IRRELEVANT)', llm_response, re.I)
+        rel_match = re.search(
+            r"RELEVANCE:\s*(RELEVANT|PARTIALLY_RELEVANT|IRRELEVANT)", llm_response, re.I
+        )
         relevance = RelevanceScore.RELEVANT
         if rel_match:
             rel_str = rel_match.group(1).upper()
             relevance = RelevanceScore(rel_str.lower())
 
         # Extract support
-        sup_match = re.search(r'SUPPORT:\s*(FULLY_SUPPORTED|PARTIALLY_SUPPORTED|NO_SUPPORT|CONTRADICTS)', llm_response, re.I)
+        sup_match = re.search(
+            r"SUPPORT:\s*(FULLY_SUPPORTED|PARTIALLY_SUPPORTED|NO_SUPPORT|CONTRADICTS)",
+            llm_response,
+            re.I,
+        )
         support = SupportScore.PARTIALLY_SUPPORTED
         if sup_match:
             sup_str = sup_match.group(1).upper()
             support = SupportScore(sup_str.lower())
 
         # Extract utility
-        util_match = re.search(r'UTILITY:\s*(\d)', llm_response)
+        util_match = re.search(r"UTILITY:\s*(\d)", llm_response)
         utility = UtilityScore.ADEQUATE
         if util_match:
             util_val = int(util_match.group(1))
             utility = UtilityScore(max(1, min(5, util_val)))
 
         # Extract regeneration decision
-        regen_match = re.search(r'SHOULD_REGENERATE:\s*(yes|no)', llm_response, re.I)
+        regen_match = re.search(r"SHOULD_REGENERATE:\s*(yes|no)", llm_response, re.I)
         should_regenerate = False
         if regen_match:
             should_regenerate = regen_match.group(1).lower() == "yes"
 
         # Extract critique
-        crit_match = re.search(r'CRITIQUE:\s*(.+?)(?=SUGGESTIONS:|$)', llm_response, re.I | re.S)
+        crit_match = re.search(
+            r"CRITIQUE:\s*(.+?)(?=SUGGESTIONS:|$)", llm_response, re.I | re.S
+        )
         critique = crit_match.group(1).strip() if crit_match else ""
 
         # Extract suggestions
-        sugg_match = re.search(r'SUGGESTIONS:\s*(.+?)(?=$)', llm_response, re.I | re.S)
+        sugg_match = re.search(r"SUGGESTIONS:\s*(.+?)(?=$)", llm_response, re.I | re.S)
         suggestions = []
         if sugg_match:
             sugg_text = sugg_match.group(1).strip()
             suggestions = [s.strip() for s in sugg_text.split(",") if s.strip()]
-
 
         # Override regeneration decision based on thresholds
         if not should_regenerate:
@@ -271,11 +288,13 @@ SUGGESTIONS: [comma-separated improvements]"""
                 SupportScore.NO_SUPPORT: 2,
                 SupportScore.CONTRADICTS: 1,
             }
-            if support_levels[support] < support_levels[self.config.min_support_for_accept]:
+            if (
+                support_levels[support]
+                < support_levels[self.config.min_support_for_accept]
+            ):
                 should_regenerate = True
             if utility < self.config.min_utility_for_accept:
                 should_regenerate = True
-
 
         return CriticResult(
             relevance=relevance,
@@ -302,11 +321,11 @@ SUGGESTIONS: [comma-separated improvements]"""
         suggestions = []
 
         # Check relevance by term overlap
-        query_terms = {w.lower() for w in re.findall(r'\b\w{4,}\b', query)}
-        response_terms = {w.lower() for w in re.findall(r'\b\w{4,}\b', response)}
+        query_terms = {w.lower() for w in re.findall(r"\b\w{4,}\b", query)}
+        response_terms = {w.lower() for w in re.findall(r"\b\w{4,}\b", response)}
         chunk_terms = set()
         for c in chunks:
-            chunk_terms.update(w.lower() for w in re.findall(r'\b\w{4,}\b', c.snippet))
+            chunk_terms.update(w.lower() for w in re.findall(r"\b\w{4,}\b", c.snippet))
 
         query_chunk_overlap = len(query_terms & chunk_terms) / max(len(query_terms), 1)
         if query_chunk_overlap >= 0.6:
@@ -318,8 +337,10 @@ SUGGESTIONS: [comma-separated improvements]"""
             issues.append("Retrieved evidence has low overlap with query")
 
         # Check support by citation presence and hedging
-        citation_count = len(re.findall(r'\[\d+\]', response))
-        unsupported_count = sum(1 for p in self._unsupported_patterns if p.search(response))
+        citation_count = len(re.findall(r"\[\d+\]", response))
+        unsupported_count = sum(
+            1 for p in self._unsupported_patterns if p.search(response)
+        )
 
         if citation_count >= 3 and unsupported_count == 0:
             support = SupportScore.FULLY_SUPPORTED
@@ -332,7 +353,9 @@ SUGGESTIONS: [comma-separated improvements]"""
 
         # Estimate utility
         response_len = len(response)
-        query_response_overlap = len(query_terms & response_terms) / max(len(query_terms), 1)
+        query_response_overlap = len(query_terms & response_terms) / max(
+            len(query_terms), 1
+        )
 
         if response_len > 200 and query_response_overlap >= 0.5 and citation_count >= 2:
             utility = UtilityScore.GOOD

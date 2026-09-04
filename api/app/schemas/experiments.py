@@ -16,11 +16,17 @@ class EvalMetricResult(BaseModel):
 class ExperimentConfig(BaseModel):
     name: str = Field(default="Local quality matrix", min_length=1, max_length=120)
     description: str = Field(default="", max_length=500)
-    parser: list[str] = Field(default_factory=lambda: ["native", "docling"], max_length=8)
+    parser: list[str] = Field(
+        default_factory=lambda: ["native", "docling"], max_length=8
+    )
     chunker: list[str] = Field(default_factory=lambda: ["recursive"], max_length=8)
     embedding: list[str] = Field(default_factory=list, max_length=8)
-    dense_weight: list[float] = Field(default_factory=lambda: [0.55, 0.65, 0.75], max_length=8)
-    sparse_weight: list[float] = Field(default_factory=lambda: [0.45, 0.35, 0.25], max_length=8)
+    dense_weight: list[float] = Field(
+        default_factory=lambda: [0.55, 0.65, 0.75], max_length=8
+    )
+    sparse_weight: list[float] = Field(
+        default_factory=lambda: [0.45, 0.35, 0.25], max_length=8
+    )
     reranker: list[bool] = Field(default_factory=lambda: [True, False], max_length=4)
     graph: list[bool] = Field(default_factory=lambda: [False, True], max_length=4)
     raptor: list[bool] = Field(default_factory=lambda: [False, True], max_length=4)

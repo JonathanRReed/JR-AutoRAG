@@ -24,6 +24,7 @@ from typing import Any
 @dataclass
 class GateDecisionLog:
     """Log of a gating decision."""
+
     query: str
     decision: str  # no_retrieval, single, iterative, clarify
     confidence: float
@@ -35,6 +36,7 @@ class GateDecisionLog:
 @dataclass
 class RouteDecisionLog:
     """Log of a routing decision."""
+
     query: str
     decision: str  # single, iterative, graph, raptor, hybrid_heavy
     features: dict[str, Any]
@@ -48,6 +50,7 @@ class RouteDecisionLog:
 @dataclass
 class RetrievalVerdictLog:
     """Log of retrieval quality verdict."""
+
     query: str
     verdict: str  # correct, ambiguous, incorrect, low_coverage
     confidence: float
@@ -63,6 +66,7 @@ class RetrievalVerdictLog:
 @dataclass
 class AnswerQualityLog:
     """Log of answer quality assessment."""
+
     query: str
     answer_length: int
     chunks_used: int
@@ -79,6 +83,7 @@ class AnswerQualityLog:
 @dataclass
 class HardNegativeExample:
     """Example for hard-negative training of reranker."""
+
     query: str
     positive_chunk: str  # Chunk that led to good answer
     positive_score: float
@@ -252,11 +257,11 @@ class RAGDecisionLogger:
     def _maybe_flush(self) -> None:
         """Flush to disk if threshold reached."""
         total = (
-            len(self._gate_logs) +
-            len(self._route_logs) +
-            len(self._verdict_logs) +
-            len(self._quality_logs) +
-            len(self._hard_negatives)
+            len(self._gate_logs)
+            + len(self._route_logs)
+            + len(self._verdict_logs)
+            + len(self._quality_logs)
+            + len(self._hard_negatives)
         )
         if total >= self._flush_threshold:
             self.flush()
@@ -274,7 +279,9 @@ class RAGDecisionLogger:
             self._route_logs = []
 
         if self._verdict_logs:
-            self._write_logs(f"retrieval_verdicts_{timestamp}.jsonl", self._verdict_logs)
+            self._write_logs(
+                f"retrieval_verdicts_{timestamp}.jsonl", self._verdict_logs
+            )
             self._verdict_logs = []
 
         if self._quality_logs:

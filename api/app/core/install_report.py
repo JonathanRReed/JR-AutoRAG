@@ -72,13 +72,21 @@ def _summarize_policy(policy: dict[str, Any]) -> dict[str, Any]:
 
 def _client_readiness_state(evaluations: list[dict[str, Any]]) -> dict[str, Any]:
     client_eval = next(
-        (item for item in evaluations if item.get("golden_set_name") == CLIENT_READINESS_SET),
+        (
+            item
+            for item in evaluations
+            if item.get("golden_set_name") == CLIENT_READINESS_SET
+        ),
         {},
     )
     client_audit = _safe_mapping(client_eval.get("audit"))
-    client_tags = _safe_mapping(_safe_mapping(client_audit.get("golden_set")).get("tag_counts"))
+    client_tags = _safe_mapping(
+        _safe_mapping(client_audit.get("golden_set")).get("tag_counts")
+    )
     covered_tags = {
-        tag for tag in CLIENT_READINESS_REQUIRED_TAGS if int(client_tags.get(tag) or 0) > 0
+        tag
+        for tag in CLIENT_READINESS_REQUIRED_TAGS
+        if int(client_tags.get(tag) or 0) > 0
     }
     missing_tags = sorted(CLIENT_READINESS_REQUIRED_TAGS - covered_tags)
 
@@ -97,7 +105,11 @@ def _client_readiness_state(evaluations: list[dict[str, Any]]) -> dict[str, Any]
         if metrics.get(name, 0.0) < threshold
     )
 
-    ready = bool(client_eval.get("report_sha256")) and not missing_tags and not failed_metrics
+    ready = (
+        bool(client_eval.get("report_sha256"))
+        and not missing_tags
+        and not failed_metrics
+    )
     return {
         "eval": client_eval,
         "missing_tags": missing_tags,
@@ -179,15 +191,23 @@ def _build_evidence(
             id="quality_receipt",
             title="Golden evaluation receipt",
             status="present" if eval_sha else "missing",
-            detail="Latest golden run report with digest." if eval_sha else "Run a golden evaluation before client handoff.",
-            endpoint=f"/evaluation/runs/{latest_eval.get('run_id')}/report" if latest_eval.get("run_id") else None,
+            detail="Latest golden run report with digest."
+            if eval_sha
+            else "Run a golden evaluation before client handoff.",
+            endpoint=f"/evaluation/runs/{latest_eval.get('run_id')}/report"
+            if latest_eval.get("run_id")
+            else None,
             artifact_path=latest_eval.get("report_path"),
             sha256=eval_sha,
         ),
         InstallReportEvidence(
             id="client_readiness_benchmark",
             title="Client-readiness benchmark receipt",
-            status="present" if client_receipt_ready else "missing" if not client_eval else "warn",
+            status="present"
+            if client_receipt_ready
+            else "missing"
+            if not client_eval
+            else "warn",
             detail=(
                 "client_readiness golden run covers mixed-format, prompt-injection, abstention, "
                 "binary retrieval, agentic retrieval, poisoned-document handling, "
@@ -202,7 +222,9 @@ def _build_evidence(
                     )
                 )
             ),
-            endpoint=f"/evaluation/runs/{client_eval.get('run_id')}/report" if client_eval.get("run_id") else "/evaluation/batch/client_readiness",
+            endpoint=f"/evaluation/runs/{client_eval.get('run_id')}/report"
+            if client_eval.get("run_id")
+            else "/evaluation/batch/client_readiness",
             artifact_path=client_eval.get("report_path"),
             sha256=client_eval.get("report_sha256"),
         ),
@@ -210,7 +232,8 @@ def _build_evidence(
             id="retrieval_artifacts",
             title="Retrieval artifacts",
             status="present"
-            if artifacts.get("graph_rag_status") == "ready" or artifacts.get("raptor_status") == "ready"
+            if artifacts.get("graph_rag_status") == "ready"
+            or artifacts.get("raptor_status") == "ready"
             else "warn",
             detail=(
                 f"GraphRAG={artifacts.get('graph_rag_status', 'unknown')}, "
@@ -229,61 +252,75 @@ def _build_actions(
 ) -> list[InstallReportAction]:
     actions: list[InstallReportAction] = []
     if any(check.status == "fail" for check in security.checks):
-        actions.append(InstallReportAction(
-            id="fix-security",
-            title="Fix failed security checks",
-            priority="high",
-            detail="Resolve failed auth, CORS, exposure, docs, headers, or rate-limit checks before client-network install.",
-            endpoint="/security/posture",
-        ))
+        actions.append(
+            InstallReportAction(
+                id="fix-security",
+                title="Fix failed security checks",
+                priority="high",
+                detail="Resolve failed auth, CORS, exposure, docs, headers, or rate-limit checks before client-network install.",
+                endpoint="/security/posture",
+            )
+        )
     if readiness.level == "not_ready":
-        actions.append(InstallReportAction(
-            id="fix-readiness",
-            title="Restore runtime readiness",
-            priority="high",
-            detail="Resolve failed runtime checks before relying on the install.",
-            endpoint="/readyz",
-        ))
+        actions.append(
+            InstallReportAction(
+                id="fix-readiness",
+                title="Restore runtime readiness",
+                priority="high",
+                detail="Resolve failed runtime checks before relying on the install.",
+                endpoint="/readyz",
+            )
+        )
     if corpus.document_count == 0:
-        actions.append(InstallReportAction(
-            id="ingest-corpus",
-            title="Ingest a representative corpus",
-            priority="high",
-            detail="Add representative client documents, then rerun retrieval and evaluation checks.",
-        ))
+        actions.append(
+            InstallReportAction(
+                id="ingest-corpus",
+                title="Ingest a representative corpus",
+                priority="high",
+                detail="Add representative client documents, then rerun retrieval and evaluation checks.",
+            )
+        )
     if corpus.processing_errors:
-        actions.append(InstallReportAction(
-            id="fix-ingestion-errors",
-            title="Fix ingestion errors",
-            priority="high",
-            detail=f"{corpus.processing_errors} document(s) failed processing.",
-        ))
+        actions.append(
+            InstallReportAction(
+                id="fix-ingestion-errors",
+                title="Fix ingestion errors",
+                priority="high",
+                detail=f"{corpus.processing_errors} document(s) failed processing.",
+            )
+        )
     if not evaluations or not evaluations[0].get("report_sha256"):
-        actions.append(InstallReportAction(
-            id="run-golden-eval",
-            title="Run a golden evaluation",
-            priority="medium",
-            detail="Create a digest-backed quality receipt before handoff.",
-            endpoint="/evaluation/batch/{set_name}",
-        ))
+        actions.append(
+            InstallReportAction(
+                id="run-golden-eval",
+                title="Run a golden evaluation",
+                priority="medium",
+                detail="Create a digest-backed quality receipt before handoff.",
+                endpoint="/evaluation/batch/{set_name}",
+            )
+        )
     client_state = _client_readiness_state(evaluations)
     if not client_state["ready"]:
-        actions.append(InstallReportAction(
-            id="run-client-readiness-benchmark",
-            title="Run the client-readiness benchmark",
-            priority="medium",
-            detail="Install built-in golden sets, run client_readiness, and save the digest-backed report before handoff.",
-            command="POST /evaluation/golden-sets/builtins && POST /evaluation/batch/client_readiness",
-            endpoint="/evaluation/batch/client_readiness",
-        ))
+        actions.append(
+            InstallReportAction(
+                id="run-client-readiness-benchmark",
+                title="Run the client-readiness benchmark",
+                priority="medium",
+                detail="Install built-in golden sets, run client_readiness, and save the digest-backed report before handoff.",
+                command="POST /evaluation/golden-sets/builtins && POST /evaluation/batch/client_readiness",
+                endpoint="/evaluation/batch/client_readiness",
+            )
+        )
     if security.level == "needs_attention":
-        actions.append(InstallReportAction(
-            id="harden-client-exposure",
-            title="Harden client exposure settings",
-            priority="medium",
-            detail="Enable API-key auth and rate limiting before exposing beyond localhost.",
-            command="AUTORAG_AUTH_ENABLED=true AUTORAG_RATE_LIMIT_ENABLED=true",
-        ))
+        actions.append(
+            InstallReportAction(
+                id="harden-client-exposure",
+                title="Harden client exposure settings",
+                priority="medium",
+                detail="Enable API-key auth and rate limiting before exposing beyond localhost.",
+                command="AUTORAG_AUTH_ENABLED=true AUTORAG_RATE_LIMIT_ENABLED=true",
+            )
+        )
     return actions
 
 

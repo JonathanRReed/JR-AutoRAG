@@ -54,7 +54,9 @@ class TesseractOCRProvider(BaseOCRProvider):
 
     def extract(self, content: bytes) -> OCRResult:
         if not self.available():
-            return OCRResult("", "ocr_unavailable", self.engine, 0.0, False, [self.backend_id])
+            return OCRResult(
+                "", "ocr_unavailable", self.engine, 0.0, False, [self.backend_id]
+            )
 
         poppler_bin = shutil.which("pdftoppm") or shutil.which("pdftocairo")
         poppler_path = str(Path(poppler_bin).parent) if poppler_bin else None
@@ -65,7 +67,9 @@ class TesseractOCRProvider(BaseOCRProvider):
         try:
             images = convert_from_bytes(content, poppler_path=poppler_path)  # type: ignore[name-defined]
         except Exception:
-            return OCRResult("", "ocr_error", self.engine, 0.0, False, [self.backend_id])
+            return OCRResult(
+                "", "ocr_error", self.engine, 0.0, False, [self.backend_id]
+            )
 
         text_chunks: list[str] = []
         total_confidence = 0.0
@@ -86,14 +90,21 @@ class TesseractOCRProvider(BaseOCRProvider):
                         if raw not in {"-1", "", None}
                     ]
                     if confidences:
-                        total_confidence += max(0.0, min(sum(confidences) / len(confidences), 100.0)) / 100.0
+                        total_confidence += (
+                            max(0.0, min(sum(confidences) / len(confidences), 100.0))
+                            / 100.0
+                        )
                         confidence_samples += 1
                 except Exception:
                     pass
             finally:
                 image.close()
 
-        confidence = total_confidence / confidence_samples if confidence_samples else _confidence_from_text("\n".join(text_chunks))
+        confidence = (
+            total_confidence / confidence_samples
+            if confidence_samples
+            else _confidence_from_text("\n".join(text_chunks))
+        )
         return OCRResult(
             text="\n".join(text_chunks),
             method="dedicated_ocr",
@@ -120,27 +131,39 @@ class VisionModelOCRProvider(BaseOCRProvider):
         self._max_pages = max_pages
 
     def available(self) -> bool:
-        return convert_from_bytes is not None and self._provider_config is not None and bool(self._resolved_model())
+        return (
+            convert_from_bytes is not None
+            and self._provider_config is not None
+            and bool(self._resolved_model())
+        )
 
     def extract(self, content: bytes) -> OCRResult:
         if not self.available():
-            return OCRResult("", "ocr_unavailable", self.engine, 0.0, False, [self.backend_id])
+            return OCRResult(
+                "", "ocr_unavailable", self.engine, 0.0, False, [self.backend_id]
+            )
 
         provider = self._provider_config
         if provider is None:
-            return OCRResult("", "ocr_unavailable", self.engine, 0.0, False, [self.backend_id])
+            return OCRResult(
+                "", "ocr_unavailable", self.engine, 0.0, False, [self.backend_id]
+            )
 
         poppler_bin = shutil.which("pdftoppm") or shutil.which("pdftocairo")
         poppler_path = str(Path(poppler_bin).parent) if poppler_bin else None
         try:
             images = convert_from_bytes(content, poppler_path=poppler_path)  # type: ignore[name-defined]
         except Exception:
-            return OCRResult("", "ocr_error", self.engine, 0.0, False, [self.backend_id])
+            return OCRResult(
+                "", "ocr_error", self.engine, 0.0, False, [self.backend_id]
+            )
 
         text_chunks: list[str] = []
         confidence_scores: list[float] = []
         model = self._resolved_model()
-        api_key = resolve_provider_api_key(provider.name, str(provider.base_url), provider.api_key)
+        api_key = resolve_provider_api_key(
+            provider.name, str(provider.base_url), provider.api_key
+        )
         endpoint = self._resolve_chat_endpoint(str(provider.base_url))
         headers = {"Content-Type": "application/json"}
         if api_key:
@@ -165,7 +188,10 @@ class VisionModelOCRProvider(BaseOCRProvider):
                                     "role": "user",
                                     "content": [
                                         {"type": "text", "text": prompt},
-                                        {"type": "image_url", "image_url": image_payload},
+                                        {
+                                            "type": "image_url",
+                                            "image_url": image_payload,
+                                        },
                                     ],
                                 }
                             ],
@@ -175,7 +201,9 @@ class VisionModelOCRProvider(BaseOCRProvider):
                     )
                     response.raise_for_status()
                     body = response.json()
-                    message = ((body.get("choices") or [{}])[0].get("message") or {}).get("content", "")
+                    message = (
+                        (body.get("choices") or [{}])[0].get("message") or {}
+                    ).get("content", "")
                     if isinstance(message, list):
                         parts: list[str] = []
                         for item in message:
@@ -201,7 +229,11 @@ class VisionModelOCRProvider(BaseOCRProvider):
             client.close()
 
         combined = "\n\n".join(text_chunks)
-        confidence = sum(confidence_scores) / len(confidence_scores) if confidence_scores else 0.0
+        confidence = (
+            sum(confidence_scores) / len(confidence_scores)
+            if confidence_scores
+            else 0.0
+        )
         return OCRResult(
             text=combined,
             method="vision_model",
@@ -284,7 +316,10 @@ class OCRRouter:
                 attempted=attempted,
             )
 
-        if extracted_text.strip() and extract_confidence >= self._settings.extractable_text_threshold:
+        if (
+            extracted_text.strip()
+            and extract_confidence >= self._settings.extractable_text_threshold
+        ):
             return OCRResult(
                 text=extracted_text,
                 method="native_text",
@@ -296,14 +331,28 @@ class OCRRouter:
 
         if self._settings.policy == OCRPolicy.DEDICATED_OCR:
             result = self._run_provider("ocr.local.tesseract", content, attempted)
-            return result if result.text.strip() else self._native_fallback(extracted_text, extract_confidence, attempted)
+            return (
+                result
+                if result.text.strip()
+                else self._native_fallback(
+                    extracted_text, extract_confidence, attempted
+                )
+            )
 
         if self._settings.policy == OCRPolicy.VISION_MODEL:
             result = self._run_provider("ocr.local.vision", content, attempted)
-            return result if result.text.strip() else self._native_fallback(extracted_text, extract_confidence, attempted)
+            return (
+                result
+                if result.text.strip()
+                else self._native_fallback(
+                    extracted_text, extract_confidence, attempted
+                )
+            )
 
         if self._settings.policy == OCRPolicy.HYBRID:
-            return self._run_hybrid(content, extracted_text, extract_confidence, attempted)
+            return self._run_hybrid(
+                content, extracted_text, extract_confidence, attempted
+            )
 
         for backend_id in self._settings.preferred_backends:
             result = self._run_provider(backend_id, content, attempted)
@@ -312,7 +361,9 @@ class OCRRouter:
 
         return self._native_fallback(extracted_text, extract_confidence, attempted)
 
-    def _native_fallback(self, extracted_text: str, confidence: float, attempted: list[str]) -> OCRResult:
+    def _native_fallback(
+        self, extracted_text: str, confidence: float, attempted: list[str]
+    ) -> OCRResult:
         return OCRResult(
             text=extracted_text,
             method="native_text_fallback",
@@ -322,7 +373,9 @@ class OCRRouter:
             attempted=attempted,
         )
 
-    def _run_provider(self, backend_id: str, content: bytes, attempted: list[str]) -> OCRResult:
+    def _run_provider(
+        self, backend_id: str, content: bytes, attempted: list[str]
+    ) -> OCRResult:
         attempted.append(backend_id)
         provider = self._providers.get(backend_id)
         if provider is None:
@@ -346,7 +399,10 @@ class OCRRouter:
             return self._native_fallback(extracted_text, extract_confidence, attempted)
 
         best = max(candidates, key=lambda item: item.confidence)
-        if self._settings.dual_merge_strategy == "prefer_text_parser" and extract_confidence >= best.confidence:
+        if (
+            self._settings.dual_merge_strategy == "prefer_text_parser"
+            and extract_confidence >= best.confidence
+        ):
             return self._native_fallback(extracted_text, extract_confidence, attempted)
         return OCRResult(
             text=best.text,

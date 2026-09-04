@@ -39,6 +39,7 @@ from app.schemas.config import AppConfig, RetrievalDefaults
 # Test Fixtures
 # ============================================================================
 
+
 @pytest.fixture
 def app_config():
     """Create a test AppConfig."""
@@ -108,6 +109,7 @@ def sample_chunks():
 # ============================================================================
 # 1. CACHE STAGE TESTS
 # ============================================================================
+
 
 class TestCacheStage:
     """Tests for the caching layer."""
@@ -228,6 +230,7 @@ class TestCacheStage:
 # 2. PLANNING STAGE TESTS
 # ============================================================================
 
+
 class TestPlanningStage:
     """Tests for the planning/query analysis stage."""
 
@@ -307,9 +310,7 @@ class TestPlanningStage:
         """Test planner can be rebuilt with new config."""
         planner = SmartPlanner(app_config)
 
-        new_config = AppConfig(
-            retrieval=RetrievalDefaults(dense_k=10, sparse_k=10)
-        )
+        new_config = AppConfig(retrieval=RetrievalDefaults(dense_k=10, sparse_k=10))
         planner.rebuild(new_config)
 
         plan = planner.plan("Test query")
@@ -321,8 +322,10 @@ class TestPlanningStage:
 # 3. GATHERER STAGE TESTS
 # ============================================================================
 
+
 class TestGathererStage:
     """Tests for the evidence gathering stage."""
+
     pytestmark = pytest.mark.asyncio
 
     async def test_gatherer_collects_evidence(self, sample_documents, tmp_path):
@@ -331,10 +334,7 @@ class TestGathererStage:
         for doc in sample_documents:
             doc_store.upsert(doc)
 
-        retrieval = HybridRetrievalEngine(
-            doc_store,
-            HybridConfig(use_reranking=False)
-        )
+        retrieval = HybridRetrievalEngine(doc_store, HybridConfig(use_reranking=False))
         retrieval.build()
 
         gatherer = Gatherer(retrieval)
@@ -351,10 +351,7 @@ class TestGathererStage:
         for doc in sample_documents:
             doc_store.upsert(doc)
 
-        retrieval = HybridRetrievalEngine(
-            doc_store,
-            HybridConfig(use_reranking=False)
-        )
+        retrieval = HybridRetrievalEngine(doc_store, HybridConfig(use_reranking=False))
         retrieval.build()
 
         gatherer = Gatherer(retrieval)
@@ -373,18 +370,11 @@ class TestGathererStage:
         for doc in sample_documents:
             doc_store.upsert(doc)
 
-        retrieval = HybridRetrievalEngine(
-            doc_store,
-            HybridConfig(use_reranking=False)
-        )
+        retrieval = HybridRetrievalEngine(doc_store, HybridConfig(use_reranking=False))
         retrieval.build()
 
         gatherer = Gatherer(retrieval)
-        evidence = await gatherer.gather(
-            "programming",
-            top_k=5,
-            document_ids=["doc1"]
-        )
+        evidence = await gatherer.gather("programming", top_k=5, document_ids=["doc1"])
 
         # Should only return chunks from doc1
         for chunk in evidence.chunks:
@@ -396,10 +386,7 @@ class TestGathererStage:
         for doc in sample_documents:
             doc_store.upsert(doc)
 
-        retrieval = HybridRetrievalEngine(
-            doc_store,
-            HybridConfig(use_reranking=False)
-        )
+        retrieval = HybridRetrievalEngine(doc_store, HybridConfig(use_reranking=False))
         retrieval.build()
 
         gatherer = Gatherer(retrieval)
@@ -412,8 +399,10 @@ class TestGathererStage:
 # 4. RETRIEVAL STAGE TESTS
 # ============================================================================
 
+
 class TestRetrievalStage:
     """Tests for the hybrid retrieval stage."""
+
     pytestmark = pytest.mark.asyncio
 
     async def test_retrieval_engine_basic_query(self, sample_documents, tmp_path):
@@ -422,10 +411,7 @@ class TestRetrievalStage:
         for doc in sample_documents:
             doc_store.upsert(doc)
 
-        engine = HybridRetrievalEngine(
-            doc_store,
-            HybridConfig(use_reranking=False)
-        )
+        engine = HybridRetrievalEngine(doc_store, HybridConfig(use_reranking=False))
         engine.build()
 
         results = await engine.query("What is Python?", top_k=3)
@@ -439,10 +425,7 @@ class TestRetrievalStage:
         for doc in sample_documents:
             doc_store.upsert(doc)
 
-        engine = HybridRetrievalEngine(
-            doc_store,
-            HybridConfig(use_reranking=False)
-        )
+        engine = HybridRetrievalEngine(doc_store, HybridConfig(use_reranking=False))
         engine.build()
 
         results = await engine.query("programming", top_k=5)
@@ -460,10 +443,7 @@ class TestRetrievalStage:
         for doc in sample_documents:
             doc_store.upsert(doc)
 
-        engine = HybridRetrievalEngine(
-            doc_store,
-            HybridConfig(use_reranking=False)
-        )
+        engine = HybridRetrievalEngine(doc_store, HybridConfig(use_reranking=False))
         engine.build()
 
         results = await engine.query("machine learning", top_k=5)
@@ -478,17 +458,10 @@ class TestRetrievalStage:
         for doc in sample_documents:
             doc_store.upsert(doc)
 
-        engine = HybridRetrievalEngine(
-            doc_store,
-            HybridConfig(use_reranking=False)
-        )
+        engine = HybridRetrievalEngine(doc_store, HybridConfig(use_reranking=False))
         engine.build()
 
-        results = await engine.query(
-            "programming",
-            top_k=5,
-            document_ids=["doc2"]
-        )
+        results = await engine.query("programming", top_k=5, document_ids=["doc2"])
 
         for result in results:
             assert "doc2" in result.document.id
@@ -499,10 +472,7 @@ class TestRetrievalStage:
         for doc in sample_documents:
             doc_store.upsert(doc)
 
-        engine = HybridRetrievalEngine(
-            doc_store,
-            HybridConfig(use_reranking=False)
-        )
+        engine = HybridRetrievalEngine(doc_store, HybridConfig(use_reranking=False))
         engine.build()
 
         results = await engine.query("", top_k=5)
@@ -512,10 +482,7 @@ class TestRetrievalStage:
         """Test retrieval handles empty document store."""
         # Use temp path to ensure isolated empty store
         doc_store = DocumentStore(path=tmp_path / "empty_docs.db")
-        engine = HybridRetrievalEngine(
-            doc_store,
-            HybridConfig(use_reranking=False)
-        )
+        engine = HybridRetrievalEngine(doc_store, HybridConfig(use_reranking=False))
         engine.build()
 
         results = await engine.query("test query", top_k=5)
@@ -525,6 +492,7 @@ class TestRetrievalStage:
 # ============================================================================
 # 5. COMPRESSION STAGE TESTS
 # ============================================================================
+
 
 class TestCompressionStage:
     """Tests for the context compression stage."""
@@ -544,9 +512,7 @@ class TestCompressionStage:
         compressor = ContextCompressor(max_tokens=200)
 
         result = compressor.compress_extractive(
-            sample_chunks,
-            query="Python programming",
-            max_tokens=200
+            sample_chunks, query="Python programming", max_tokens=200
         )
 
         assert isinstance(result, CompressedContext)
@@ -598,6 +564,7 @@ class TestCompressionStage:
 # 6. GENERATION STAGE TESTS (Mocked)
 # ============================================================================
 
+
 class TestGenerationStage:
     """Tests for the generation stage (with mocked providers)."""
 
@@ -645,9 +612,7 @@ class TestGenerationStage:
 
         factory = ProviderFactory()
         config = ProviderConfig(
-            name="Ollama",
-            base_url="http://localhost:11434",
-            generator_model="llama3"
+            name="Ollama", base_url="http://localhost:11434", generator_model="llama3"
         )
 
         provider = factory.build(config)
@@ -662,7 +627,7 @@ class TestGenerationStage:
         config = ProviderConfig(
             name="LM Studio",
             base_url="http://localhost:1234",
-            generator_model="mistral"
+            generator_model="mistral",
         )
 
         provider = factory.build(config)
@@ -705,6 +670,7 @@ class TestGenerationStage:
 # ============================================================================
 # 7. REFLECTION STAGE TESTS
 # ============================================================================
+
 
 class TestReflectionStage:
     """Tests for the self-reflection stage."""
@@ -798,7 +764,10 @@ class TestReflectionStage:
         )
 
         # Should recommend retry for low confidence + low quality
-        if result.confidence < 0.5 and result.quality in [AnswerQuality.LOW, AnswerQuality.INSUFFICIENT]:
+        if result.confidence < 0.5 and result.quality in [
+            AnswerQuality.LOW,
+            AnswerQuality.INSUFFICIENT,
+        ]:
             assert result.should_retry
 
     def test_reflector_citation_check(self, sample_chunks):
@@ -833,8 +802,10 @@ class TestReflectionStage:
 # INTEGRATION TEST
 # ============================================================================
 
+
 class TestPipelineIntegration:
     """Integration tests for the full pipeline."""
+
     pytestmark = pytest.mark.asyncio
 
     async def test_full_pipeline_flow(self, app_config, sample_documents, tmp_path):
@@ -850,10 +821,7 @@ class TestPipelineIntegration:
         assert len(plan.steps) >= 1
 
         # 3. Retrieval setup
-        retrieval = HybridRetrievalEngine(
-            doc_store,
-            HybridConfig(use_reranking=False)
-        )
+        retrieval = HybridRetrievalEngine(doc_store, HybridConfig(use_reranking=False))
         retrieval.build()
 
         # 4. Gathering

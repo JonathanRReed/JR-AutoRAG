@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 @dataclass
 class CitationCheck:
     """Result of checking a single citation."""
+
     citation_id: str
     original_text: str
     valid: bool
@@ -35,6 +36,7 @@ class CitationCheck:
 @dataclass
 class VerificationResult:
     """Complete verification result for an answer."""
+
     original_answer: str
     verified_answer: str
     all_valid: bool
@@ -53,7 +55,8 @@ class VerificationResult:
             "valid_citations": sum(1 for c in self.citation_checks if c.valid),
             "invalid_citations": [
                 {"id": c.citation_id, "reason": c.reason}
-                for c in self.citation_checks if not c.valid
+                for c in self.citation_checks
+                if not c.valid
             ],
         }
 
@@ -72,11 +75,11 @@ class CitationVerifier:
 
     # Citation patterns to detect
     CITATION_PATTERNS = [
-        r'\[Source:\s*(\d+)\]',            # [Source: 1]
-        r'\[(\d+)\]',                       # [1]
-        r'\(Doc:\s*([^\)]+)\)',            # (Doc: xyz)
-        r'\(Source:\s*([^\)]+)\)',         # (Source: xyz)
-        r'ChunkID:\s*([^\s\]\)]+)',        # ChunkID: abc-123
+        r"\[Source:\s*(\d+)\]",  # [Source: 1]
+        r"\[(\d+)\]",  # [1]
+        r"\(Doc:\s*([^\)]+)\)",  # (Doc: xyz)
+        r"\(Source:\s*([^\)]+)\)",  # (Source: xyz)
+        r"ChunkID:\s*([^\s\]\)]+)",  # ChunkID: abc-123
     ]
 
     REPAIR_PROMPT = """The following answer contains citations that do not match the provided source documents.
@@ -99,7 +102,9 @@ For each claim that cannot be supported by any chunk, do one of:
 Keep all correctly cited information intact.
 Output ONLY the corrected answer text, nothing else."""
 
-    def __init__(self, max_repair_attempts: int = 2, repair_timeout: float = 30.0) -> None:
+    def __init__(
+        self, max_repair_attempts: int = 2, repair_timeout: float = 30.0
+    ) -> None:
         """Initialize citation verifier.
 
         Args:
@@ -130,7 +135,7 @@ Output ONLY the corrected answer text, nothing else."""
         """
         valid: dict[str, str] = {}
         for i, chunk in enumerate(chunks):
-            chunk_id = getattr(chunk, 'id', None) or getattr(chunk, 'chunk_id', None)
+            chunk_id = getattr(chunk, "id", None) or getattr(chunk, "chunk_id", None)
             if chunk_id:
                 # Map the full chunk ID
                 valid[str(chunk_id)] = str(chunk_id)
@@ -159,13 +164,17 @@ Output ONLY the corrected answer text, nothing else."""
         for cid, match_text in citations:
             matched_chunk_id = valid_ids.get(cid)
             is_valid = matched_chunk_id is not None
-            checks.append(CitationCheck(
-                citation_id=cid,
-                original_text=match_text,
-                valid=is_valid,
-                matched_chunk_id=matched_chunk_id,
-                reason="" if is_valid else f"Citation '{cid}' not found in retrieved chunks",
-            ))
+            checks.append(
+                CitationCheck(
+                    citation_id=cid,
+                    original_text=match_text,
+                    valid=is_valid,
+                    matched_chunk_id=matched_chunk_id,
+                    reason=""
+                    if is_valid
+                    else f"Citation '{cid}' not found in retrieved chunks",
+                )
+            )
 
         valid_count = sum(1 for c in checks if c.valid)
         total = len(checks) if checks else 1  # Avoid div by zero
@@ -211,9 +220,13 @@ Output ONLY the corrected answer text, nothing else."""
             # Build chunk list for repair prompt
             chunk_list_parts = []
             for i, c in enumerate(chunks):
-                chunk_id = getattr(c, 'id', None) or getattr(c, 'chunk_id', f"chunk_{i}")
-                snippet = getattr(c, 'snippet', str(c))[:150]
-                chunk_list_parts.append(f"[{i+1}] ID: {chunk_id}\n    Excerpt: {snippet}...")
+                chunk_id = getattr(c, "id", None) or getattr(
+                    c, "chunk_id", f"chunk_{i}"
+                )
+                snippet = getattr(c, "snippet", str(c))[:150]
+                chunk_list_parts.append(
+                    f"[{i + 1}] ID: {chunk_id}\n    Excerpt: {snippet}..."
+                )
             chunk_list = "\n".join(chunk_list_parts)
 
             invalid_ids = [c.citation_id for c in result.citation_checks if not c.valid]
@@ -226,10 +239,15 @@ Output ONLY the corrected answer text, nothing else."""
 
             try:
                 repaired = await asyncio.wait_for(
-                    provider.chat([
-                        {"role": "system", "content": "You are a citation repair assistant. Fix invalid citations."},
-                        {"role": "user", "content": prompt},
-                    ]),
+                    provider.chat(
+                        [
+                            {
+                                "role": "system",
+                                "content": "You are a citation repair assistant. Fix invalid citations.",
+                            },
+                            {"role": "user", "content": prompt},
+                        ]
+                    ),
                     timeout=self._repair_timeout,
                 )
 
@@ -246,16 +264,20 @@ Output ONLY the corrected answer text, nothing else."""
                 result = new_result
 
             except Exception as e:
-                result.citation_checks.append(CitationCheck(
-                    citation_id="repair_error",
-                    original_text="",
-                    valid=False,
-                    reason=f"Repair failed: {str(e)}",
-                ))
+                result.citation_checks.append(
+                    CitationCheck(
+                        citation_id="repair_error",
+                        original_text="",
+                        valid=False,
+                        reason=f"Repair failed: {str(e)}",
+                    )
+                )
                 break
 
         # Repair failed - mark answer with warning
-        result.verified_answer = self._mark_unverified(current_answer, result.citation_checks)
+        result.verified_answer = self._mark_unverified(
+            current_answer, result.citation_checks
+        )
         result.final_pass = False
         return result
 
@@ -295,7 +317,7 @@ Output ONLY the corrected answer text, nothing else."""
         invalid_texts = {c.original_text for c in result.citation_checks if not c.valid}
 
         # Remove sentences containing invalid citations
-        sentences = re.split(r'(?<=[.!?])\s+', answer)
+        sentences = re.split(r"(?<=[.!?])\s+", answer)
         kept_sentences = []
         removed_count = 0
 

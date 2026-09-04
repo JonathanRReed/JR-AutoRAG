@@ -34,14 +34,16 @@ class HyDEConfig:
     combine_with_query: bool = True
 
     # Document types for different query categories
-    document_templates: dict[str, str] = field(default_factory=lambda: {
-        "factual": "Write a short technical document excerpt that definitively answers this question: {query}",
-        "procedural": "Write a step-by-step procedure or how-to guide excerpt that explains: {query}",
-        "analytical": "Write an analytical report excerpt that provides detailed analysis for: {query}",
-        "comparative": "Write a comparison document excerpt that compares and contrasts: {query}",
-        "summary": "Write a comprehensive summary document that covers: {query}",
-        "default": "Write a Wikipedia-style encyclopedia article excerpt that directly answers: {query}",
-    })
+    document_templates: dict[str, str] = field(
+        default_factory=lambda: {
+            "factual": "Write a short technical document excerpt that definitively answers this question: {query}",
+            "procedural": "Write a step-by-step procedure or how-to guide excerpt that explains: {query}",
+            "analytical": "Write an analytical report excerpt that provides detailed analysis for: {query}",
+            "comparative": "Write a comparison document excerpt that compares and contrasts: {query}",
+            "summary": "Write a comprehensive summary document that covers: {query}",
+            "default": "Write a Wikipedia-style encyclopedia article excerpt that directly answers: {query}",
+        }
+    )
 
 
 @dataclass
@@ -162,10 +164,10 @@ class HyDEGenerator:
             if loop.is_running():
                 # We're already in an async context, can't use run()
                 import concurrent.futures
+
                 with concurrent.futures.ThreadPoolExecutor() as pool:
                     future = pool.submit(
-                        asyncio.run,
-                        self.generate(query, provider, query_type)
+                        asyncio.run, self.generate(query, provider, query_type)
                     )
                     return future.result()
             else:

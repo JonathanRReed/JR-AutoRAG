@@ -63,11 +63,13 @@ async def lifespan(app: FastAPI):
 
     # Log startup in audit log
     audit_log = get_audit_log()
-    audit_log.log(AuditEntry(
-        timestamp=datetime.now(UTC),
-        action=AuditAction.SYSTEM,
-        details={"event": "startup", "version": app.version},
-    ))
+    audit_log.log(
+        AuditEntry(
+            timestamp=datetime.now(UTC),
+            action=AuditAction.SYSTEM,
+            details={"event": "startup", "version": app.version},
+        )
+    )
 
     # Initialize service container
     logger.info("Initializing Application Services...")
@@ -93,11 +95,13 @@ async def lifespan(app: FastAPI):
     await close_shared_client()
 
     # Log shutdown in audit log
-    audit_log.log(AuditEntry(
-        timestamp=datetime.now(UTC),
-        action=AuditAction.SYSTEM,
-        details={"event": "shutdown"},
-    ))
+    audit_log.log(
+        AuditEntry(
+            timestamp=datetime.now(UTC),
+            action=AuditAction.SYSTEM,
+            details={"event": "shutdown"},
+        )
+    )
 
     logger.info("JR AutoRAG API - Shutdown complete.")
 
@@ -211,6 +215,7 @@ app.include_router(
 # Root Endpoint
 # =============================================================================
 
+
 @app.get("/")
 def root():
     """Root endpoint with API information."""
@@ -219,7 +224,8 @@ def root():
         "status": "ok",
         "version": app.version,
         "security": {
-            "auth_enabled": os.environ.get("AUTORAG_AUTH_ENABLED", "false").lower() == "true",
+            "auth_enabled": os.environ.get("AUTORAG_AUTH_ENABLED", "false").lower()
+            == "true",
             "cors_origins": len(allowed_origins),
         },
     }

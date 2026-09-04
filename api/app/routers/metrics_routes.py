@@ -1,6 +1,5 @@
 """Metrics API routes for 3.0 features."""
 
-
 from fastapi import APIRouter
 
 from ..core.corpus_health import get_corpus_health_checker
@@ -21,10 +20,10 @@ def get_preset_estimates():
     estimates = tracker.get_all_estimates()
 
     return {
-        "estimates": {
-            preset: est.to_dict() for preset, est in estimates.items()
-        },
-        "message": f"Estimates for {len(estimates)} presets" if estimates else "No data yet",
+        "estimates": {preset: est.to_dict() for preset, est in estimates.items()},
+        "message": f"Estimates for {len(estimates)} presets"
+        if estimates
+        else "No data yet",
     }
 
 
@@ -95,4 +94,3 @@ def get_quality_gates_config():
         "high_risk_similarity": gates.high_risk_similarity,
         "critical_risk_count": gates.critical_risk_count,
     }
-

@@ -45,7 +45,9 @@ def _build_retrieval_config(cfg: AppConfig) -> HybridConfig:
         raptor=getattr(cfg.retrieval, "raptor", False),
         graph=getattr(cfg.retrieval, "graph", False),
         use_colbert=getattr(cfg.retrieval, "use_colbert", False),
-        colbert_model=getattr(cfg.retrieval, "colbert_model", "sentence-transformers/all-MiniLM-L6-v2"),
+        colbert_model=getattr(
+            cfg.retrieval, "colbert_model", "sentence-transformers/all-MiniLM-L6-v2"
+        ),
         colbert_top_k=getattr(cfg.retrieval, "colbert_top_k", 12),
         recency_weight=getattr(cfg.retrieval, "recency_weight", 0.1),
         recency_half_life_days=getattr(cfg.retrieval, "recency_half_life_days", 90.0),
@@ -61,13 +63,19 @@ def _build_retrieval_config(cfg: AppConfig) -> HybridConfig:
 
 class ServiceContainer:
     def __init__(self, base_path: Path | None = None) -> None:
-        self.demo_mode = os.environ.get("JR_DEMO_MODE", "").lower() in {"1", "true", "yes"}
+        self.demo_mode = os.environ.get("JR_DEMO_MODE", "").lower() in {
+            "1",
+            "true",
+            "yes",
+        }
         self._demo_tmpdir: tempfile.TemporaryDirectory[str] | None = None
         if base_path is None and self.demo_mode and not os.environ.get("JR_DATA_DIR"):
             self._demo_tmpdir = tempfile.TemporaryDirectory(prefix="jr-autorag-demo-")
             data_dir = Path(self._demo_tmpdir.name)
         else:
-            data_dir = Path(base_path or os.environ.get("JR_DATA_DIR", Path.cwd() / "data"))
+            data_dir = Path(
+                base_path or os.environ.get("JR_DATA_DIR", Path.cwd() / "data")
+            )
         data_dir.mkdir(parents=True, exist_ok=True)
         self.config_store = ConfigStore(data_dir / "config.json")
         self.document_store = DocumentStore(
@@ -88,6 +96,7 @@ class ServiceContainer:
 
         from .core.auth import get_auth
         from .core.document_acl import get_acl_enforcer, resolve_acl_defaults
+
         auth_enabled = get_auth().require_auth()
         default_public, _ = resolve_acl_defaults(auth_enabled)
         get_acl_enforcer(default_public=default_public)
@@ -121,7 +130,11 @@ class ServiceContainer:
         self.gatherer = Gatherer(self.retrieval_engine)
         self.simple_planner = Planner(cfg)
         self.smart_planner = SmartPlanner(cfg)
-        self.planner = self.smart_planner if cfg.retrieval.planner_mode != "simple" else self.simple_planner
+        self.planner = (
+            self.smart_planner
+            if cfg.retrieval.planner_mode != "simple"
+            else self.simple_planner
+        )
         self.orchestrator = Orchestrator(
             planner=self.planner,
             retrieval=self.retrieval_engine,
@@ -135,6 +148,7 @@ class ServiceContainer:
 
         # Register orchestrator in global state for traces.py access
         from .state import set_orchestrator
+
         set_orchestrator(self.orchestrator)
 
     def _sanitize_config(
@@ -160,7 +174,9 @@ class ServiceContainer:
             key_name = _infer_secret_key_name(provider.name, str(provider.base_url))
             candidate = (provider.api_key or "").strip()
             existing_key_name = (
-                _infer_secret_key_name(existing_provider.name, str(existing_provider.base_url))
+                _infer_secret_key_name(
+                    existing_provider.name, str(existing_provider.base_url)
+                )
                 if existing_provider
                 else None
             )
@@ -185,8 +201,12 @@ class ServiceContainer:
 
             return provider.model_copy(update={"api_key": None})
 
-        sanitized_provider = sanitize_provider(cfg.provider, existing.provider if existing else None)
-        existing_profiles = {p.name: p for p in (existing.provider_profiles if existing else [])}
+        sanitized_provider = sanitize_provider(
+            cfg.provider, existing.provider if existing else None
+        )
+        existing_profiles = {
+            p.name: p for p in (existing.provider_profiles if existing else [])
+        }
         sanitized_profiles = []
         for profile in cfg.provider_profiles:
             existing_profile = existing_profiles.get(profile.name)
@@ -197,7 +217,10 @@ class ServiceContainer:
             sanitized_profiles.append(profile.model_copy(update={"provider": provider}))
 
         return cfg.model_copy(
-            update={"provider": sanitized_provider, "provider_profiles": sanitized_profiles}
+            update={
+                "provider": sanitized_provider,
+                "provider_profiles": sanitized_profiles,
+            }
         )
 
     def prepare_config_for_storage(self, cfg: AppConfig) -> AppConfig:
@@ -209,13 +232,16 @@ class ServiceContainer:
         """Build BQ retrieval configuration from app config."""
         # Get embedding dimension from model info
         from .core.hybrid_retrieval import EmbeddingModelPreset
+
         model_info = EmbeddingModelPreset.get_info(cfg.retrieval.embedding_model)
         embedding_dim = model_info.get("dimensions", 768)
 
         milvus_config = MilvusConfig(
             host=getattr(cfg.retrieval, "milvus_host", "localhost"),
             port=getattr(cfg.retrieval, "milvus_port", 19530),
-            collection_name=getattr(cfg.retrieval, "milvus_collection", "jr_autorag_chunks_bq"),
+            collection_name=getattr(
+                cfg.retrieval, "milvus_collection", "jr_autorag_chunks_bq"
+            ),
             index_type=getattr(cfg.retrieval, "milvus_index_type", "BIN_FLAT"),
             metric_type=getattr(cfg.retrieval, "milvus_metric", "HAMMING"),
             nlist=getattr(cfg.retrieval, "milvus_nlist", 128),
@@ -240,7 +266,9 @@ class ServiceContainer:
             two_stage_enabled=getattr(cfg.retrieval, "bq_two_stage", False),
             stage1_candidates=getattr(cfg.retrieval, "bq_stage1_candidates", 50),
             fallback_enabled=getattr(cfg.retrieval, "bq_fallback_enabled", True),
-            fallback_distance_threshold=getattr(cfg.retrieval, "bq_fallback_threshold", 500.0),
+            fallback_distance_threshold=getattr(
+                cfg.retrieval, "bq_fallback_threshold", 500.0
+            ),
             milvus_config=milvus_config,
             bq_config=bq_config,
             embedding_dim=embedding_dim,
@@ -269,7 +297,11 @@ class ServiceContainer:
         self._enforce_runtime_policy(cfg)
         self.simple_planner.rebuild(cfg)
         self.smart_planner.rebuild(cfg)
-        self.planner = self.smart_planner if cfg.retrieval.planner_mode != "simple" else self.simple_planner
+        self.planner = (
+            self.smart_planner
+            if cfg.retrieval.planner_mode != "simple"
+            else self.simple_planner
+        )
         self.orchestrator.set_planner(self.planner)
         retrieval_config = _build_retrieval_config(cfg)
         self.retrieval_engine.reconfigure(retrieval_config)
@@ -277,7 +309,9 @@ class ServiceContainer:
 
         if hasattr(self.retrieval_engine, "set_bq_config"):
             bq_config, bq_enabled = self._build_bq_config(cfg)
-            self.retrieval_engine.set_bq_config(bq_config, enabled=bq_enabled, rebuild=True)
+            self.retrieval_engine.set_bq_config(
+                bq_config, enabled=bq_enabled, rebuild=True
+            )
 
 
 @lru_cache(maxsize=1)

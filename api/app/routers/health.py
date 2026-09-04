@@ -53,7 +53,9 @@ def readyz() -> JSONResponse:
                 checks={"orchestrator": ReadinessCheck(status="fail")},
             )
         else:
-            internal_response = ReadinessResponse.model_validate(orchestrator.get_readiness_status())
+            internal_response = ReadinessResponse.model_validate(
+                orchestrator.get_readiness_status()
+            )
             response = _public_readiness_response(internal_response)
     except Exception:
         logger.exception("Failed to build readiness report")
@@ -63,9 +65,13 @@ def readyz() -> JSONResponse:
             checks={"orchestrator": ReadinessCheck(status="fail")},
         )
 
-    status_code = status.HTTP_200_OK if response.ready else status.HTTP_503_SERVICE_UNAVAILABLE
+    status_code = (
+        status.HTTP_200_OK if response.ready else status.HTTP_503_SERVICE_UNAVAILABLE
+    )
     if response.ready:
         logger.debug("Readiness check passed: %s", response.checks)
     else:
         logger.warning("Readiness check failed: %s", response.checks)
-    return JSONResponse(content=response.model_dump(mode="json"), status_code=status_code)
+    return JSONResponse(
+        content=response.model_dump(mode="json"), status_code=status_code
+    )

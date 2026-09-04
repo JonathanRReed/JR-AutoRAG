@@ -50,7 +50,7 @@ def test_update_config_does_not_persist_when_apply_fails() -> None:
             generator_model="llama3",
             gatherer_model="llama3",
             api_key="",
-        )
+        ),
     )
 
     with pytest.raises(HTTPException) as exc_info:
@@ -74,7 +74,9 @@ def test_update_config_persists_after_successful_apply() -> None:
 
 
 @pytest.mark.asyncio
-async def test_model_discovery_uses_active_deployment_policy(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_model_discovery_uses_active_deployment_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     container = RecordingContainer()
     discover = AsyncMock(return_value=[])
     monkeypatch.setattr(config_router, "discover_models", discover)

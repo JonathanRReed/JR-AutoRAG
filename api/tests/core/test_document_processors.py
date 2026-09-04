@@ -7,11 +7,10 @@ from app.core.document_processors import (
     DocumentProcessor,
 )
 
+
 def test_extracted_table_to_text():
     table = ExtractedTable(
-        headers=["Name", "Age"],
-        rows=[["Alice", "30"], ["Bob", "25"]],
-        caption="People"
+        headers=["Name", "Age"], rows=[["Alice", "30"], ["Bob", "25"]], caption="People"
     )
     text = table.to_text()
     assert "Table: People" in text
@@ -19,10 +18,11 @@ def test_extracted_table_to_text():
     assert "Alice | 30" in text
     assert "Bob | 25" in text
 
+
 def test_extracted_table_to_qa_pairs():
     table = ExtractedTable(
         headers=["Name", "Age", "City"],
-        rows=[["Alice", "30", "NYC"], ["Bob", "25", "LA"]]
+        rows=[["Alice", "30", "NYC"], ["Bob", "25", "LA"]],
     )
     qa_pairs = table.to_qa_pairs()
     assert ("What is Name?", "Alice") in qa_pairs
@@ -31,6 +31,7 @@ def test_extracted_table_to_qa_pairs():
     assert ("What is Name?", "Bob") in qa_pairs
     assert ("What is the Age of Bob?", "25") in qa_pairs
     assert ("What is the City of Bob?", "LA") in qa_pairs
+
 
 def test_extract_markdown_tables():
     extractor = TableExtractor()
@@ -44,6 +45,7 @@ def test_extract_markdown_tables():
     assert len(tables) == 1
     assert tables[0].headers == ["Header 1", "Header 2"]
     assert tables[0].rows == [["Cell 1,1", "Cell 1,2"], ["Cell 2,1", "Cell 2,2"]]
+
 
 def test_extract_html_tables():
     extractor = TableExtractor()
@@ -59,6 +61,7 @@ def test_extract_html_tables():
     assert tables[0].headers == ["Col1", "Col2"]
     assert tables[0].rows == [["Data1", "Data2"], ["Data3", "Data4"]]
 
+
 def test_extract_bullet_lists():
     extractor = ListExtractor()
     text = """
@@ -70,6 +73,7 @@ def test_extract_bullet_lists():
     assert len(lists) == 1
     assert lists[0] == ["Item 1", "Item 2", "Item 3"]
 
+
 def test_extract_numbered_lists():
     extractor = ListExtractor()
     text = """
@@ -80,6 +84,7 @@ def test_extract_numbered_lists():
     lists = extractor.extract_numbered_lists(text)
     assert len(lists) == 1
     assert lists[0] == ["First", "Second", "Third"]
+
 
 def test_extract_fenced_blocks():
     extractor = CodeBlockExtractor()
@@ -97,6 +102,7 @@ echo "hello"
     assert blocks[0] == ("python", "def foo():\n    pass")
     assert blocks[1] == ("text", 'echo "hello"')
 
+
 def test_extract_headers():
     extractor = HeaderExtractor()
     text = """
@@ -109,6 +115,7 @@ def test_extract_headers():
     assert headers[0][:2] == (1, "Title")
     assert headers[1][:2] == (2, "Subtitle")
     assert headers[2][:2] == (3, "Section")
+
 
 def test_build_toc():
     extractor = HeaderExtractor()
@@ -124,6 +131,7 @@ def test_build_toc():
     assert toc[1]["level"] == 2
     assert toc[1]["text"] == "Subtitle"
     assert "position" in toc[1]
+
 
 def test_document_processor():
     processor = DocumentProcessor()
@@ -153,6 +161,7 @@ print("test")
 
     assert result["bullet_lists"][0] == ["Item A", "Item B"]
     assert result["code_blocks"][0] == {"language": "python", "code": 'print("test")'}
+
 
 def test_document_processor_enhance_text():
     processor = DocumentProcessor()

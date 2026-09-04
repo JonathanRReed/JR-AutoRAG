@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 @dataclass
 class ConflictResult:
     """Result of conflict detection."""
+
     has_conflicts: bool
     conflicts: list[tuple[str, str, str]]  # (claim1, claim2, type)
     resolution_strategy: str
@@ -41,34 +42,83 @@ class ConflictDetector:
 
     # Negation patterns that indicate potential conflict
     NEGATION_PATTERNS = [
-        (r'\bis\b', r'\bis not\b'),
-        (r'\bis\b', r'\bisn\'t\b'),
-        (r'\bcan\b', r'\bcannot\b'),
-        (r'\bcan\b', r'\bcan\'t\b'),
-        (r'\bwill\b', r'\bwill not\b'),
-        (r'\bwill\b', r'\bwon\'t\b'),
-        (r'\bshould\b', r'\bshould not\b'),
-        (r'\bshould\b', r'\bshouldn\'t\b'),
-        (r'\balways\b', r'\bnever\b'),
-        (r'\bincreased\b', r'\bdecreased\b'),
-        (r'\bhigher\b', r'\blower\b'),
-        (r'\bmore\b', r'\bless\b'),
-        (r'\bbetter\b', r'\bworse\b'),
-        (r'\bsupports\b', r'\bopposes\b'),
-        (r'\bconfirms\b', r'\bdenies\b'),
-        (r'\btrue\b', r'\bfalse\b'),
-        (r'\bcorrect\b', r'\bincorrect\b'),
-        (r'\bvalid\b', r'\binvalid\b'),
+        (r"\bis\b", r"\bis not\b"),
+        (r"\bis\b", r"\bisn\'t\b"),
+        (r"\bcan\b", r"\bcannot\b"),
+        (r"\bcan\b", r"\bcan\'t\b"),
+        (r"\bwill\b", r"\bwill not\b"),
+        (r"\bwill\b", r"\bwon\'t\b"),
+        (r"\bshould\b", r"\bshould not\b"),
+        (r"\bshould\b", r"\bshouldn\'t\b"),
+        (r"\balways\b", r"\bnever\b"),
+        (r"\bincreased\b", r"\bdecreased\b"),
+        (r"\bhigher\b", r"\blower\b"),
+        (r"\bmore\b", r"\bless\b"),
+        (r"\bbetter\b", r"\bworse\b"),
+        (r"\bsupports\b", r"\bopposes\b"),
+        (r"\bconfirms\b", r"\bdenies\b"),
+        (r"\btrue\b", r"\bfalse\b"),
+        (r"\bcorrect\b", r"\bincorrect\b"),
+        (r"\bvalid\b", r"\binvalid\b"),
     ]
 
     # Stopwords to exclude from overlap calculation
     STOPWORDS = {
-        'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
-        'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
-        'should', 'may', 'might', 'must', 'shall', 'can', 'and', 'but', 'or',
-        'if', 'then', 'else', 'when', 'where', 'why', 'how', 'all', 'each',
-        'every', 'both', 'few', 'more', 'most', 'other', 'some', 'such', 'no',
-        'not', 'only', 'same', 'so', 'than', 'too', 'very', 'just', 'also',
+        "the",
+        "a",
+        "an",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "will",
+        "would",
+        "could",
+        "should",
+        "may",
+        "might",
+        "must",
+        "shall",
+        "can",
+        "and",
+        "but",
+        "or",
+        "if",
+        "then",
+        "else",
+        "when",
+        "where",
+        "why",
+        "how",
+        "all",
+        "each",
+        "every",
+        "both",
+        "few",
+        "more",
+        "most",
+        "other",
+        "some",
+        "such",
+        "no",
+        "not",
+        "only",
+        "same",
+        "so",
+        "than",
+        "too",
+        "very",
+        "just",
+        "also",
     }
 
     def __init__(self, min_overlap: float = 0.4):
@@ -85,17 +135,17 @@ class ConflictDetector:
 
     def _tokenize(self, text: str) -> set[str]:
         """Extract content words, filtering stopwords."""
-        words = re.findall(r'\b[a-z]{3,}\b', text.lower())
+        words = re.findall(r"\b[a-z]{3,}\b", text.lower())
         return {w for w in words if w not in self.STOPWORDS}
 
     def _extract_claims(self, chunk: EvidenceChunk) -> list[str]:
         """Extract sentence-level claims from chunk."""
-        sentences = re.split(r'(?<=[.!?])\s+', chunk.snippet)
+        sentences = re.split(r"(?<=[.!?])\s+", chunk.snippet)
         claims = []
         for s in sentences:
             s = s.strip()
             # Filter out very short sentences and headers
-            if len(s.split()) > 3 and not s.startswith(('#', '**', '-', '*')):
+            if len(s.split()) > 3 and not s.startswith(("#", "**", "-", "*")):
                 claims.append(s)
         return claims
 
@@ -130,8 +180,12 @@ class ConflictDetector:
                 return True, "negation"
 
         # Check for numeric contradictions
-        nums1 = re.findall(r'\b(\d+(?:\.\d+)?)\s*(%|percent|million|billion|thousand)?\b', claim1)
-        nums2 = re.findall(r'\b(\d+(?:\.\d+)?)\s*(%|percent|million|billion|thousand)?\b', claim2)
+        nums1 = re.findall(
+            r"\b(\d+(?:\.\d+)?)\s*(%|percent|million|billion|thousand)?\b", claim1
+        )
+        nums2 = re.findall(
+            r"\b(\d+(?:\.\d+)?)\s*(%|percent|million|billion|thousand)?\b", claim2
+        )
 
         if nums1 and nums2:
             # Extract numeric values
@@ -164,10 +218,12 @@ class ConflictDetector:
 
         # Compare claims pairwise
         conflicts: list[tuple[str, str, str]] = []
-        conflict_sources: dict[str, float] = {}  # chunk_id -> score for conflict resolution
+        conflict_sources: dict[
+            str, float
+        ] = {}  # chunk_id -> score for conflict resolution
 
         for i, (claim1, id1, score1) in enumerate(all_claims):
-            for _j, (claim2, id2, score2) in enumerate(all_claims[i+1:], i+1):
+            for _j, (claim2, id2, score2) in enumerate(all_claims[i + 1 :], i + 1):
                 # Skip claims from same chunk
                 if id1 == id2:
                     continue

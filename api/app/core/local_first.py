@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ..schemas.config import AppConfig, BackendConfig, BackendMode, DeploymentProfile, FallbackConfig
+from ..schemas.config import (
+    AppConfig,
+    BackendConfig,
+    BackendMode,
+    DeploymentProfile,
+    FallbackConfig,
+)
 
 
 class LocalFirstPolicyError(ValueError):
@@ -42,7 +48,9 @@ class LocalFirstRegistry:
     def get_backend(self, subsystem: str) -> BackendConfig:
         backend = self._backends.get(subsystem)
         if backend is None:
-            raise LocalFirstPolicyError(f"No backend configured for subsystem '{subsystem}'.")
+            raise LocalFirstPolicyError(
+                f"No backend configured for subsystem '{subsystem}'."
+            )
         return backend
 
     def get_fallback(self, subsystem: str) -> FallbackConfig:
@@ -58,7 +66,10 @@ class LocalFirstRegistry:
     def ensure_runtime_allowed(self, subsystem: str) -> BackendConfig:
         backend = self.get_backend(subsystem)
         if self._config.deployment_profile == DeploymentProfile.LOCAL_ONLY:
-            if backend.capabilities.requires_network or backend.capabilities.mode.value != "local":
+            if (
+                backend.capabilities.requires_network
+                or backend.capabilities.mode.value != "local"
+            ):
                 raise LocalFirstPolicyError(
                     f"Subsystem '{subsystem}' cannot use backend '{backend.backend_id}' in local-only mode."
                 )
@@ -75,7 +86,9 @@ class LocalFirstRegistry:
             "cloud_backends_allowed": self._config.deployment_profile
             not in {DeploymentProfile.LOCAL_ONLY, DeploymentProfile.CLIENT_SAFE},
             "external_model_calls_allowed": data_policy["external_model_calls_allowed"],
-            "managed_cloud_hosting_allowed": data_policy["managed_cloud_hosting_allowed"],
+            "managed_cloud_hosting_allowed": data_policy[
+                "managed_cloud_hosting_allowed"
+            ],
             "pii_redaction_required": data_policy["pii_redaction_required"],
             "report_export_mode": data_policy["report_export_mode"],
         }
@@ -84,11 +97,9 @@ class LocalFirstRegistry:
             "data_policy": data_policy,
             "guardrails": guardrails,
             "backends": {
-                key: backend.model_dump()
-                for key, backend in self._backends.items()
+                key: backend.model_dump() for key, backend in self._backends.items()
             },
             "fallbacks": {
-                key: fallback.model_dump()
-                for key, fallback in self._fallbacks.items()
+                key: fallback.model_dump() for key, fallback in self._fallbacks.items()
             },
         }

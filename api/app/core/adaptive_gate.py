@@ -23,15 +23,17 @@ if TYPE_CHECKING:
 
 class GateDecision(str, Enum):
     """Retrieval gating decision."""
-    NO_RETRIEVAL = "no_retrieval"      # LLM knows answer, skip retrieval
-    SINGLE_RETRIEVAL = "single"        # Simple query, one retrieval pass
+
+    NO_RETRIEVAL = "no_retrieval"  # LLM knows answer, skip retrieval
+    SINGLE_RETRIEVAL = "single"  # Simple query, one retrieval pass
     ITERATIVE_RETRIEVAL = "iterative"  # Complex query, multiple passes
-    CLARIFY_FIRST = "clarify"          # Ambiguous query, ask for clarification
+    CLARIFY_FIRST = "clarify"  # Ambiguous query, ask for clarification
 
 
 @dataclass
 class GateResult:
     """Result of adaptive gating decision."""
+
     decision: GateDecision
     confidence: float  # 0-1
     reasoning: str
@@ -50,35 +52,35 @@ class AdaptiveGate:
 
     # Patterns that suggest no retrieval needed
     NO_RETRIEVAL_PATTERNS = [
-        r'^(hi|hello|hey|thanks|thank you|bye|goodbye)\b',
-        r'^(what can you do|who are you|help me)\b',
-        r'\b(calculate|compute|math|arithmetic)\b.*\b(\d+)\b',
-        r'^(what is|what\'s)\s+\d+\s*[\+\-\*\/]\s*\d+',
-        r'\b(today|current date|current time|what time)\b',
+        r"^(hi|hello|hey|thanks|thank you|bye|goodbye)\b",
+        r"^(what can you do|who are you|help me)\b",
+        r"\b(calculate|compute|math|arithmetic)\b.*\b(\d+)\b",
+        r"^(what is|what\'s)\s+\d+\s*[\+\-\*\/]\s*\d+",
+        r"\b(today|current date|current time|what time)\b",
     ]
 
     # Patterns suggesting simple single retrieval
     SIMPLE_PATTERNS = [
-        r'^(what is|what are|who is|who are|define)\b',
-        r'^(when did|where is|where was)\b',
-        r'\b(definition of|meaning of)\b',
+        r"^(what is|what are|who is|who are|define)\b",
+        r"^(when did|where is|where was)\b",
+        r"\b(definition of|meaning of)\b",
     ]
 
     # Patterns suggesting complex iterative retrieval
     COMPLEX_PATTERNS = [
-        r'\b(compare|contrast|difference between|similarities)\b',
-        r'\b(explain how|explain why|analyze|evaluate)\b',
-        r'\b(pros and cons|advantages and disadvantages)\b',
-        r'\b(relationship between|connection between)\b',
-        r'\band\b.*\band\b',  # Multiple "and"s suggest multi-part
-        r'\?.*\?',  # Multiple questions
+        r"\b(compare|contrast|difference between|similarities)\b",
+        r"\b(explain how|explain why|analyze|evaluate)\b",
+        r"\b(pros and cons|advantages and disadvantages)\b",
+        r"\b(relationship between|connection between)\b",
+        r"\band\b.*\band\b",  # Multiple "and"s suggest multi-part
+        r"\?.*\?",  # Multiple questions
     ]
 
     # Patterns suggesting ambiguity
     AMBIGUOUS_PATTERNS = [
-        r'^(it|this|that|they|them)\b',  # Pronouns without context
-        r'\b(the thing|the one|the stuff)\b',
-        r'^[\w\s]{1,10}$',  # Very short queries
+        r"^(it|this|that|they|them)\b",  # Pronouns without context
+        r"\b(the thing|the one|the stuff)\b",
+        r"^[\w\s]{1,10}$",  # Very short queries
     ]
 
     GATING_PROMPT = """Analyze this query and decide the best retrieval strategy.
@@ -106,10 +108,14 @@ ITERATIONS: [1-5, only if ITERATIVE]
 CLARIFICATION: [question to ask user, only if CLARIFY, else "none"]"""
 
     def __init__(self) -> None:
-        self._no_retrieval_re = [re.compile(p, re.IGNORECASE) for p in self.NO_RETRIEVAL_PATTERNS]
+        self._no_retrieval_re = [
+            re.compile(p, re.IGNORECASE) for p in self.NO_RETRIEVAL_PATTERNS
+        ]
         self._simple_re = [re.compile(p, re.IGNORECASE) for p in self.SIMPLE_PATTERNS]
         self._complex_re = [re.compile(p, re.IGNORECASE) for p in self.COMPLEX_PATTERNS]
-        self._ambiguous_re = [re.compile(p, re.IGNORECASE) for p in self.AMBIGUOUS_PATTERNS]
+        self._ambiguous_re = [
+            re.compile(p, re.IGNORECASE) for p in self.AMBIGUOUS_PATTERNS
+        ]
 
     def _estimate_complexity(self, query: str) -> float:
         """Estimate query complexity (0-1)."""
@@ -179,10 +185,15 @@ CLARIFICATION: [question to ask user, only if CLARIFY, else "none"]"""
         prompt = self.GATING_PROMPT.format(query=query)
 
         try:
-            response = await provider.chat([
-                {"role": "system", "content": "You are a query analyzer that determines optimal retrieval strategy."},
-                {"role": "user", "content": prompt},
-            ])
+            response = await provider.chat(
+                [
+                    {
+                        "role": "system",
+                        "content": "You are a query analyzer that determines optimal retrieval strategy.",
+                    },
+                    {"role": "user", "content": prompt},
+                ]
+            )
             return self._parse_llm_response(response)
         except Exception:
             # Fallback to heuristic
@@ -192,9 +203,9 @@ CLARIFICATION: [question to ask user, only if CLARIFY, else "none"]"""
         """Parse LLM gating response."""
         # Extract decision
         decision_match = re.search(
-            r'DECISION:\s*(NO_RETRIEVAL|SINGLE|ITERATIVE|CLARIFY)',
+            r"DECISION:\s*(NO_RETRIEVAL|SINGLE|ITERATIVE|CLARIFY)",
             response,
-            re.IGNORECASE
+            re.IGNORECASE,
         )
         decision_str = decision_match.group(1).upper() if decision_match else "SINGLE"
 
@@ -207,25 +218,29 @@ CLARIFICATION: [question to ask user, only if CLARIFY, else "none"]"""
         decision = decision_map.get(decision_str, GateDecision.SINGLE_RETRIEVAL)
 
         # Extract confidence
-        confidence_match = re.search(r'CONFIDENCE:\s*([\d.]+)', response)
+        confidence_match = re.search(r"CONFIDENCE:\s*([\d.]+)", response)
         confidence = float(confidence_match.group(1)) if confidence_match else 0.7
         confidence = max(0.0, min(1.0, confidence))
 
         # Extract reasoning
-        reasoning_match = re.search(r'REASONING:\s*(.+?)(?=\n|$)', response)
-        reasoning = reasoning_match.group(1).strip() if reasoning_match else "LLM gating decision"
+        reasoning_match = re.search(r"REASONING:\s*(.+?)(?=\n|$)", response)
+        reasoning = (
+            reasoning_match.group(1).strip()
+            if reasoning_match
+            else "LLM gating decision"
+        )
 
         # Extract iterations (for iterative)
         iterations = 1
         if decision == GateDecision.ITERATIVE_RETRIEVAL:
-            iter_match = re.search(r'ITERATIONS:\s*(\d+)', response)
+            iter_match = re.search(r"ITERATIONS:\s*(\d+)", response)
             if iter_match:
                 iterations = max(1, min(5, int(iter_match.group(1))))
 
         # Extract clarification (for clarify)
         clarification = None
         if decision == GateDecision.CLARIFY_FIRST:
-            clarify_match = re.search(r'CLARIFICATION:\s*(.+?)(?=\n|$)', response)
+            clarify_match = re.search(r"CLARIFICATION:\s*(.+?)(?=\n|$)", response)
             if clarify_match:
                 clarify_text = clarify_match.group(1).strip()
                 if clarify_text.lower() != "none":

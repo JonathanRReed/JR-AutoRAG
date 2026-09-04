@@ -21,6 +21,7 @@ from typing import Any
 
 class AuditAction(str, Enum):
     """Types of auditable actions."""
+
     QUERY = "query"
     INGEST = "ingest"
     DELETE = "delete"
@@ -35,6 +36,7 @@ class AuditAction(str, Enum):
 @dataclass
 class AuditEntry:
     """A single audit log entry."""
+
     timestamp: datetime
     action: AuditAction
     details: dict[str, Any]
@@ -133,7 +135,7 @@ class AuditLog:
 
         # Trim buffer if too large
         if len(self._buffer) > self.MAX_ENTRIES_IN_MEMORY:
-            self._buffer = self._buffer[-self.MAX_ENTRIES_IN_MEMORY:]
+            self._buffer = self._buffer[-self.MAX_ENTRIES_IN_MEMORY :]
 
     def log_query(
         self,
@@ -145,18 +147,20 @@ class AuditLog:
         duration_ms: float | None = None,
     ) -> None:
         """Convenience method to log a query operation."""
-        self.log(AuditEntry(
-            timestamp=datetime.now(UTC),
-            action=AuditAction.QUERY,
-            details={
-                "query": query[:500],  # Truncate for storage
-                "documents": documents or [],
-            },
-            user_id=user_id,
-            ip_address=ip_address,
-            success=success,
-            duration_ms=duration_ms,
-        ))
+        self.log(
+            AuditEntry(
+                timestamp=datetime.now(UTC),
+                action=AuditAction.QUERY,
+                details={
+                    "query": query[:500],  # Truncate for storage
+                    "documents": documents or [],
+                },
+                user_id=user_id,
+                ip_address=ip_address,
+                success=success,
+                duration_ms=duration_ms,
+            )
+        )
 
     def log_ingest(
         self,
@@ -168,18 +172,20 @@ class AuditLog:
         success: bool = True,
     ) -> None:
         """Convenience method to log document ingestion."""
-        self.log(AuditEntry(
-            timestamp=datetime.now(UTC),
-            action=AuditAction.INGEST,
-            details={
-                "document_id": document_id,
-                "filename": filename,
-                "size_bytes": size_bytes,
-            },
-            user_id=user_id,
-            ip_address=ip_address,
-            success=success,
-        ))
+        self.log(
+            AuditEntry(
+                timestamp=datetime.now(UTC),
+                action=AuditAction.INGEST,
+                details={
+                    "document_id": document_id,
+                    "filename": filename,
+                    "size_bytes": size_bytes,
+                },
+                user_id=user_id,
+                ip_address=ip_address,
+                success=success,
+            )
+        )
 
     def log_delete(
         self,
@@ -189,14 +195,16 @@ class AuditLog:
         success: bool = True,
     ) -> None:
         """Convenience method to log document deletion."""
-        self.log(AuditEntry(
-            timestamp=datetime.now(UTC),
-            action=AuditAction.DELETE,
-            details={"document_id": document_id},
-            user_id=user_id,
-            ip_address=ip_address,
-            success=success,
-        ))
+        self.log(
+            AuditEntry(
+                timestamp=datetime.now(UTC),
+                action=AuditAction.DELETE,
+                details={"document_id": document_id},
+                user_id=user_id,
+                ip_address=ip_address,
+                success=success,
+            )
+        )
 
     def log_auth(
         self,
@@ -207,14 +215,16 @@ class AuditLog:
     ) -> None:
         """Log an authentication attempt."""
         action = AuditAction.AUTH_SUCCESS if success else AuditAction.AUTH_FAILURE
-        self.log(AuditEntry(
-            timestamp=datetime.now(UTC),
-            action=action,
-            details={"reason": reason} if reason else {},
-            user_id=user_id,
-            ip_address=ip_address,
-            success=success,
-        ))
+        self.log(
+            AuditEntry(
+                timestamp=datetime.now(UTC),
+                action=action,
+                details={"reason": reason} if reason else {},
+                user_id=user_id,
+                ip_address=ip_address,
+                success=success,
+            )
+        )
 
     def query(
         self,
@@ -264,7 +274,9 @@ class AuditLog:
                 # Read file entries
                 file_entries = self._read_log_file(log_file)
                 for entry in reversed(file_entries):
-                    if entry not in self._buffer and self._matches_filter(entry, since, until, action, user_id):  # Avoid duplicates
+                    if entry not in self._buffer and self._matches_filter(
+                        entry, since, until, action, user_id
+                    ):  # Avoid duplicates
                         entries.append(entry)
                         if len(entries) >= limit:
                             return entries
@@ -330,8 +342,8 @@ class AuditLog:
             for e in entries:
                 details_str = json.dumps(e.details).replace('"', '""')
                 lines.append(
-                    f'{e.timestamp.isoformat()},{e.action.value},'
-                    f'{e.user_id or ""},{e.ip_address or ""},'
+                    f"{e.timestamp.isoformat()},{e.action.value},"
+                    f"{e.user_id or ''},{e.ip_address or ''},"
                     f'{e.success},"{details_str}"'
                 )
             return "\n".join(lines)

@@ -24,21 +24,23 @@ from ..schemas.config import AppConfig
 
 class QueryType(str, Enum):
     """Classification of query types for routing."""
-    FACTUAL = "factual"           # Simple fact lookup
-    COMPARATIVE = "comparative"   # Comparing multiple items
-    ANALYTICAL = "analytical"     # Requires reasoning
-    SUMMARY = "summary"           # Needs broad coverage
-    PROCEDURAL = "procedural"     # How-to questions
+
+    FACTUAL = "factual"  # Simple fact lookup
+    COMPARATIVE = "comparative"  # Comparing multiple items
+    ANALYTICAL = "analytical"  # Requires reasoning
+    SUMMARY = "summary"  # Needs broad coverage
+    PROCEDURAL = "procedural"  # How-to questions
     CONVERSATIONAL = "conversational"  # Follow-up/clarification
     # New query types for adaptive routing
-    MULTI_HOP = "multi_hop"       # Requires multiple retrieval steps
-    LOCATOR = "locator"           # "Where is X in my docs?" - keyword heavy
-    EXPLORATORY = "exploratory"   # Broad research, high diversity
+    MULTI_HOP = "multi_hop"  # Requires multiple retrieval steps
+    LOCATOR = "locator"  # "Where is X in my docs?" - keyword heavy
+    EXPLORATORY = "exploratory"  # Broad research, high diversity
 
 
 @dataclass
 class PlanStep:
     """A single retrieval step in the plan."""
+
     query: str
     dense_k: int
     sparse_k: int
@@ -50,6 +52,7 @@ class PlanStep:
 @dataclass
 class RetrievalPlan:
     """Complete retrieval plan with multiple steps."""
+
     steps: list[PlanStep]
     target_tokens: int
     coverage_target: float
@@ -67,6 +70,7 @@ class RetrievalPlan:
 @dataclass
 class QueryAnalysis:
     """Result of analyzing a query."""
+
     query_type: QueryType
     sub_queries: list[str]
     expanded_terms: list[str]
@@ -141,33 +145,61 @@ class SmartPlanner:
 
     # Heuristic patterns for query classification
     COMPARATIVE_PATTERNS = [
-        r'\bvs\.?\b', r'\bversus\b', r'\bcompare\b', r'\bdifference\b',
-        r'\bbetter\b', r'\bworse\b', r'\bor\b.*\bor\b'
+        r"\bvs\.?\b",
+        r"\bversus\b",
+        r"\bcompare\b",
+        r"\bdifference\b",
+        r"\bbetter\b",
+        r"\bworse\b",
+        r"\bor\b.*\bor\b",
     ]
     PROCEDURAL_PATTERNS = [
-        r'^how\b', r'\bsteps?\b', r'\bprocess\b', r'\bprocedure\b',
-        r'\bguide\b', r'\btutorial\b', r'\binstructions?\b'
+        r"^how\b",
+        r"\bsteps?\b",
+        r"\bprocess\b",
+        r"\bprocedure\b",
+        r"\bguide\b",
+        r"\btutorial\b",
+        r"\binstructions?\b",
     ]
     SUMMARY_PATTERNS = [
-        r'\bsummar\w+\b', r'\boverview\b', r'\bexplain\b', r'\bdescribe\b',
-        r'\bwhat is\b', r'\bwhat are\b'
+        r"\bsummar\w+\b",
+        r"\boverview\b",
+        r"\bexplain\b",
+        r"\bdescribe\b",
+        r"\bwhat is\b",
+        r"\bwhat are\b",
     ]
     ANALYTICAL_PATTERNS = [
-        r'\bwhy\b', r'\bcause\b', r'\beffect\b', r'\bimpact\b',
-        r'\banalyze\b', r'\bevaluate\b', r'\bassess\b'
+        r"\bwhy\b",
+        r"\bcause\b",
+        r"\beffect\b",
+        r"\bimpact\b",
+        r"\banalyze\b",
+        r"\bevaluate\b",
+        r"\bassess\b",
     ]
     # New patterns for adaptive routing
     LOCATOR_PATTERNS = [
-        r'\bwhere\b.*\b(find|located|mention)\b', r'\bwhich (document|file|section)\b',
-        r'\bfind\b.*\bin\b', r'\blocate\b', r'\bsearch for\b'
+        r"\bwhere\b.*\b(find|located|mention)\b",
+        r"\bwhich (document|file|section)\b",
+        r"\bfind\b.*\bin\b",
+        r"\blocate\b",
+        r"\bsearch for\b",
     ]
     MULTI_HOP_PATTERNS = [
-        r'\band\b.*\bthen\b', r'\bfirst\b.*\bthen\b', r'\bafter\b.*\bwhat\b',
-        r'\bbased on\b.*\bwhat\b', r'\busing\b.*\bcalculate\b'
+        r"\band\b.*\bthen\b",
+        r"\bfirst\b.*\bthen\b",
+        r"\bafter\b.*\bwhat\b",
+        r"\bbased on\b.*\bwhat\b",
+        r"\busing\b.*\bcalculate\b",
     ]
     EXPLORATORY_PATTERNS = [
-        r'\btell me (about|everything)\b', r'\bexplore\b', r'\bresearch\b',
-        r'\ball\b.*\b(information|details)\b', r'\bcomprehensive\b'
+        r"\btell me (about|everything)\b",
+        r"\bexplore\b",
+        r"\bresearch\b",
+        r"\ball\b.*\b(information|details)\b",
+        r"\bcomprehensive\b",
     ]
 
     # Routing strategies per query type
@@ -301,13 +333,15 @@ class SmartPlanner:
 
         return QueryType.FACTUAL
 
-    def _decompose_query_heuristic(self, query: str, query_type: QueryType) -> list[str]:
+    def _decompose_query_heuristic(
+        self, query: str, query_type: QueryType
+    ) -> list[str]:
         """Decompose query into sub-queries using heuristics."""
         sub_queries = [query]  # Always include original
 
         if query_type == QueryType.COMPARATIVE:
             # Try to extract items being compared
-            parts = re.split(r'\bvs\.?\b|\bversus\b|\bor\b', query, flags=re.IGNORECASE)
+            parts = re.split(r"\bvs\.?\b|\bversus\b|\bor\b", query, flags=re.IGNORECASE)
             if len(parts) >= 2:
                 for part in parts:
                     part = part.strip()
@@ -320,7 +354,9 @@ class SmartPlanner:
 
         elif query_type == QueryType.PROCEDURAL:
             # Add overview query
-            sub_queries.append(query.replace("how to", "what is").replace("How to", "What is"))
+            sub_queries.append(
+                query.replace("how to", "what is").replace("How to", "What is")
+            )
 
         return sub_queries[:3]  # Limit to 3 sub-queries
 
@@ -328,15 +364,57 @@ class SmartPlanner:
         """Extract key terms for query expansion."""
         # Remove common words and extract likely important terms
         stop_words = {
-            'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been',
-            'what', 'how', 'why', 'when', 'where', 'who', 'which',
-            'can', 'could', 'would', 'should', 'do', 'does', 'did',
-            'i', 'you', 'we', 'they', 'it', 'this', 'that', 'these', 'those',
-            'and', 'or', 'but', 'if', 'then', 'so', 'because',
-            'to', 'of', 'in', 'on', 'at', 'by', 'for', 'with', 'about'
+            "the",
+            "a",
+            "an",
+            "is",
+            "are",
+            "was",
+            "were",
+            "be",
+            "been",
+            "what",
+            "how",
+            "why",
+            "when",
+            "where",
+            "who",
+            "which",
+            "can",
+            "could",
+            "would",
+            "should",
+            "do",
+            "does",
+            "did",
+            "i",
+            "you",
+            "we",
+            "they",
+            "it",
+            "this",
+            "that",
+            "these",
+            "those",
+            "and",
+            "or",
+            "but",
+            "if",
+            "then",
+            "so",
+            "because",
+            "to",
+            "of",
+            "in",
+            "on",
+            "at",
+            "by",
+            "for",
+            "with",
+            "about",
         }
 
-        words = re.findall(r'\b[a-zA-Z]{3,}\b', query.lower())
+        words = re.findall(r"\b[a-zA-Z]{3,}\b", query.lower())
         key_terms = [w for w in words if w not in stop_words]
 
         return key_terms[:5]  # Return top 5 key terms
@@ -364,9 +442,9 @@ class SmartPlanner:
         score += type_complexity.get(query_type, 0.2)
 
         # Special indicators
-        if '?' in query and query.count('?') > 1:
+        if "?" in query and query.count("?") > 1:
             score += 0.2  # Multiple questions
-        if re.search(r'\b(all|every|each)\b', query.lower()):
+        if re.search(r"\b(all|every|each)\b", query.lower()):
             score += 0.1  # Comprehensive request
 
         return min(1.0, score)
@@ -427,8 +505,7 @@ class SmartPlanner:
 
         # Get strategy for this query type (or fall back to FACTUAL)
         strategy = self.ROUTING_STRATEGIES.get(
-            query_type,
-            self.ROUTING_STRATEGIES[QueryType.FACTUAL]
+            query_type, self.ROUTING_STRATEGIES[QueryType.FACTUAL]
         )
 
         # Base parameters from strategy
@@ -442,31 +519,40 @@ class SmartPlanner:
         rerank_pool = self._compute_dynamic_k(base_rerank_pool, corpus_size, query_type)
 
         # Compression setting
-        compression_map = {"tight": True, "moderate": True, "light": True, "none": False}
-        compression = compression_map.get(strategy.get("compression", "moderate"), defaults.compression)
+        compression_map = {
+            "tight": True,
+            "moderate": True,
+            "light": True,
+            "none": False,
+        }
+        compression = compression_map.get(
+            strategy.get("compression", "moderate"), defaults.compression
+        )
 
         # Build params dict including strategy extras
         params = {
-            'dense_k': dense_k,
-            'sparse_k': sparse_k,
-            'rerank_pool': rerank_pool,
-            'compression': compression,
-            'raptor': strategy.get('raptor', False),
-            'diversity': strategy.get('diversity', defaults.diversity),
-            'iterative': strategy.get('iterative', False),
-            'max_hops': strategy.get('max_hops', 1),
-            'sparse_weight': strategy.get('sparse_weight', defaults.sparse_weight),
-            'title_boost': strategy.get('title_boost', defaults.title_boost),
-            'heading_boost': strategy.get('heading_boost', defaults.heading_boost),
-            'proximity_weight': strategy.get('proximity_weight', defaults.proximity_weight),
-            'recency_weight': defaults.recency_weight,
-            'recency_half_life_days': defaults.recency_half_life_days,
+            "dense_k": dense_k,
+            "sparse_k": sparse_k,
+            "rerank_pool": rerank_pool,
+            "compression": compression,
+            "raptor": strategy.get("raptor", False),
+            "diversity": strategy.get("diversity", defaults.diversity),
+            "iterative": strategy.get("iterative", False),
+            "max_hops": strategy.get("max_hops", 1),
+            "sparse_weight": strategy.get("sparse_weight", defaults.sparse_weight),
+            "title_boost": strategy.get("title_boost", defaults.title_boost),
+            "heading_boost": strategy.get("heading_boost", defaults.heading_boost),
+            "proximity_weight": strategy.get(
+                "proximity_weight", defaults.proximity_weight
+            ),
+            "recency_weight": defaults.recency_weight,
+            "recency_half_life_days": defaults.recency_half_life_days,
         }
 
         # Adjust for high complexity
         if complexity > 0.7:
-            params['dense_k'] = min(40, int(params['dense_k'] * 1.3))
-            params['rerank_pool'] = min(50, int(params['rerank_pool'] * 1.3))
+            params["dense_k"] = min(40, int(params["dense_k"] * 1.3))
+            params["rerank_pool"] = min(50, int(params["rerank_pool"] * 1.3))
 
         return params
 
@@ -498,10 +584,11 @@ KEY_TERMS: python, javascript, programming, comparison
 COMPLEXITY: medium"""
 
         try:
-            response = await self._provider.chat([
-                {
-                    "role": "system",
-                    "content": """You are a Strategic Query Planner for an enterprise RAG system with strict citation requirements.
+            response = await self._provider.chat(
+                [
+                    {
+                        "role": "system",
+                        "content": """You are a Strategic Query Planner for an enterprise RAG system with strict citation requirements.
 
 ## YOUR ROLE
 You analyze user queries and create optimal retrieval strategies to find citeable evidence.
@@ -527,9 +614,10 @@ For each query:
 
 ## OUTPUT
 Be concise, deterministic, and follow the format exactly.""",
-                },
-                {"role": "user", "content": prompt}
-            ])
+                    },
+                    {"role": "user", "content": prompt},
+                ]
+            )
             self._last_planner_mode = "llm"
             return self._parse_llm_analysis(response, query)
         except Exception as e:
@@ -538,7 +626,7 @@ Be concise, deterministic, and follow the format exactly.""",
 
     def _parse_llm_analysis(self, response: str, original_query: str) -> QueryAnalysis:
         """Parse LLM response into QueryAnalysis."""
-        lines = response.strip().split('\n')
+        lines = response.strip().split("\n")
 
         query_type = QueryType.FACTUAL
         sub_queries = [original_query]
@@ -547,22 +635,24 @@ Be concise, deterministic, and follow the format exactly.""",
 
         for line in lines:
             line = line.strip()
-            if line.startswith('TYPE:'):
-                type_str = line.split(':', 1)[1].strip().lower()
+            if line.startswith("TYPE:"):
+                type_str = line.split(":", 1)[1].strip().lower()
                 with contextlib.suppress(ValueError):
                     query_type = QueryType(type_str)
-            elif line.startswith('SUB_QUERIES:'):
-                queries_str = line.split(':', 1)[1].strip()
-                if queries_str.lower() != 'none':
-                    sub_queries = [q.strip() for q in queries_str.split(';') if q.strip()]
+            elif line.startswith("SUB_QUERIES:"):
+                queries_str = line.split(":", 1)[1].strip()
+                if queries_str.lower() != "none":
+                    sub_queries = [
+                        q.strip() for q in queries_str.split(";") if q.strip()
+                    ]
                     if not sub_queries:
                         sub_queries = [original_query]
-            elif line.startswith('KEY_TERMS:'):
-                terms_str = line.split(':', 1)[1].strip()
-                expanded_terms = [t.strip() for t in terms_str.split(',') if t.strip()]
-            elif line.startswith('COMPLEXITY:'):
-                comp_str = line.split(':', 1)[1].strip().lower()
-                complexity = {'low': 0.3, 'medium': 0.5, 'high': 0.8}.get(comp_str, 0.5)
+            elif line.startswith("KEY_TERMS:"):
+                terms_str = line.split(":", 1)[1].strip()
+                expanded_terms = [t.strip() for t in terms_str.split(",") if t.strip()]
+            elif line.startswith("COMPLEXITY:"):
+                comp_str = line.split(":", 1)[1].strip().lower()
+                complexity = {"low": 0.3, "medium": 0.5, "high": 0.8}.get(comp_str, 0.5)
 
         return QueryAnalysis(
             query_type=query_type,
@@ -603,23 +693,25 @@ Be concise, deterministic, and follow the format exactly.""",
     def _build_plan(self, query: str, analysis: QueryAnalysis) -> RetrievalPlan:
         """Build retrieval plan from analysis."""
         defaults = self._config.retrieval
-        params = self._get_retrieval_params(analysis.query_type, analysis.complexity_score)
+        params = self._get_retrieval_params(
+            analysis.query_type, analysis.complexity_score
+        )
 
         steps = []
         for i, sub_query in enumerate(analysis.sub_queries):
             step = PlanStep(
                 query=sub_query,
-                dense_k=params['dense_k'],
-                sparse_k=params['sparse_k'],
-                rerank_pool=params['rerank_pool'],
-                compression=params['compression'],
+                dense_k=params["dense_k"],
+                sparse_k=params["sparse_k"],
+                rerank_pool=params["rerank_pool"],
+                compression=params["compression"],
                 priority=len(analysis.sub_queries) - i,  # First query highest priority
             )
             steps.append(step)
 
         # Determine iterative settings
-        iterative = params.get('iterative', False)
-        max_iterations = params.get('max_hops', 1) if iterative else 1
+        iterative = params.get("iterative", False)
+        max_iterations = params.get("max_hops", 1) if iterative else 1
 
         return RetrievalPlan(
             steps=steps,

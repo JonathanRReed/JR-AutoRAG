@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 @dataclass
 class FirewallResult:
     """Result of hallucination firewall check."""
+
     original_answer: str
     cleaned_answer: str
     flagged_claims: list[str]
@@ -41,14 +42,80 @@ class HallucinationFirewall:
 
     # Stopwords always excluded from overlap calculation
     STOPWORDS = {
-        'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
-        'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
-        'should', 'may', 'might', 'must', 'shall', 'can', 'and', 'but', 'or',
-        'if', 'then', 'else', 'when', 'where', 'why', 'how', 'all', 'each',
-        'every', 'both', 'few', 'more', 'most', 'other', 'some', 'such', 'no',
-        'not', 'only', 'same', 'so', 'than', 'too', 'very', 'just', 'also',
-        'now', 'here', 'there', 'this', 'that', 'these', 'those', 'for', 'to',
-        'of', 'in', 'on', 'at', 'by', 'with', 'from', 'as', 'into', 'through',
+        "the",
+        "a",
+        "an",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "will",
+        "would",
+        "could",
+        "should",
+        "may",
+        "might",
+        "must",
+        "shall",
+        "can",
+        "and",
+        "but",
+        "or",
+        "if",
+        "then",
+        "else",
+        "when",
+        "where",
+        "why",
+        "how",
+        "all",
+        "each",
+        "every",
+        "both",
+        "few",
+        "more",
+        "most",
+        "other",
+        "some",
+        "such",
+        "no",
+        "not",
+        "only",
+        "same",
+        "so",
+        "than",
+        "too",
+        "very",
+        "just",
+        "also",
+        "now",
+        "here",
+        "there",
+        "this",
+        "that",
+        "these",
+        "those",
+        "for",
+        "to",
+        "of",
+        "in",
+        "on",
+        "at",
+        "by",
+        "with",
+        "from",
+        "as",
+        "into",
+        "through",
     }
 
     def __init__(
@@ -70,19 +137,19 @@ class HallucinationFirewall:
 
     def _tokenize(self, text: str) -> set[str]:
         """Tokenize and filter stopwords."""
-        words = re.findall(r'\b[a-z]+\b', text.lower())
+        words = re.findall(r"\b[a-z]+\b", text.lower())
         return {w for w in words if w not in self.STOPWORDS and len(w) > 2}
 
     def _has_citation(self, sentence: str) -> bool:
         """Check if sentence has citation markers."""
-        return bool(re.search(r'\[\d+\]|\(Doc:|\(Source:|ChunkID:', sentence))
+        return bool(re.search(r"\[\d+\]|\(Doc:|\(Source:|ChunkID:", sentence))
 
     def _is_meta_sentence(self, sentence: str) -> bool:
         """Check if sentence is metadata/header, not a claim."""
         lower = sentence.lower().strip()
         return (
-            lower.startswith(('##', '**', 'sources:', 'references:', 'note:'))
-            or lower in ('', 'n/a', 'unknown')
+            lower.startswith(("##", "**", "sources:", "references:", "note:"))
+            or lower in ("", "n/a", "unknown")
             or len(sentence.split()) < 4
         )
 
@@ -109,7 +176,7 @@ class HallucinationFirewall:
             all_source_terms.update(self._tokenize(text))
 
         # Split answer into sentences
-        sentences = re.split(r'(?<=[.!?])\s+', answer)
+        sentences = re.split(r"(?<=[.!?])\s+", answer)
 
         flagged: list[str] = []
         verified_count = 0
@@ -130,7 +197,11 @@ class HallucinationFirewall:
 
             # Calculate term overlap with sources
             sentence_terms = self._tokenize(sentence)
-            overlap = len(sentence_terms & all_source_terms) / len(sentence_terms) if sentence_terms else 0.0
+            overlap = (
+                len(sentence_terms & all_source_terms) / len(sentence_terms)
+                if sentence_terms
+                else 0.0
+            )
 
             # Determine if supported
             is_supported = has_citation or overlap >= self.min_overlap
@@ -153,10 +224,7 @@ class HallucinationFirewall:
         if self.strict_mode and flagged:
             for claim in flagged:
                 # Add warning markers
-                cleaned = cleaned.replace(
-                    claim,
-                    f"[UNVERIFIED] {claim}"
-                )
+                cleaned = cleaned.replace(claim, f"[UNVERIFIED] {claim}")
 
         pass_rate = verified_count / max(claim_count, 1)
 

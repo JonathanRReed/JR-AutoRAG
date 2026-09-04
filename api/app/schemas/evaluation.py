@@ -25,8 +25,10 @@ class EvaluationRun(BaseModel):
 # Golden Set Evaluation Schemas
 # ============================================================================
 
+
 class GoldenTestCaseSchema(BaseModel):
     """A single test case with expected results."""
+
     question: str
     expected_source_ids: list[str] = Field(default_factory=list)
     expected_answer_points: list[str] = Field(default_factory=list)
@@ -36,18 +38,21 @@ class GoldenTestCaseSchema(BaseModel):
 
 class GoldenSetCreateRequest(BaseModel):
     """Request to create a golden test set."""
+
     name: str
     cases: list[GoldenTestCaseSchema]
 
 
 class GoldenSetInfo(BaseModel):
     """Summary info about a golden set."""
+
     name: str
     count: int
 
 
 class RetrievalMetricsSchema(BaseModel):
     """Retrieval quality metrics."""
+
     recall_at_k: float = 0.0
     mrr: float = 0.0
     ndcg: float = 0.0
@@ -56,6 +61,7 @@ class RetrievalMetricsSchema(BaseModel):
 
 class AnswerMetricsSchema(BaseModel):
     """Answer quality metrics."""
+
     faithfulness: float = 0.0
     completeness: float = 0.0
     refusal_accuracy: float = 0.0
@@ -64,6 +70,7 @@ class AnswerMetricsSchema(BaseModel):
 
 class TestCaseResultSchema(BaseModel):
     """Result of evaluating a single test case."""
+
     test_case_id: str
     question: str
     answer: str
@@ -76,6 +83,7 @@ class TestCaseResultSchema(BaseModel):
 
 class EvalRunResultSchema(BaseModel):
     """Result of a complete evaluation run."""
+
     run_id: str
     golden_set_name: str
     timestamp: datetime
@@ -90,6 +98,7 @@ class EvalRunResultSchema(BaseModel):
 
 class EvalRunSummary(BaseModel):
     """Summary of an eval run for listing."""
+
     run_id: str
     golden_set_name: str
     timestamp: str
@@ -103,6 +112,7 @@ class EvalRunSummary(BaseModel):
 
 class RunComparisonResult(BaseModel):
     """Result of comparing two evaluation runs."""
+
     run_a: str
     run_b: str
     retrieval: dict

@@ -24,15 +24,17 @@ if TYPE_CHECKING:
 
 class RetrievalVerdict(str, Enum):
     """Quality verdict for retrieved context."""
-    CORRECT = "correct"          # Context is relevant and sufficient
-    AMBIGUOUS = "ambiguous"      # Partially relevant, may need refinement
-    INCORRECT = "incorrect"      # Context is irrelevant, need retry/fallback
-    LOW_COVERAGE = "low_coverage" # Relevant but missing key aspects
+
+    CORRECT = "correct"  # Context is relevant and sufficient
+    AMBIGUOUS = "ambiguous"  # Partially relevant, may need refinement
+    INCORRECT = "incorrect"  # Context is irrelevant, need retry/fallback
+    LOW_COVERAGE = "low_coverage"  # Relevant but missing key aspects
 
 
 @dataclass
 class EvaluationResult:
     """Result of retrieval quality evaluation."""
+
     verdict: RetrievalVerdict
     confidence: float  # 0-1
     reasoning: str
@@ -44,6 +46,7 @@ class EvaluationResult:
 @dataclass
 class KnowledgeStrip:
     """A relevant portion extracted from a chunk."""
+
     text: str
     chunk_id: str
     relevance_score: float
@@ -65,15 +68,15 @@ class RetrievalEvaluator:
 
     # Patterns indicating high relevance
     RELEVANCE_PATTERNS = [
-        r'\b(definition|meaning|refers to|is defined as)\b',
-        r'\b(according to|states that|explains)\b',
-        r'\b(because|therefore|thus|hence)\b',
+        r"\b(definition|meaning|refers to|is defined as)\b",
+        r"\b(according to|states that|explains)\b",
+        r"\b(because|therefore|thus|hence)\b",
     ]
 
     # Patterns indicating low relevance (noise)
     NOISE_PATTERNS = [
-        r'\b(unrelated|off-topic|different topic)\b',
-        r'\b(however|but|although|despite)\b.*\b(not|no|none)\b',
+        r"\b(unrelated|off-topic|different topic)\b",
+        r"\b(however|but|although|despite)\b.*\b(not|no|none)\b",
     ]
 
     LLM_EVALUATION_PROMPT = """Evaluate if the retrieved context is relevant and sufficient to answer the query.
@@ -101,13 +104,15 @@ INCORRECT means the context is irrelevant to the query."""
     ) -> None:
         self.correct_threshold = correct_threshold
         self.ambiguous_threshold = ambiguous_threshold
-        self._relevance_re = [re.compile(p, re.IGNORECASE) for p in self.RELEVANCE_PATTERNS]
+        self._relevance_re = [
+            re.compile(p, re.IGNORECASE) for p in self.RELEVANCE_PATTERNS
+        ]
         self._noise_re = [re.compile(p, re.IGNORECASE) for p in self.NOISE_PATTERNS]
 
     def _compute_term_overlap(self, query: str, text: str) -> float:
         """Compute term overlap between query and text."""
-        query_terms = set(re.findall(r'\b[a-z]{3,}\b', query.lower()))
-        text_terms = set(re.findall(r'\b[a-z]{3,}\b', text.lower()))
+        query_terms = set(re.findall(r"\b[a-z]{3,}\b", query.lower()))
+        text_terms = set(re.findall(r"\b[a-z]{3,}\b", text.lower()))
         if not query_terms:
             return 0.0
         return len(query_terms & text_terms) / len(query_terms)
@@ -127,7 +132,7 @@ INCORRECT means the context is irrelevant to the query."""
 
         scores = []
         for chunk in chunks:
-            text = chunk.snippet if hasattr(chunk, 'snippet') else str(chunk)
+            text = chunk.snippet if hasattr(chunk, "snippet") else str(chunk)
 
             # Term overlap (40% weight)
             overlap = self._compute_term_overlap(query, text)
@@ -139,14 +144,14 @@ INCORRECT means the context is irrelevant to the query."""
             noise = min(1.0, self._count_noise_signals(text) / 2)
 
             # Retrieval score boost (if available)
-            retrieval_score = getattr(chunk, 'score', 0.5)
+            retrieval_score = getattr(chunk, "score", 0.5)
 
             # Combined score
             chunk_score = (
-                0.4 * overlap +
-                0.3 * relevance +
-                0.3 * (1 - noise) +
-                0.2 * retrieval_score  # Bonus
+                0.4 * overlap
+                + 0.3 * relevance
+                + 0.3 * (1 - noise)
+                + 0.2 * retrieval_score  # Bonus
             )
             scores.append(min(1.0, chunk_score))
 
@@ -173,14 +178,14 @@ INCORRECT means the context is irrelevant to the query."""
         chunks: list[EvidenceChunk],
     ) -> list[str]:
         """Extract relevant sentences from chunks."""
-        query_terms = set(re.findall(r'\b[a-z]{3,}\b', query.lower()))
+        query_terms = set(re.findall(r"\b[a-z]{3,}\b", query.lower()))
         strips = []
 
         for chunk in chunks:
-            text = chunk.snippet if hasattr(chunk, 'snippet') else str(chunk)
+            text = chunk.snippet if hasattr(chunk, "snippet") else str(chunk)
 
             # Split into sentences
-            sentences = re.split(r'[.!?]+', text)
+            sentences = re.split(r"[.!?]+", text)
 
             for sentence in sentences:
                 sentence = sentence.strip()
@@ -188,7 +193,7 @@ INCORRECT means the context is irrelevant to the query."""
                     continue
 
                 # Check term overlap
-                sent_terms = set(re.findall(r'\b[a-z]{3,}\b', sentence.lower()))
+                sent_terms = set(re.findall(r"\b[a-z]{3,}\b", sentence.lower()))
                 overlap = len(query_terms & sent_terms)
 
                 # Keep sentences with 2+ query term matches
@@ -207,12 +212,12 @@ INCORRECT means the context is irrelevant to the query."""
             return None
 
         # Extract key terms from top chunks that aren't in query
-        query_terms = set(re.findall(r'\b[a-z]{4,}\b', query.lower()))
+        query_terms = set(re.findall(r"\b[a-z]{4,}\b", query.lower()))
         chunk_terms: dict[str, int] = {}
 
         for chunk in chunks[:3]:
-            text = chunk.snippet if hasattr(chunk, 'snippet') else str(chunk)
-            for term in re.findall(r'\b[a-z]{4,}\b', text.lower()):
+            text = chunk.snippet if hasattr(chunk, "snippet") else str(chunk)
+            for term in re.findall(r"\b[a-z]{4,}\b", text.lower()):
                 if term not in query_terms:
                     chunk_terms[term] = chunk_terms.get(term, 0) + 1
 
@@ -220,7 +225,7 @@ INCORRECT means the context is irrelevant to the query."""
         new_terms = sorted(chunk_terms.items(), key=lambda x: x[1], reverse=True)[:2]
 
         if new_terms:
-            additions = ' '.join(t[0] for t in new_terms)
+            additions = " ".join(t[0] for t in new_terms)
             return f"{query} {additions}"
 
         return None
@@ -249,7 +254,9 @@ INCORRECT means the context is irrelevant to the query."""
         )
 
         if verdict == RetrievalVerdict.AMBIGUOUS:
-            result.knowledge_strips = self._extract_knowledge_strips_heuristic(query, chunks)
+            result.knowledge_strips = self._extract_knowledge_strips_heuristic(
+                query, chunks
+            )
             result.suggested_query = self._suggest_query_refinement(query, chunks)
         elif verdict == RetrievalVerdict.INCORRECT:
             result.should_fallback_web = True
@@ -275,17 +282,22 @@ INCORRECT means the context is irrelevant to the query."""
         # Build context string
         context_parts = []
         for i, chunk in enumerate(chunks[:5]):  # Limit to top 5
-            text = chunk.snippet if hasattr(chunk, 'snippet') else str(chunk)
-            context_parts.append(f"[{i+1}] {text[:500]}")
+            text = chunk.snippet if hasattr(chunk, "snippet") else str(chunk)
+            context_parts.append(f"[{i + 1}] {text[:500]}")
         context = "\n\n".join(context_parts)
 
         prompt = self.LLM_EVALUATION_PROMPT.format(query=query, context=context)
 
         try:
-            response = await provider.chat([
-                {"role": "system", "content": "You are a retrieval quality evaluator."},
-                {"role": "user", "content": prompt},
-            ])
+            response = await provider.chat(
+                [
+                    {
+                        "role": "system",
+                        "content": "You are a retrieval quality evaluator.",
+                    },
+                    {"role": "user", "content": prompt},
+                ]
+            )
             return self._parse_llm_response(response, query, chunks)
         except Exception:
             # Fallback to heuristic
@@ -299,32 +311,38 @@ INCORRECT means the context is irrelevant to the query."""
     ) -> EvaluationResult:
         """Parse LLM evaluation response."""
         # Extract verdict
-        verdict_match = re.search(r'VERDICT:\s*(CORRECT|AMBIGUOUS|INCORRECT)', response, re.IGNORECASE)
+        verdict_match = re.search(
+            r"VERDICT:\s*(CORRECT|AMBIGUOUS|INCORRECT)", response, re.IGNORECASE
+        )
         verdict_str = verdict_match.group(1).upper() if verdict_match else "AMBIGUOUS"
         verdict = RetrievalVerdict(verdict_str.lower())
 
         # Extract confidence
-        confidence_match = re.search(r'CONFIDENCE:\s*([\d.]+)', response)
+        confidence_match = re.search(r"CONFIDENCE:\s*([\d.]+)", response)
         confidence = float(confidence_match.group(1)) if confidence_match else 0.5
         confidence = max(0.0, min(1.0, confidence))
 
         # Extract reasoning
-        reasoning_match = re.search(r'REASONING:\s*(.+?)(?=\n|$)', response)
-        reasoning = reasoning_match.group(1).strip() if reasoning_match else "LLM evaluation"
+        reasoning_match = re.search(r"REASONING:\s*(.+?)(?=\n|$)", response)
+        reasoning = (
+            reasoning_match.group(1).strip() if reasoning_match else "LLM evaluation"
+        )
 
         # Extract relevant parts as knowledge strips
-        strips_match = re.search(r'RELEVANT_PARTS:\s*(.+?)(?=SUGGESTED_QUERY|$)', response, re.DOTALL)
+        strips_match = re.search(
+            r"RELEVANT_PARTS:\s*(.+?)(?=SUGGESTED_QUERY|$)", response, re.DOTALL
+        )
         strips_text = strips_match.group(1).strip() if strips_match else ""
         knowledge_strips = []
         if strips_text.lower() != "none":
             # Split by common delimiters
-            for strip in re.split(r'[\n•\-\d\.]+', strips_text):
+            for strip in re.split(r"[\n•\-\d\.]+", strips_text):
                 strip = strip.strip()
                 if len(strip) > 20:
                     knowledge_strips.append(strip)
 
         # Extract suggested query
-        suggested_match = re.search(r'SUGGESTED_QUERY:\s*(.+?)(?=\n|$)', response)
+        suggested_match = re.search(r"SUGGESTED_QUERY:\s*(.+?)(?=\n|$)", response)
         suggested_query = None
         if suggested_match:
             suggested = suggested_match.group(1).strip()
@@ -361,15 +379,15 @@ INCORRECT means the context is irrelevant to the query."""
         This is the "knowledge refinement" step from CRAG that filters
         out irrelevant parts of partially-relevant chunks.
         """
-        query_terms = set(re.findall(r'\b[a-z]{3,}\b', query.lower()))
+        query_terms = set(re.findall(r"\b[a-z]{3,}\b", query.lower()))
         strips: list[KnowledgeStrip] = []
 
         for chunk in chunks:
-            chunk_id = getattr(chunk, 'id', str(id(chunk)))
-            text = chunk.snippet if hasattr(chunk, 'snippet') else str(chunk)
+            chunk_id = getattr(chunk, "id", str(id(chunk)))
+            text = chunk.snippet if hasattr(chunk, "snippet") else str(chunk)
 
             # Split into sentences
-            sentences = re.split(r'(?<=[.!?])\s+', text)
+            sentences = re.split(r"(?<=[.!?])\s+", text)
 
             for sentence in sentences:
                 sentence = sentence.strip()
@@ -377,7 +395,7 @@ INCORRECT means the context is irrelevant to the query."""
                     continue
 
                 # Score sentence
-                sent_terms = set(re.findall(r'\b[a-z]{3,}\b', sentence.lower()))
+                sent_terms = set(re.findall(r"\b[a-z]{3,}\b", sentence.lower()))
                 if not query_terms:
                     continue
 
@@ -386,11 +404,13 @@ INCORRECT means the context is irrelevant to the query."""
                 score = min(1.0, overlap + relevance_boost)
 
                 if score >= 0.3:  # Minimum relevance threshold
-                    strips.append(KnowledgeStrip(
-                        text=sentence,
-                        chunk_id=chunk_id,
-                        relevance_score=score,
-                    ))
+                    strips.append(
+                        KnowledgeStrip(
+                            text=sentence,
+                            chunk_id=chunk_id,
+                            relevance_score=score,
+                        )
+                    )
 
         # Sort by relevance and deduplicate
         strips.sort(key=lambda s: s.relevance_score, reverse=True)
@@ -414,21 +434,58 @@ INCORRECT means the context is irrelevant to the query."""
         slots.extend(quoted)
 
         ignore_words = {
-            "what", "who", "when", "where", "why", "which", "how",
-            "is", "are", "was", "were", "do", "does", "did", "can",
-            "could", "would", "should", "the", "a", "an", "in", "on",
-            "at", "by", "for", "with", "about", "to", "from", "of",
-            "and", "or", "not", "it", "this", "that", "these", "those"
+            "what",
+            "who",
+            "when",
+            "where",
+            "why",
+            "which",
+            "how",
+            "is",
+            "are",
+            "was",
+            "were",
+            "do",
+            "does",
+            "did",
+            "can",
+            "could",
+            "would",
+            "should",
+            "the",
+            "a",
+            "an",
+            "in",
+            "on",
+            "at",
+            "by",
+            "for",
+            "with",
+            "about",
+            "to",
+            "from",
+            "of",
+            "and",
+            "or",
+            "not",
+            "it",
+            "this",
+            "that",
+            "these",
+            "those",
         }
 
         # Extract capitalized terms (entities)
-        entities = re.findall(r'\b[A-Z][a-zA-Z0-9]*(?:\s+[A-Z][a-zA-Z0-9]*)*\b', query)
+        entities = re.findall(r"\b[A-Z][a-zA-Z0-9]*(?:\s+[A-Z][a-zA-Z0-9]*)*\b", query)
         for entity in entities:
             if entity.lower() not in ignore_words:
                 slots.append(entity)
 
         # Extract key question words and their objects
-        wh_matches = re.findall(r'\b(what|who|when|where|which|how)\s+(?:is|are|was|were|does|did)?\s*(\w+)', query.lower())
+        wh_matches = re.findall(
+            r"\b(what|who|when|where|which|how)\s+(?:is|are|was|were|does|did)?\s*(\w+)",
+            query.lower(),
+        )
         for _, obj in wh_matches:
             if len(obj) > 3 and obj.lower() not in ignore_words:
                 slots.append(obj)
@@ -443,10 +500,14 @@ INCORRECT means the context is irrelevant to the query."""
 
         return unique_slots
 
-    def _find_covered_slots(self, slots: list[str], chunks: list[EvidenceChunk]) -> list[str]:
+    def _find_covered_slots(
+        self, slots: list[str], chunks: list[EvidenceChunk]
+    ) -> list[str]:
         """Find which slots are covered by retrieved chunks."""
         covered = []
-        chunk_text = " ".join(c.snippet.lower() for c in chunks if hasattr(c, 'snippet'))
+        chunk_text = " ".join(
+            c.snippet.lower() for c in chunks if hasattr(c, "snippet")
+        )
         for slot in slots:
             if slot.lower() in chunk_text:
                 covered.append(slot)
@@ -484,7 +545,9 @@ INCORRECT means the context is irrelevant to the query."""
         # If no explicit slots, try extracting key terms from query
         if not fill_queries:
             query_terms = [w for w in query.split() if len(w) > 5]
-            chunk_text = " ".join(c.snippet.lower() for c in chunks if hasattr(c, 'snippet'))
+            chunk_text = " ".join(
+                c.snippet.lower() for c in chunks if hasattr(c, "snippet")
+            )
             missing_terms = [t for t in query_terms if t.lower() not in chunk_text]
             for term in missing_terms[:2]:
                 fill_queries.append(f"What is {term} in the context of {query[:50]}")
@@ -499,7 +562,9 @@ INCORRECT means the context is irrelevant to the query."""
     ) -> list[str]:
         """Generate follow-up clarification queries for ambiguous requests."""
         clarifications: list[str] = []
-        pronoun_pattern = re.compile(r'\b(it|they|them|this|that|these|those)\b', re.IGNORECASE)
+        pronoun_pattern = re.compile(
+            r"\b(it|they|them|this|that|these|those)\b", re.IGNORECASE
+        )
         has_pronoun = bool(pronoun_pattern.search(query))
         top_titles = []
         for chunk in chunks[:3]:
@@ -510,13 +575,19 @@ INCORRECT means the context is irrelevant to the query."""
             for title in top_titles[:max_queries]:
                 clarifications.append(f"{query} (specifically about {title})")
         if not clarifications and " vs " in query.lower():
-            parts = [p.strip() for p in re.split(r'vs\.?|versus', query, flags=re.IGNORECASE) if p.strip()]
+            parts = [
+                p.strip()
+                for p in re.split(r"vs\.?|versus", query, flags=re.IGNORECASE)
+                if p.strip()
+            ]
             if len(parts) >= 2:
                 clarifications.append(f"{parts[0]} compared to {parts[1]} in detail")
         if not clarifications:
             key_terms = re.findall(r'"([^"]+)"', query)
             if len(key_terms) >= 2:
-                clarifications.append(f"Relationship between {key_terms[0]} and {key_terms[1]} in {query}")
+                clarifications.append(
+                    f"Relationship between {key_terms[0]} and {key_terms[1]} in {query}"
+                )
         # Fallback: use chunk headings to generate targeted clarifications
         if not clarifications and top_titles:
             for title in top_titles[:max_queries]:
@@ -531,7 +602,7 @@ INCORRECT means the context is irrelevant to the query."""
         max_sentences: int = 3,
     ) -> dict[str, int]:
         """Trim chunk snippets to the most relevant sentences for the query."""
-        query_terms = set(re.findall(r'\b[a-z]{3,}\b', query.lower()))
+        query_terms = set(re.findall(r"\b[a-z]{3,}\b", query.lower()))
         trimmed_chunks = 0
         trimmed_sentences = 0
         total_sentences = 0
@@ -540,16 +611,14 @@ INCORRECT means the context is irrelevant to the query."""
             if not snippet or not query_terms:
                 continue
             sentences = [
-                s.strip()
-                for s in re.split(r'(?<=[.!?])\s+', snippet)
-                if s.strip()
+                s.strip() for s in re.split(r"(?<=[.!?])\s+", snippet) if s.strip()
             ]
             if not sentences:
                 continue
             total_sentences += len(sentences)
             scored: list[tuple[str, float]] = []
             for sentence in sentences:
-                sent_terms = set(re.findall(r'\b[a-z]{3,}\b', sentence.lower()))
+                sent_terms = set(re.findall(r"\b[a-z]{3,}\b", sentence.lower()))
                 if not sent_terms:
                     continue
                 overlap = len(query_terms & sent_terms) / len(sent_terms)
@@ -562,7 +631,7 @@ INCORRECT means the context is irrelevant to the query."""
             trimmed_chunks += 1
             trimmed_sentences += len(selected)
             labeled_sentences = [
-                f"[{chunk.id}::s{i+1}] {sentence}"
+                f"[{chunk.id}::s{i + 1}] {sentence}"
                 for i, (sentence, _) in enumerate(selected)
             ]
             chunk.snippet = " ".join(labeled_sentences)
@@ -587,16 +656,56 @@ INCORRECT means the context is irrelevant to the query."""
         if not slots:
             # Fall back to term-based coverage
             ignore_words = {
-                "what", "who", "when", "where", "why", "which", "how",
-                "is", "are", "was", "were", "do", "does", "did", "can",
-                "could", "would", "should", "the", "a", "an", "in", "on",
-                "at", "by", "for", "with", "about", "to", "from", "of",
-                "and", "or", "not", "it", "this", "that", "these", "those"
+                "what",
+                "who",
+                "when",
+                "where",
+                "why",
+                "which",
+                "how",
+                "is",
+                "are",
+                "was",
+                "were",
+                "do",
+                "does",
+                "did",
+                "can",
+                "could",
+                "would",
+                "should",
+                "the",
+                "a",
+                "an",
+                "in",
+                "on",
+                "at",
+                "by",
+                "for",
+                "with",
+                "about",
+                "to",
+                "from",
+                "of",
+                "and",
+                "or",
+                "not",
+                "it",
+                "this",
+                "that",
+                "these",
+                "those",
             }
-            query_terms = {w.lower() for w in query.split() if len(w) > 4 and w.lower() not in ignore_words}
+            query_terms = {
+                w.lower()
+                for w in query.split()
+                if len(w) > 4 and w.lower() not in ignore_words
+            }
             if not query_terms:
                 return RetrievalVerdict.CORRECT, 1.0, []
-            chunk_text = " ".join(c.snippet.lower() for c in chunks if hasattr(c, 'snippet'))
+            chunk_text = " ".join(
+                c.snippet.lower() for c in chunks if hasattr(c, "snippet")
+            )
             covered = sum(1 for t in query_terms if t in chunk_text)
             coverage = covered / max(len(query_terms), 1)
             missing = [t for t in query_terms if t not in chunk_text]

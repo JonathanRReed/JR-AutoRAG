@@ -31,9 +31,11 @@ if TYPE_CHECKING:
 # Data Models
 # ============================================================================
 
+
 @dataclass
 class GoldenTestCase:
     """A single test case with expected results."""
+
     question: str
     expected_source_ids: list[str] = field(default_factory=list)
     expected_answer_points: list[str] = field(default_factory=list)
@@ -63,6 +65,7 @@ class GoldenTestCase:
 @dataclass
 class RetrievalMetrics:
     """Retrieval quality metrics."""
+
     recall_at_k: float = 0.0
     mrr: float = 0.0  # Mean Reciprocal Rank
     ndcg: float = 0.0  # Normalized Discounted Cumulative Gain
@@ -80,6 +83,7 @@ class RetrievalMetrics:
 @dataclass
 class AnswerMetrics:
     """Answer quality metrics."""
+
     faithfulness: float = 0.0  # Grounded in sources
     completeness: float = 0.0  # Covers expected points
     refusal_accuracy: float = 0.0  # Correctly refused when no info
@@ -97,6 +101,7 @@ class AnswerMetrics:
 @dataclass
 class TestCaseResult:
     """Result of evaluating a single test case."""
+
     test_case_id: str
     question: str
     answer: str
@@ -122,6 +127,7 @@ class TestCaseResult:
 @dataclass
 class EvalRunResult:
     """Result of a complete evaluation run."""
+
     run_id: str
     golden_set_name: str
     timestamp: datetime
@@ -167,12 +173,16 @@ class EvalRunResult:
 # Golden Set Store
 # ============================================================================
 
+
 class GoldenSetStore:
     """Persistent storage for golden test sets."""
 
     def __init__(self, path: Path | str | None = None) -> None:
         if path is None:
-            path = Path(os.environ.get("JR_DATA_DIR", Path.cwd() / "data")) / "golden_sets.json"
+            path = (
+                Path(os.environ.get("JR_DATA_DIR", Path.cwd() / "data"))
+                / "golden_sets.json"
+            )
         self._path = Path(path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._sets: dict[str, list[GoldenTestCase]] = {}
@@ -183,16 +193,13 @@ class GoldenSetStore:
             try:
                 data = json.loads(self._path.read_text())
                 for name, cases in data.items():
-                    self._sets[name] = [
-                        GoldenTestCase.from_dict(c) for c in cases
-                    ]
+                    self._sets[name] = [GoldenTestCase.from_dict(c) for c in cases]
             except (json.JSONDecodeError, KeyError):
                 self._sets = {}
 
     def _save(self) -> None:
         data = {
-            name: [c.to_dict() for c in cases]
-            for name, cases in self._sets.items()
+            name: [c.to_dict() for c in cases] for name, cases in self._sets.items()
         }
         self._path.write_text(json.dumps(data, indent=2))
 
@@ -215,8 +222,7 @@ class GoldenSetStore:
     def list_sets(self) -> list[dict[str, Any]]:
         """List all golden sets with metadata."""
         return [
-            {"name": name, "count": len(cases)}
-            for name, cases in self._sets.items()
+            {"name": name, "count": len(cases)} for name, cases in self._sets.items()
         ]
 
     def delete_set(self, name: str) -> bool:
@@ -232,12 +238,16 @@ class GoldenSetStore:
 # Eval Run Store
 # ============================================================================
 
+
 class EvalRunStore:
     """Persistent storage for evaluation runs."""
 
     def __init__(self, path: Path | str | None = None) -> None:
         if path is None:
-            path = Path(os.environ.get("JR_DATA_DIR", Path.cwd() / "data")) / "eval_runs.json"
+            path = (
+                Path(os.environ.get("JR_DATA_DIR", Path.cwd() / "data"))
+                / "eval_runs.json"
+            )
         self._path = Path(path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._report_dir = self._path.parent / "eval_reports"
@@ -267,7 +277,9 @@ class EvalRunStore:
         result.report_path = str(report_path)
         result.report_sha256 = ""
         unsigned_payload = result.to_dict()
-        encoded = json.dumps(unsigned_payload, indent=2, sort_keys=True, default=str).encode("utf-8")
+        encoded = json.dumps(
+            unsigned_payload, indent=2, sort_keys=True, default=str
+        ).encode("utf-8")
         result.report_sha256 = hashlib.sha256(encoded).hexdigest()
         report_path.write_text(
             json.dumps(result.to_dict(), indent=2, sort_keys=True, default=str),
@@ -286,7 +298,9 @@ class EvalRunStore:
         if data is None:
             return None
 
-        report_path = Path(data.get("report_path") or self._report_dir / f"{run_id}.json")
+        report_path = Path(
+            data.get("report_path") or self._report_dir / f"{run_id}.json"
+        )
         try:
             resolved_report = report_path.resolve()
             resolved_report.relative_to(self._report_dir.resolve())
@@ -300,13 +314,13 @@ class EvalRunStore:
         except json.JSONDecodeError:
             return None
 
-    def list_runs(self, limit: int = 50, *, include_sensitive: bool = False) -> list[dict[str, Any]]:
+    def list_runs(
+        self, limit: int = 50, *, include_sensitive: bool = False
+    ) -> list[dict[str, Any]]:
         """List recent runs, omitting operator-only audit metadata by default."""
-        runs = sorted(
-            self._runs.values(),
-            key=lambda r: r["timestamp"],
-            reverse=True
-        )[:limit]
+        runs = sorted(self._runs.values(), key=lambda r: r["timestamp"], reverse=True)[
+            :limit
+        ]
         summaries = []
         for r in runs:
             audit = r.get("audit", {})
@@ -318,7 +332,9 @@ class EvalRunStore:
                 "answer_metrics": r["answer_metrics"],
                 "duration_ms": r.get("duration_ms", 0),
                 "report_sha256": r.get("report_sha256", ""),
-                "audit": audit if include_sensitive else self._public_audit_summary(audit),
+                "audit": audit
+                if include_sensitive
+                else self._public_audit_summary(audit),
             }
             if include_sensitive:
                 summary["report_path"] = r.get("report_path", "")
@@ -347,6 +363,7 @@ class EvalRunStore:
 # ============================================================================
 # Metrics Calculation
 # ============================================================================
+
 
 def compute_recall_at_k(
     retrieved_ids: list[str],
@@ -401,10 +418,7 @@ def compute_completeness(
         return 1.0
 
     answer_lower = answer.lower()
-    hits = sum(
-        1 for point in expected_points
-        if point.lower() in answer_lower
-    )
+    hits = sum(1 for point in expected_points if point.lower() in answer_lower)
     return hits / len(expected_points)
 
 
@@ -414,7 +428,8 @@ def compute_citation_coverage(
 ) -> float:
     """Estimate citation coverage from bracket citations in answer."""
     import re
-    citations = re.findall(r'\[(\d+)\]', answer)
+
+    citations = re.findall(r"\[(\d+)\]", answer)
     if num_sources == 0:
         return 1.0 if not citations else 0.0
     unique_citations = len({int(c) for c in citations if c.isdigit()})
@@ -448,7 +463,9 @@ def compute_refusal_accuracy(answer: str, tags: list[str]) -> float:
     return 1.0 if any(marker in answer_lower for marker in refusal_markers) else 0.0
 
 
-def _nested_metric(metrics: dict[str, Any], keys: list[str], default: float = 0.0) -> float:
+def _nested_metric(
+    metrics: dict[str, Any], keys: list[str], default: float = 0.0
+) -> float:
     value: Any = metrics
     for key in keys:
         if not isinstance(value, dict):
@@ -468,6 +485,7 @@ def _canonical_sha256(value: Any) -> str:
 # ============================================================================
 # Golden Set Evaluator
 # ============================================================================
+
 
 class GoldenSetEvaluator:
     """Runs batch evaluations against golden test sets."""
@@ -508,13 +526,13 @@ class GoldenSetEvaluator:
             case_duration = (time.perf_counter() - case_start) * 1000
 
             # Extract retrieved source IDs
-            retrieved_ids = [
-                s.get("id", "") for s in response.get("sources", [])
-            ]
+            retrieved_ids = [s.get("id", "") for s in response.get("sources", [])]
 
             # Compute retrieval metrics
             retrieval_metrics = RetrievalMetrics(
-                recall_at_k=compute_recall_at_k(retrieved_ids, case.expected_source_ids),
+                recall_at_k=compute_recall_at_k(
+                    retrieved_ids, case.expected_source_ids
+                ),
                 mrr=compute_mrr(retrieved_ids, case.expected_source_ids),
                 ndcg=compute_ndcg(retrieved_ids, case.expected_source_ids),
                 citation_coverage=compute_citation_coverage(
@@ -534,10 +552,16 @@ class GoldenSetEvaluator:
                     case.tags,
                 ),
                 # Prefer explicit top-level metrics, then production RAGAS scores.
-                faithfulness=_nested_metric(response.get("metrics", {}), ["faithfulness"])
-                or _nested_metric(response.get("metrics", {}), ["ragas", "faithfulness"]),
+                faithfulness=_nested_metric(
+                    response.get("metrics", {}), ["faithfulness"]
+                )
+                or _nested_metric(
+                    response.get("metrics", {}), ["ragas", "faithfulness"]
+                ),
                 coherence=_nested_metric(response.get("metrics", {}), ["coherence"])
-                or _nested_metric(response.get("metrics", {}), ["ragas", "overall_score"]),
+                or _nested_metric(
+                    response.get("metrics", {}), ["ragas", "overall_score"]
+                ),
             )
 
             result = TestCaseResult(
@@ -566,15 +590,24 @@ class GoldenSetEvaluator:
         # Aggregate metrics
         n = len(individual_results)
         agg_retrieval = RetrievalMetrics(
-            recall_at_k=sum(r.retrieval_metrics.recall_at_k for r in individual_results) / n,
+            recall_at_k=sum(r.retrieval_metrics.recall_at_k for r in individual_results)
+            / n,
             mrr=sum(r.retrieval_metrics.mrr for r in individual_results) / n,
             ndcg=sum(r.retrieval_metrics.ndcg for r in individual_results) / n,
-            citation_coverage=sum(r.retrieval_metrics.citation_coverage for r in individual_results) / n,
+            citation_coverage=sum(
+                r.retrieval_metrics.citation_coverage for r in individual_results
+            )
+            / n,
         )
         agg_answer = AnswerMetrics(
-            faithfulness=sum(r.answer_metrics.faithfulness for r in individual_results) / n,
-            completeness=sum(r.answer_metrics.completeness for r in individual_results) / n,
-            refusal_accuracy=sum(r.answer_metrics.refusal_accuracy for r in individual_results) / n,
+            faithfulness=sum(r.answer_metrics.faithfulness for r in individual_results)
+            / n,
+            completeness=sum(r.answer_metrics.completeness for r in individual_results)
+            / n,
+            refusal_accuracy=sum(
+                r.answer_metrics.refusal_accuracy for r in individual_results
+            )
+            / n,
             coherence=sum(r.answer_metrics.coherence for r in individual_results) / n,
         )
 
@@ -711,10 +744,22 @@ class GoldenSetEvaluator:
         regressions = []
 
         checks = [
-            ("recall_at_k", before.retrieval_metrics.recall_at_k, after.retrieval_metrics.recall_at_k),
+            (
+                "recall_at_k",
+                before.retrieval_metrics.recall_at_k,
+                after.retrieval_metrics.recall_at_k,
+            ),
             ("mrr", before.retrieval_metrics.mrr, after.retrieval_metrics.mrr),
-            ("faithfulness", before.answer_metrics.faithfulness, after.answer_metrics.faithfulness),
-            ("completeness", before.answer_metrics.completeness, after.answer_metrics.completeness),
+            (
+                "faithfulness",
+                before.answer_metrics.faithfulness,
+                after.answer_metrics.faithfulness,
+            ),
+            (
+                "completeness",
+                before.answer_metrics.completeness,
+                after.answer_metrics.completeness,
+            ),
         ]
 
         for name, before_val, after_val in checks:

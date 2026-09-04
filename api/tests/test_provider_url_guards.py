@@ -35,8 +35,12 @@ def test_public_provider_url_rejects_non_global_addresses(url: str) -> None:
     assert is_public_provider_url(url) is False
 
 
-def test_public_provider_url_rejects_dns_multicast(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_getaddrinfo(*args: object, **kwargs: object) -> list[tuple[object, object, object, object, tuple[str, int]]]:
+def test_public_provider_url_rejects_dns_multicast(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_getaddrinfo(
+        *args: object, **kwargs: object
+    ) -> list[tuple[object, object, object, object, tuple[str, int]]]:
         return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("239.255.255.250", 443))]
 
     monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
@@ -48,9 +52,13 @@ def test_public_provider_url_allows_global_address() -> None:
     assert is_public_provider_url("https://8.8.8.8") is True
 
 
-def test_custom_host_never_inherits_standard_provider_credential(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_custom_host_never_inherits_standard_provider_credential(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     vault = MagicMock()
-    vault.get.side_effect = lambda key: "openai-secret" if key == "OPENAI_API_KEY" else None
+    vault.get.side_effect = lambda key: (
+        "openai-secret" if key == "OPENAI_API_KEY" else None
+    )
     monkeypatch.setattr(providers, "get_secrets_vault", lambda: vault)
 
     resolved = resolve_provider_api_key("OpenAI", "https://attacker.example/v1")
@@ -90,7 +98,9 @@ def test_official_openai_origin_can_use_standard_environment_credential(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     vault = MagicMock()
-    vault.get.side_effect = lambda key: "openai-secret" if key == "OPENAI_API_KEY" else None
+    vault.get.side_effect = lambda key: (
+        "openai-secret" if key == "OPENAI_API_KEY" else None
+    )
     monkeypatch.setattr(providers, "get_secrets_vault", lambda: vault)
 
     resolved = resolve_provider_api_key("OpenAI", "https://api.openai.com/v1")

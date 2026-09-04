@@ -17,14 +17,16 @@ from enum import Enum
 
 class BudgetClass(str, Enum):
     """Budget tiers for retrieval."""
-    MINIMAL = "minimal"      # Fast, cheap, ~2s target
-    STANDARD = "standard"    # Balanced, ~5s target
-    PREMIUM = "premium"      # High quality, ~15s target
+
+    MINIMAL = "minimal"  # Fast, cheap, ~2s target
+    STANDARD = "standard"  # Balanced, ~5s target
+    PREMIUM = "premium"  # High quality, ~15s target
 
 
 @dataclass
 class BudgetConstraints:
     """Constraints for budget-aware planning."""
+
     max_latency_ms: float = 5000
     max_retrieval_calls: int = 5
     use_rerank: bool = True
@@ -47,6 +49,7 @@ class BudgetConstraints:
 @dataclass
 class BudgetPlan:
     """Budget-adjusted retrieval plan."""
+
     suggested_k: int
     max_iterations: int
     use_rerank: bool
@@ -85,17 +88,17 @@ class BudgetPlanner:
 
     # Estimated latencies (ms) - conservative estimates
     LATENCY_ESTIMATES = {
-        "embedding": 50,          # Query embedding
-        "dense_search": 10,       # FAISS search
-        "sparse_search": 5,       # BM25 search
-        "rrf_fusion": 2,          # RRF combination
-        "cross_encoder_per_doc": 15,   # Cross-encoder rerank per doc
-        "colbert_per_doc": 25,    # ColBERT rerank per doc
-        "graph_query": 100,       # Graph traversal
-        "raptor_expansion": 50,   # Hierarchy expansion
-        "llm_generation": 2000,   # LLM response generation
-        "conflict_detection": 20, # Conflict analysis
-        "claim_verification": 30, # Hallucination check
+        "embedding": 50,  # Query embedding
+        "dense_search": 10,  # FAISS search
+        "sparse_search": 5,  # BM25 search
+        "rrf_fusion": 2,  # RRF combination
+        "cross_encoder_per_doc": 15,  # Cross-encoder rerank per doc
+        "colbert_per_doc": 25,  # ColBERT rerank per doc
+        "graph_query": 100,  # Graph traversal
+        "raptor_expansion": 50,  # Hierarchy expansion
+        "llm_generation": 2000,  # LLM response generation
+        "conflict_detection": 20,  # Conflict analysis
+        "claim_verification": 30,  # Hallucination check
     }
 
     def __init__(self):
@@ -130,11 +133,11 @@ class BudgetPlanner:
     def _estimate_base_latency(self) -> float:
         """Estimate base latency for any query."""
         return (
-            self.LATENCY_ESTIMATES["embedding"] +
-            self.LATENCY_ESTIMATES["dense_search"] +
-            self.LATENCY_ESTIMATES["sparse_search"] +
-            self.LATENCY_ESTIMATES["rrf_fusion"] +
-            self.LATENCY_ESTIMATES["llm_generation"]
+            self.LATENCY_ESTIMATES["embedding"]
+            + self.LATENCY_ESTIMATES["dense_search"]
+            + self.LATENCY_ESTIMATES["sparse_search"]
+            + self.LATENCY_ESTIMATES["rrf_fusion"]
+            + self.LATENCY_ESTIMATES["llm_generation"]
         )
 
     def _estimate_per_doc_latency(self, use_rerank: bool, use_colbert: bool) -> float:
@@ -200,11 +203,13 @@ class BudgetPlanner:
 
         # Adjust iterations based on budget
         iteration_cost = (
-            self.LATENCY_ESTIMATES["dense_search"] +
-            self.LATENCY_ESTIMATES["sparse_search"] +
-            (per_doc_cost * suggested_k)
+            self.LATENCY_ESTIMATES["dense_search"]
+            + self.LATENCY_ESTIMATES["sparse_search"]
+            + (per_doc_cost * suggested_k)
         )
-        max_iterations = max(1, min(c.max_retrieval_calls, int(remaining_for_retrieval / iteration_cost)))
+        max_iterations = max(
+            1, min(c.max_retrieval_calls, int(remaining_for_retrieval / iteration_cost))
+        )
 
         # Scale by query complexity
         if query_complexity > 0.7:
@@ -223,10 +228,10 @@ class BudgetPlanner:
 
         # Estimate final latency
         estimated = (
-            base_latency +
-            (per_doc_cost * suggested_k * max_iterations) +
-            (self.LATENCY_ESTIMATES["graph_query"] if actual_graph else 0) +
-            (self.LATENCY_ESTIMATES["raptor_expansion"] if actual_raptor else 0)
+            base_latency
+            + (per_doc_cost * suggested_k * max_iterations)
+            + (self.LATENCY_ESTIMATES["graph_query"] if actual_graph else 0)
+            + (self.LATENCY_ESTIMATES["raptor_expansion"] if actual_raptor else 0)
         )
 
         return BudgetPlan(
@@ -261,17 +266,20 @@ class BudgetPlanner:
             score -= 0.2
 
         # Complexity indicators
-        if any(w in query.lower() for w in ['compare', 'versus', 'vs', 'difference', 'similarities']):
+        if any(
+            w in query.lower()
+            for w in ["compare", "versus", "vs", "difference", "similarities"]
+        ):
             score += 0.2
-        if any(w in query.lower() for w in ['how', 'why', 'explain', 'describe']):
+        if any(w in query.lower() for w in ["how", "why", "explain", "describe"]):
             score += 0.1
-        if re.search(r'\d+', query):  # Contains numbers
+        if re.search(r"\d+", query):  # Contains numbers
             score += 0.05
-        if query.count('?') > 1:  # Multiple questions
+        if query.count("?") > 1:  # Multiple questions
             score += 0.15
 
         # Simplicity indicators
-        if query.lower().startswith(('what is', 'define', 'who is')):
+        if query.lower().startswith(("what is", "define", "who is")):
             score -= 0.1
         if len(words) < 3:
             score -= 0.2

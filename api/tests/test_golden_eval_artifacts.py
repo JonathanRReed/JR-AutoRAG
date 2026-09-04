@@ -161,7 +161,9 @@ async def test_golden_eval_batches_case_tasks(tmp_path: Path) -> None:
 async def test_eval_run_store_lists_report_artifact_metadata(tmp_path: Path) -> None:
     golden_store = GoldenSetStore(tmp_path / "golden_sets.json")
     run_store = EvalRunStore(tmp_path / "eval_runs.json")
-    golden_store.create_set("enterprise_smoke", [GoldenTestCase(id="case-a", question="Q")])
+    golden_store.create_set(
+        "enterprise_smoke", [GoldenTestCase(id="case-a", question="Q")]
+    )
 
     evaluator = GoldenSetEvaluator(golden_store=golden_store, run_store=run_store)
     result = await evaluator.run_batch(FakeAuditOrchestrator(), "enterprise_smoke")
@@ -175,7 +177,9 @@ async def test_eval_run_store_lists_report_artifact_metadata(tmp_path: Path) -> 
 
     [sensitive_summary] = run_store.list_runs(include_sensitive=True)
     assert sensitive_summary["report_path"]
-    assert sensitive_summary["audit"]["corpus"]["fingerprint"] == "corpus-test-fingerprint"
+    assert (
+        sensitive_summary["audit"]["corpus"]["fingerprint"] == "corpus-test-fingerprint"
+    )
 
 
 def test_eval_config_redaction_catches_secret_shaped_keys() -> None:
@@ -197,16 +201,27 @@ def test_eval_config_redaction_catches_secret_shaped_keys() -> None:
 
 
 def test_refusal_accuracy_scores_refusal_sensitive_cases() -> None:
-    assert compute_refusal_accuracy("That secret is not available in the current corpus.", ["abstention"]) == 1.0
-    assert compute_refusal_accuracy("The answer is 42.", ["knowledge-extraction"]) == 0.0
-    assert compute_refusal_accuracy("Normal grounded answer.", ["client-readiness"]) == 1.0
+    assert (
+        compute_refusal_accuracy(
+            "That secret is not available in the current corpus.", ["abstention"]
+        )
+        == 1.0
+    )
+    assert (
+        compute_refusal_accuracy("The answer is 42.", ["knowledge-extraction"]) == 0.0
+    )
+    assert (
+        compute_refusal_accuracy("Normal grounded answer.", ["client-readiness"]) == 1.0
+    )
 
 
 @pytest.mark.asyncio
 async def test_eval_report_endpoint_returns_saved_artifact(tmp_path: Path) -> None:
     golden_store = GoldenSetStore(tmp_path / "golden_sets.json")
     run_store = EvalRunStore(tmp_path / "eval_runs.json")
-    golden_store.create_set("enterprise_smoke", [GoldenTestCase(id="case-a", question="Q")])
+    golden_store.create_set(
+        "enterprise_smoke", [GoldenTestCase(id="case-a", question="Q")]
+    )
     result = await GoldenSetEvaluator(
         golden_store=golden_store,
         run_store=run_store,
@@ -243,7 +258,9 @@ def test_builtin_client_readiness_golden_set_can_be_installed(tmp_path: Path) ->
     assert sets["adversarial"] == 3
 
 
-def test_builtin_client_readiness_golden_set_refreshes_stale_copy(tmp_path: Path) -> None:
+def test_builtin_client_readiness_golden_set_refreshes_stale_copy(
+    tmp_path: Path,
+) -> None:
     store = GoldenSetStore(tmp_path / "golden_sets.json")
     stale_cases = BUILTIN_DATASETS["client_readiness"][:6]
     store.create_set("client_readiness", stale_cases)
@@ -259,7 +276,9 @@ def test_builtin_client_readiness_golden_set_refreshes_stale_copy(tmp_path: Path
     assert "graph-retrieval" in tag_counts
 
 
-def test_default_eval_stores_use_jr_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_default_eval_stores_use_jr_data_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("JR_DATA_DIR", str(tmp_path))
 
     golden_store = GoldenSetStore()

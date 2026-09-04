@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 
 class EntityType(str, Enum):
     """Standard entity types for knowledge graphs."""
+
     PERSON = "person"
     ORGANIZATION = "organization"
     LOCATION = "location"
@@ -39,6 +40,7 @@ class EntityType(str, Enum):
 @dataclass
 class Entity:
     """An entity extracted from documents."""
+
     name: str
     type: EntityType
     description: str = ""
@@ -57,6 +59,7 @@ class Entity:
 @dataclass
 class Relationship:
     """A relationship between two entities."""
+
     source: str  # entity name
     target: str  # entity name
     relation: str  # e.g., "works_for", "related_to", "part_of"
@@ -68,6 +71,7 @@ class Relationship:
 @dataclass
 class Community:
     """A thematic community of related entities."""
+
     id: int
     entities: list[str]  # entity names
     summary: str = ""
@@ -142,26 +146,35 @@ STRICT FORMATTING RULES:
         # Retry loop for reliability with local models
         for attempt in range(3):
             try:
-                response = await provider.chat([
-                    {"role": "system", "content": "You are a precise knowledge graph extractor. Always respond in valid JSON. No Markdown."},
-                    {"role": "user", "content": prompt},
-                ])
+                response = await provider.chat(
+                    [
+                        {
+                            "role": "system",
+                            "content": "You are a precise knowledge graph extractor. Always respond in valid JSON. No Markdown.",
+                        },
+                        {"role": "user", "content": prompt},
+                    ]
+                )
 
                 clean_response = response.strip()
 
                 # Robust JSON extraction: Handle markdown code blocks common in local models
                 # Try to find content inside ```json ... ``` or just { ... }
-                json_block_match = re.search(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```', clean_response, re.IGNORECASE)
+                json_block_match = re.search(
+                    r"```(?:json)?\s*(\{[\s\S]*?\})\s*```",
+                    clean_response,
+                    re.IGNORECASE,
+                )
                 if json_block_match:
                     clean_response = json_block_match.group(1)
                 else:
                     # Fallback: Find first { and last }
-                    json_match = re.search(r'(\{[\s\S]*\})', clean_response)
+                    json_match = re.search(r"(\{[\s\S]*\})", clean_response)
                     if json_match:
                         clean_response = json_match.group(1)
 
                 # Simple repair: remove trailing commas before closing braces/brackets
-                clean_response = re.sub(r',\s*([}\]])', r'\1', clean_response)
+                clean_response = re.sub(r",\s*([}\]])", r"\1", clean_response)
 
                 try:
                     data = json.loads(clean_response)
@@ -173,7 +186,9 @@ STRICT FORMATTING RULES:
                     except Exception:
                         if attempt < 2:
                             continue  # Retry on parse error
-                        raise ValueError(f"Failed to parse JSON: {clean_response[:100]}...")
+                        raise ValueError(
+                            f"Failed to parse JSON: {clean_response[:100]}..."
+                        )
 
                 entities = []
                 for e_data in data.get("entities", []):
@@ -187,12 +202,14 @@ STRICT FORMATTING RULES:
                     except ValueError:
                         entity_type = EntityType.OTHER
 
-                    entities.append(Entity(
-                        name=name,
-                        type=entity_type,
-                        description=e_data.get("description", ""),
-                        mentions=[chunk_id],
-                    ))
+                    entities.append(
+                        Entity(
+                            name=name,
+                            type=entity_type,
+                            description=e_data.get("description", ""),
+                            mentions=[chunk_id],
+                        )
+                    )
 
                 relationships = []
                 for r_data in data.get("relationships", []):
@@ -202,13 +219,15 @@ STRICT FORMATTING RULES:
                     if not (source and target and relation):
                         continue
 
-                    relationships.append(Relationship(
-                        source=source,
-                        target=target,
-                        relation=relation,
-                        chunk_ids=[chunk_id],
-                        description=r_data.get("description", ""),
-                    ))
+                    relationships.append(
+                        Relationship(
+                            source=source,
+                            target=target,
+                            relation=relation,
+                            chunk_ids=[chunk_id],
+                            description=r_data.get("description", ""),
+                        )
+                    )
 
                 return entities, relationships
 
@@ -219,9 +238,13 @@ STRICT FORMATTING RULES:
                     # Provide more descriptive error details for debugging
                     error_msg = str(e) or "Empty error message"
                     if "Provider request failed" in error_msg:
-                        print(f"GraphRAG Error: LLM Provider failed to process chunk {chunk_id} after 3 retries. Error: {error_msg}")
+                        print(
+                            f"GraphRAG Error: LLM Provider failed to process chunk {chunk_id} after 3 retries. Error: {error_msg}"
+                        )
                     else:
-                        print(f"GraphRAG Warning: Failed to parse extraction JSON for chunk {chunk_id}: {error_msg}")
+                        print(
+                            f"GraphRAG Warning: Failed to parse extraction JSON for chunk {chunk_id}: {error_msg}"
+                        )
 
         return [], []
 
@@ -232,7 +255,9 @@ STRICT FORMATTING RULES:
         provider: LLMProvider,
     ) -> list[Entity]:
         """Deprecated: Use extract_knowledge_from_chunk for better performance."""
-        entities, _ = await self.extract_knowledge_from_chunk(chunk_text, chunk_id, provider)
+        entities, _ = await self.extract_knowledge_from_chunk(
+            chunk_text, chunk_id, provider
+        )
         return entities
 
     async def extract_relationships_from_chunk(
@@ -270,11 +295,11 @@ STRICT FORMATTING RULES:
 
         async def process_chunk(chunk: EvidenceChunk) -> None:
             nonlocal processed_chunks
-            chunk_id = getattr(chunk, 'id', str(id(chunk)))
-            chunk_doc_id = getattr(chunk, 'doc_id', None)
+            chunk_id = getattr(chunk, "id", str(id(chunk)))
+            chunk_doc_id = getattr(chunk, "doc_id", None)
             if chunk_doc_id is not None:
                 self.chunk_documents[chunk_id] = chunk_doc_id
-            chunk_text = getattr(chunk, 'snippet', '') or getattr(chunk, 'text', '')
+            chunk_text = getattr(chunk, "snippet", "") or getattr(chunk, "text", "")
 
             if not chunk_text:
                 processed_chunks += 1
@@ -282,7 +307,10 @@ STRICT FORMATTING RULES:
 
             async with semaphore:
                 # Optimized: Extract both in one call
-                chunk_entities, chunk_relationships = await self.extract_knowledge_from_chunk(
+                (
+                    chunk_entities,
+                    chunk_relationships,
+                ) = await self.extract_knowledge_from_chunk(
                     chunk_text, chunk_id, provider
                 )
 
@@ -338,7 +366,7 @@ STRICT FORMATTING RULES:
                 if source_norm in self.entities and target_norm in self.entities:
                     if self._graph.has_edge(source_norm, target_norm):
                         # Increase weight for existing edge
-                        self._graph[source_norm][target_norm]['weight'] += rel.weight
+                        self._graph[source_norm][target_norm]["weight"] += rel.weight
                     else:
                         self._graph.add_edge(
                             source_norm,
@@ -365,6 +393,7 @@ STRICT FORMATTING RULES:
             # Try Louvain algorithm first
             try:
                 from networkx.algorithms.community import louvain_communities
+
                 communities_set = louvain_communities(self._graph, seed=42)
             except (ImportError, AttributeError):
                 # Fall back to connected components
@@ -389,6 +418,7 @@ STRICT FORMATTING RULES:
     ) -> dict[int, str]:
         """Generate summaries for each community."""
         import asyncio
+
         summaries = {}
 
         total_communities = len(self.communities)
@@ -404,7 +434,11 @@ STRICT FORMATTING RULES:
                 summaries[community.id] = summary
                 processed_communities += 1
                 if on_progress:
-                    on_progress("summarizing_communities", processed_communities, total_communities)
+                    on_progress(
+                        "summarizing_communities",
+                        processed_communities,
+                        total_communities,
+                    )
                 return
             if len(community.entities) < 2:
                 summary = f"Single entity: {community.entities[0]}"
@@ -412,7 +446,11 @@ STRICT FORMATTING RULES:
                 summaries[community.id] = summary
                 processed_communities += 1
                 if on_progress:
-                    on_progress("summarizing_communities", processed_communities, total_communities)
+                    on_progress(
+                        "summarizing_communities",
+                        processed_communities,
+                        total_communities,
+                    )
                 return
 
             # Build entity descriptions
@@ -420,7 +458,9 @@ STRICT FORMATTING RULES:
             for name in community.entities[:10]:  # Limit to 10 entities
                 if name in self.entities:
                     entity = self.entities[name]
-                    entity_info.append(f"- {entity.name} ({entity.type.value}): {entity.description}")
+                    entity_info.append(
+                        f"- {entity.name} ({entity.type.value}): {entity.description}"
+                    )
 
             # Get relationships within community
             community_rels = []
@@ -437,25 +477,34 @@ Entities:
 {chr(10).join(entity_info)}
 
 Relationships:
-{chr(10).join(community_rels) if community_rels else '(No explicit relationships)'}
+{chr(10).join(community_rels) if community_rels else "(No explicit relationships)"}
 
 Write a 1-2 sentence summary describing the main theme or topic of this cluster."""
 
             try:
                 async with semaphore:
-                    response = await provider.chat([
-                        {"role": "system", "content": "You are a knowledge graph summarizer."},
-                        {"role": "user", "content": prompt},
-                    ])
+                    response = await provider.chat(
+                        [
+                            {
+                                "role": "system",
+                                "content": "You are a knowledge graph summarizer.",
+                            },
+                            {"role": "user", "content": prompt},
+                        ]
+                    )
                 community.summary = response.strip()[:300]
                 summaries[community.id] = community.summary
             except Exception:
-                community.summary = f"Cluster of {len(community.entities)} related entities"
+                community.summary = (
+                    f"Cluster of {len(community.entities)} related entities"
+                )
                 summaries[community.id] = community.summary
 
             processed_communities += 1
             if on_progress:
-                on_progress("summarizing_communities", processed_communities, total_communities)
+                on_progress(
+                    "summarizing_communities", processed_communities, total_communities
+                )
 
         if on_progress:
             on_progress("summarizing_communities", 0, total_communities)
@@ -465,13 +514,15 @@ Write a 1-2 sentence summary describing the main theme or topic of this cluster.
 
     def query_entities(self, query: str, top_k: int = 5) -> list[Entity]:
         """Find entities relevant to a query via simple matching."""
-        query_terms = set(re.findall(r'\b[a-z]{3,}\b', query.lower()))
+        query_terms = set(re.findall(r"\b[a-z]{3,}\b", query.lower()))
 
         scored_entities = []
         for name, entity in self.entities.items():
             # Score by term overlap with name and description
-            entity_terms = set(re.findall(r'\b[a-z]{3,}\b', name.lower()))
-            entity_terms.update(re.findall(r'\b[a-z]{3,}\b', entity.description.lower()))
+            entity_terms = set(re.findall(r"\b[a-z]{3,}\b", name.lower()))
+            entity_terms.update(
+                re.findall(r"\b[a-z]{3,}\b", entity.description.lower())
+            )
 
             overlap = len(query_terms & entity_terms)
             if overlap > 0:
@@ -496,7 +547,6 @@ Write a 1-2 sentence summary describing the main theme or topic of this cluster.
             return []
 
         try:
-
             # Find starting entities
             start_entities = self.query_entities(query, top_k=3)
             if not start_entities:
@@ -525,7 +575,7 @@ Write a 1-2 sentence summary describing the main theme or topic of this cluster.
                         if neighbor not in visited_entities:
                             queue.append((neighbor, depth + 1))
 
-            return list(visited_chunks)[:top_k * hops]
+            return list(visited_chunks)[: top_k * hops]
         except Exception:
             return []
 
@@ -555,21 +605,25 @@ Write a 1-2 sentence summary describing the main theme or topic of this cluster.
             tgt_norm = self._normalize_name(rel.target)
 
             if src_norm == norm_name or tgt_norm == norm_name:
-                context["relationships"].append({
-                    "source": rel.source,
-                    "relation": rel.relation,
-                    "target": rel.target,
-                    "description": rel.description,
-                })
+                context["relationships"].append(
+                    {
+                        "source": rel.source,
+                        "relation": rel.relation,
+                        "target": rel.target,
+                        "description": rel.description,
+                    }
+                )
 
         # Get neighbor entities from graph
         if self._graph and norm_name in self._graph:
             for neighbor in self._graph.neighbors(norm_name):
                 if neighbor in self.entities:
-                    context["neighbors"].append({
-                        "name": self.entities[neighbor].name,
-                        "type": self.entities[neighbor].type.value,
-                    })
+                    context["neighbors"].append(
+                        {
+                            "name": self.entities[neighbor].name,
+                            "type": self.entities[neighbor].type.value,
+                        }
+                    )
 
         return context
 

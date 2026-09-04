@@ -83,9 +83,7 @@ class ContextMetrics:
                 f"Some evidence was truncated."
             )
         else:
-            return (
-                f"Context near capacity: {self.utilization_percent:.0f}% utilized"
-            )
+            return f"Context near capacity: {self.utilization_percent:.0f}% utilized"
 
     def to_dict(self) -> dict:
         """Convert to API response format."""
@@ -172,7 +170,7 @@ def compute_context_metrics(
     if token_counter is None:
         # Default: estimate tokens as words * 1.3
         def token_counter(c):
-            return int(len(getattr(c, 'snippet', str(c)).split()) * 1.3)
+            return int(len(getattr(c, "snippet", str(c)).split()) * 1.3)
 
     total_tokens = sum(token_counter(c) for c in chunks)
 
@@ -207,12 +205,12 @@ def compute_grounding_info(
     # Count unique documents
     doc_ids = set()
     for c in chunks:
-        doc_id = getattr(c, 'doc_id', None) or getattr(c, 'title', str(id(c)))
+        doc_id = getattr(c, "doc_id", None) or getattr(c, "title", str(id(c)))
         doc_ids.add(doc_id)
 
     # Count citations in answer
     if citations_in_answer == 0:
-        citation_matches = re.findall(r'\[(\d+)\]', answer)
+        citation_matches = re.findall(r"\[(\d+)\]", answer)
         citations_in_answer = len(set(citation_matches))
 
     # Determine if grounded

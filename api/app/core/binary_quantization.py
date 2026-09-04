@@ -84,7 +84,11 @@ def float32_to_binary(
     config = config or BQConfig()
 
     # Convert to numpy if needed
-    arr = np.array(vector, dtype=np.float32) if isinstance(vector, list) else vector.astype(np.float32)
+    arr = (
+        np.array(vector, dtype=np.float32)
+        if isinstance(vector, list)
+        else vector.astype(np.float32)
+    )
 
     dim = len(arr)
     if not validate_dimension(dim):
@@ -156,7 +160,7 @@ def _unpack_bits(packed: bytes, dim: int) -> np.ndarray:
     arr = np.frombuffer(packed, dtype=np.uint8)
 
     # Unpack each byte to 8 bits (MSB first)
-    bits = np.unpackbits(arr, bitorder='big')
+    bits = np.unpackbits(arr, bitorder="big")
 
     return bits[:dim]
 
@@ -197,7 +201,11 @@ def batch_float32_to_binary(
     """
     config = config or BQConfig()
 
-    arr = np.array(vectors, dtype=np.float32) if isinstance(vectors, list) else vectors.astype(np.float32)
+    arr = (
+        np.array(vectors, dtype=np.float32)
+        if isinstance(vectors, list)
+        else vectors.astype(np.float32)
+    )
 
     if arr.ndim == 1:
         arr = arr.reshape(1, -1)
@@ -258,7 +266,9 @@ def estimate_storage_savings(
         "float32_bytes": float32_bytes,
         "binary_bytes": binary_bytes,
         "savings_ratio": float32_bytes / binary_bytes if binary_bytes > 0 else 0,
-        "savings_percent": (1 - binary_bytes / float32_bytes) * 100 if float32_bytes > 0 else 0,
+        "savings_percent": (1 - binary_bytes / float32_bytes) * 100
+        if float32_bytes > 0
+        else 0,
     }
 
 

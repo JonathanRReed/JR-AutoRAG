@@ -22,8 +22,7 @@ def traces(container: ServiceContainer = Depends(get_container)):
             answer=trace.answer,
             metrics=trace.metrics,
             steps=[
-                TraceStepOut(**pipeline_step_to_public_dict(s))
-                for s in trace.steps
+                TraceStepOut(**pipeline_step_to_public_dict(s)) for s in trace.steps
             ],
         )
         for trace in traces
@@ -46,6 +45,7 @@ def cache_clear():
 # ============================================================================
 # Observability Dashboard Endpoints (Tier 2)
 # ============================================================================
+
 
 @router.get("/metrics")
 def get_metrics(container: ServiceContainer = Depends(get_container)):

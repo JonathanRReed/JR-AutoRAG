@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 @dataclass
 class CompressedContext:
     """Result of context compression."""
+
     text: str
     chunks_used: int
     chunks_total: int
@@ -30,6 +31,7 @@ class CompressedContext:
 @dataclass
 class CitedPassage:
     """A passage with its citation information."""
+
     text: str
     chunk_id: str
     chunk_title: str
@@ -64,13 +66,13 @@ class ContextCompressor:
 
     def _split_sentences(self, text: str) -> list[str]:
         """Split text into sentences."""
-        pattern = r'(?<=[.!?])\s+'
+        pattern = r"(?<=[.!?])\s+"
         sentences = re.split(pattern, text)
         return [s.strip() for s in sentences if s.strip()]
 
     def _score_sentence(self, sentence: str, query_terms: set[str]) -> float:
         """Score a sentence by relevance to query terms."""
-        words = set(re.findall(r'\b[a-z]+\b', sentence.lower()))
+        words = set(re.findall(r"\b[a-z]+\b", sentence.lower()))
         if not words:
             return 0.0
 
@@ -98,22 +100,26 @@ class ContextCompressor:
                 remaining = max_chars - current_chars
                 if remaining > 100:  # Only add if meaningful
                     truncated = chunk.snippet[:remaining] + "..."
-                    texts.append(f"[{i+1}] {truncated}")
-                    citations.append({
-                        "id": chunk.id,
-                        "title": chunk.title,
-                        "snippet_preview": chunk.snippet[:100],
-                        "citation_number": i + 1,
-                    })
+                    texts.append(f"[{i + 1}] {truncated}")
+                    citations.append(
+                        {
+                            "id": chunk.id,
+                            "title": chunk.title,
+                            "snippet_preview": chunk.snippet[:100],
+                            "citation_number": i + 1,
+                        }
+                    )
                 break
 
-            texts.append(f"[{i+1}] {chunk.snippet}")
-            citations.append({
-                "id": chunk.id,
-                "title": chunk.title,
-                "snippet_preview": chunk.snippet[:100],
-                "citation_number": i + 1,
-            })
+            texts.append(f"[{i + 1}] {chunk.snippet}")
+            citations.append(
+                {
+                    "id": chunk.id,
+                    "title": chunk.title,
+                    "snippet_preview": chunk.snippet[:100],
+                    "citation_number": i + 1,
+                }
+            )
             current_chars += chunk_chars
 
         return CompressedContext(
@@ -134,7 +140,7 @@ class ContextCompressor:
         max_tokens = max_tokens or self.max_tokens
 
         # Extract query terms for scoring
-        query_terms = set(re.findall(r'\b[a-z]{3,}\b', query.lower()))
+        query_terms = set(re.findall(r"\b[a-z]{3,}\b", query.lower()))
 
         # Score and collect all sentences with their sources
         scored_passages: list[CitedPassage] = []
@@ -146,12 +152,14 @@ class ContextCompressor:
                 # Boost sentences from higher-scored chunks
                 adjusted_score = score + (chunk.score * 0.3)
 
-                scored_passages.append(CitedPassage(
-                    text=sentence,
-                    chunk_id=chunk.id,
-                    chunk_title=chunk.title,
-                    relevance_score=adjusted_score,
-                ))
+                scored_passages.append(
+                    CitedPassage(
+                        text=sentence,
+                        chunk_id=chunk.id,
+                        chunk_title=chunk.title,
+                        relevance_score=adjusted_score,
+                    )
+                )
 
         # Sort by relevance
         scored_passages.sort(key=lambda p: p.relevance_score, reverse=True)
@@ -185,18 +193,19 @@ class ContextCompressor:
         for i, (chunk_id, sentences) in enumerate(by_source.items(), 1):
             # Find original chunk info
             chunk_title = next(
-                (p.chunk_title for p in selected if p.chunk_id == chunk_id),
-                "Unknown"
+                (p.chunk_title for p in selected if p.chunk_id == chunk_id), "Unknown"
             )
 
             combined = " ".join(sentences)
             texts.append(f"[{i}] {combined}")
-            citations.append({
-                "id": chunk_id,
-                "title": chunk_title,
-                "snippet_preview": combined[:100],
-                "citation_number": i,
-            })
+            citations.append(
+                {
+                    "id": chunk_id,
+                    "title": chunk_title,
+                    "snippet_preview": combined[:100],
+                    "citation_number": i,
+                }
+            )
 
         return CompressedContext(
             text="\n\n".join(texts),
@@ -258,7 +267,11 @@ class ContextCompressor:
             if rich_format:
                 # Rich format with document title and chunk ID for precise locators
                 header = f"[{i}] Source: {chunk.title} | ChunkID: {chunk.id}"
-                body = f'"{chunk.snippet[:200]}..."' if len(chunk.snippet) > 200 else f'"{chunk.snippet}"'
+                body = (
+                    f'"{chunk.snippet[:200]}..."'
+                    if len(chunk.snippet) > 200
+                    else f'"{chunk.snippet}"'
+                )
                 texts.append(f"{header}\n{body}")
             elif include_numbers:
                 texts.append(f"[{i}] {chunk.snippet}")
@@ -266,18 +279,26 @@ class ContextCompressor:
                 texts.append(chunk.snippet)
 
             # Extract a key quote (first sentence or first 100 chars)
-            key_quote = chunk.snippet.split('.')[0][:100] if '.' in chunk.snippet else chunk.snippet[:100]
+            key_quote = (
+                chunk.snippet.split(".")[0][:100]
+                if "." in chunk.snippet
+                else chunk.snippet[:100]
+            )
 
-            citations.append({
-                "id": chunk.id,
-                "title": chunk.title,
-                "snippet_preview": chunk.snippet[:150] + "..." if len(chunk.snippet) > 150 else chunk.snippet,
-                "key_quote": key_quote,
-                "citation_number": i,
-                "score": chunk.score,
-                "document_title": chunk.title,  # Alias for clarity
-                "chunk_id": chunk.id,  # Alias for clarity
-            })
+            citations.append(
+                {
+                    "id": chunk.id,
+                    "title": chunk.title,
+                    "snippet_preview": chunk.snippet[:150] + "..."
+                    if len(chunk.snippet) > 150
+                    else chunk.snippet,
+                    "key_quote": key_quote,
+                    "citation_number": i,
+                    "score": chunk.score,
+                    "document_title": chunk.title,  # Alias for clarity
+                    "chunk_id": chunk.id,  # Alias for clarity
+                }
+            )
 
         return "\n\n".join(texts), citations
 

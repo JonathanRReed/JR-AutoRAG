@@ -84,7 +84,9 @@ class FLAREGenerator:
         self.config = config or FLAREConfig()
         threshold = self.config.confidence_threshold
         self._monitor = monitor or UncertaintyMonitor(threshold=threshold)
-        self._uncertainty_re = [re.compile(p, re.IGNORECASE) for p in UNCERTAINTY_PATTERNS]
+        self._uncertainty_re = [
+            re.compile(p, re.IGNORECASE) for p in UNCERTAINTY_PATTERNS
+        ]
         # Cancellation flag set by stop() so in-flight generation loops can
         # exit promptly instead of running to completion after a cancel request.
         self._cancelled: asyncio.Event = asyncio.Event()
@@ -100,7 +102,7 @@ class FLAREGenerator:
 
     def _split_sentences(self, text: str) -> list[str]:
         """Split text into sentences."""
-        sentences = re.split(r'(?<=[.!?])\s+', text)
+        sentences = re.split(r"(?<=[.!?])\s+", text)
         return [s.strip() for s in sentences if s.strip()]
 
     def _extract_retrieval_query(self, sentence: str, original_query: str) -> str:
@@ -112,10 +114,10 @@ class FLAREGenerator:
         # Remove uncertainty markers
         clean = sentence
         for p in self._uncertainty_re:
-            clean = p.sub('', clean)
+            clean = p.sub("", clean)
 
         # Extract key terms (nouns, verbs likely)
-        key_terms = re.findall(r'\b[A-Za-z]{4,}\b', clean)
+        key_terms = re.findall(r"\b[A-Za-z]{4,}\b", clean)
 
         if key_terms:
             # Combine with original query
@@ -155,7 +157,9 @@ class FLAREGenerator:
         self._cancelled.clear()
 
         # System prompt for RAG generation
-        system_prompt = system_prompt or """You are a FLARE-Enhanced RAG Assistant with active retrieval capabilities.
+        system_prompt = (
+            system_prompt
+            or """You are a FLARE-Enhanced RAG Assistant with active retrieval capabilities.
 
 ## YOUR ROLE
 You generate answers with confidence awareness. When you're uncertain, you signal it clearly so the system can retrieve more context.
@@ -174,6 +178,7 @@ When you're not confident about something:
 
 ## OUTPUT
 Generate accurate, well-cited answers. Signal uncertainty clearly so the system can help."""
+        )
 
         answer_instruction = answer_instruction or (
             "Answer using ONLY the provided context. Include [1], [2] citations for every fact. "
@@ -223,11 +228,10 @@ Generate accurate, well-cited answers. Signal uncertainty clearly so the system 
 
             # Check if retrieval needed
             if (
-                self._monitor.should_trigger(signal) and
-                retrieval_count < self.config.max_retrievals and
-                len(sentence) >= self.config.min_sentence_length
+                self._monitor.should_trigger(signal)
+                and retrieval_count < self.config.max_retrievals
+                and len(sentence) >= self.config.min_sentence_length
             ):
-
                 # Generate retrieval query from uncertain sentence
                 retrieval_query = self._extract_retrieval_query(sentence, query)
 
@@ -246,21 +250,26 @@ Generate accurate, well-cited answers. Signal uncertainty clearly so the system 
                         retrieval_count += 1
 
                         # Add new context
-                        new_context = "\n\n".join([
-                            f"[Additional Context {j+1}]: {r.chunk_text[:500]}"
-                            for j, r in enumerate(results)
-                        ])
+                        new_context = "\n\n".join(
+                            [
+                                f"[Additional Context {j + 1}]: {r.chunk_text[:500]}"
+                                for j, r in enumerate(results)
+                            ]
+                        )
 
                         # Regenerate this sentence with enhanced context
                         regen_messages = [
                             {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": (
-                                f"Context:\n{current_context}\n\n"
-                                f"{new_context}\n\n"
-                                f"Question: {query}\n\n"
-                                f"Continue the answer after: {' '.join(final_answer_parts)}\n"
-                                f"{continue_instruction}"
-                            )},
+                            {
+                                "role": "user",
+                                "content": (
+                                    f"Context:\n{current_context}\n\n"
+                                    f"{new_context}\n\n"
+                                    f"Question: {query}\n\n"
+                                    f"Continue the answer after: {' '.join(final_answer_parts)}\n"
+                                    f"{continue_instruction}"
+                                ),
+                            },
                         ]
 
                         try:

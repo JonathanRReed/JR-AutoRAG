@@ -83,15 +83,17 @@ class ParserResult:
 class DocumentParserProvider(Protocol):
     name: str
 
-    def available(self) -> bool:
-        ...
+    def available(self) -> bool: ...
 
-    def parse(self, content: bytes, metadata: dict[str, str] | None = None) -> ParserResult:
-        ...
+    def parse(
+        self, content: bytes, metadata: dict[str, str] | None = None
+    ) -> ParserResult: ...
 
 
 def _infer_suffix(metadata: dict[str, str] | None) -> str:
-    filename = (metadata or {}).get("filename") or (metadata or {}).get("original_filename")
+    filename = (metadata or {}).get("filename") or (metadata or {}).get(
+        "original_filename"
+    )
     if filename:
         suffix = Path(filename).suffix.lower()
         if suffix:
@@ -127,7 +129,9 @@ def _blocks_from_markdown(markdown: str) -> list[ParsedBlock]:
                 )
             )
             continue
-        block_type: ParsedBlockType = "table" if "|" in text and re.search(r"\n\s*\|?[-: ]+\|", text) else "text"
+        block_type: ParsedBlockType = (
+            "table" if "|" in text and re.search(r"\n\s*\|?[-: ]+\|", text) else "text"
+        )
         blocks.append(
             ParsedBlock(
                 type=block_type,
@@ -139,7 +143,9 @@ def _blocks_from_markdown(markdown: str) -> list[ParsedBlock]:
     return blocks
 
 
-def _pages_from_blocks(blocks: list[ParsedBlock], fallback_text: str) -> list[ParsedPage]:
+def _pages_from_blocks(
+    blocks: list[ParsedBlock], fallback_text: str
+) -> list[ParsedPage]:
     by_page: dict[int, list[ParsedBlock]] = {}
     for block in blocks:
         by_page.setdefault(block.page or 1, []).append(block)
@@ -149,8 +155,14 @@ def _pages_from_blocks(blocks: list[ParsedBlock], fallback_text: str) -> list[Pa
     for page_number in sorted(by_page):
         page_blocks = by_page[page_number]
         text = "\n\n".join(block.text for block in page_blocks if block.text)
-        confidence = sum(block.confidence for block in page_blocks) / max(len(page_blocks), 1)
-        pages.append(ParsedPage(number=page_number, text=text, blocks=page_blocks, confidence=confidence))
+        confidence = sum(block.confidence for block in page_blocks) / max(
+            len(page_blocks), 1
+        )
+        pages.append(
+            ParsedPage(
+                number=page_number, text=text, blocks=page_blocks, confidence=confidence
+            )
+        )
     return pages
 
 
@@ -164,7 +176,9 @@ class DoclingDocumentParser:
             return False
         return True
 
-    def parse(self, content: bytes, metadata: dict[str, str] | None = None) -> ParserResult:
+    def parse(
+        self, content: bytes, metadata: dict[str, str] | None = None
+    ) -> ParserResult:
         suffix = _infer_suffix(metadata)
         if suffix == ".docx":
             validate_docx_archive(content)
@@ -213,7 +227,9 @@ class NativeDocumentParser:
     def available(self) -> bool:
         return True
 
-    def parse(self, content: bytes, metadata: dict[str, str] | None = None) -> ParserResult:
+    def parse(
+        self, content: bytes, metadata: dict[str, str] | None = None
+    ) -> ParserResult:
         text = content.decode("utf-8", errors="ignore")
         confidence = 1.0 if text.strip() else 0.0
         blocks = _blocks_from_markdown(text)
@@ -236,9 +252,24 @@ class DocumentParserRouter:
         self._native = NativeDocumentParser()
         self._prefer_docling = prefer_docling
 
-    def parse(self, content: bytes, metadata: dict[str, str] | None = None) -> ParserResult:
+    def parse(
+        self, content: bytes, metadata: dict[str, str] | None = None
+    ) -> ParserResult:
         suffix = _infer_suffix(metadata)
-        docling_candidate = suffix in {".pdf", ".docx", ".doc", ".pptx", ".html", ".htm", ".md", ".markdown", ".png", ".jpg", ".jpeg", ".tiff"}
+        docling_candidate = suffix in {
+            ".pdf",
+            ".docx",
+            ".doc",
+            ".pptx",
+            ".html",
+            ".htm",
+            ".md",
+            ".markdown",
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".tiff",
+        }
         if self._prefer_docling and docling_candidate and self._docling.available():
             try:
                 return self._docling.parse(content, metadata)
@@ -303,7 +334,9 @@ def parser_result_to_metadata(
     }
 
 
-def build_preview_from_document_metadata(metadata: dict[str, str], text: str) -> dict[str, object]:
+def build_preview_from_document_metadata(
+    metadata: dict[str, str], text: str
+) -> dict[str, object]:
     raw = metadata.get("parser_preview_json", "")
     if raw:
         try:

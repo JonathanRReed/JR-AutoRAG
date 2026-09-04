@@ -9,7 +9,12 @@ from ..core.cache import get_cache_manager
 from ..core.document_acl import get_acl_enforcer, get_acl_store, resolve_acl_defaults
 from ..core.document_parser import build_preview_from_document_metadata
 from ..core.persistence import get_disk_query_cache
-from ..schemas.documents import DocumentOut, DocumentPreviewResponse, IngestResponse, IngestTextRequest
+from ..schemas.documents import (
+    DocumentOut,
+    DocumentPreviewResponse,
+    IngestResponse,
+    IngestTextRequest,
+)
 from ..services import ServiceContainer, get_container
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -33,7 +38,9 @@ def _ensure_document_read_access(document_id: str, request: Request) -> None:
     user_id = getattr(request.state, "user_id", None)
     allowed, _ = enforcer.check_access(document_id, user_id, "read")
     if not allowed:
-        raise HTTPException(status_code=403, detail="Insufficient permissions to read this document")
+        raise HTTPException(
+            status_code=403, detail="Insufficient permissions to read this document"
+        )
 
 
 @router.get("", response_model=list[DocumentOut])
@@ -44,11 +51,21 @@ def list_documents(
     docs = container.document_store.list()
     auth_enabled = get_auth().require_auth()
     if not auth_enabled:
-        return [DocumentOut(id=doc.id, title=doc.title, text=doc.text, metadata=doc.metadata) for doc in docs]
+        return [
+            DocumentOut(
+                id=doc.id, title=doc.title, text=doc.text, metadata=doc.metadata
+            )
+            for doc in docs
+        ]
 
     scopes = getattr(request.state, "scopes", [])
     if "admin" in scopes:
-        return [DocumentOut(id=doc.id, title=doc.title, text=doc.text, metadata=doc.metadata) for doc in docs]
+        return [
+            DocumentOut(
+                id=doc.id, title=doc.title, text=doc.text, metadata=doc.metadata
+            )
+            for doc in docs
+        ]
 
     default_public, _ = resolve_acl_defaults(auth_enabled)
     enforcer = get_acl_enforcer(default_public=default_public)
@@ -103,7 +120,10 @@ def ingest_text(
     if auth_enabled and "admin" not in scopes:
         existing = container.document_store.get_by_title(payload.title)
         if existing and not enforcer.check_access(existing.id, user_id, "write")[0]:
-            raise HTTPException(status_code=403, detail="Insufficient permissions to update this document")
+            raise HTTPException(
+                status_code=403,
+                detail="Insufficient permissions to update this document",
+            )
 
     try:
         result = container.ingest.ingest_text(
@@ -120,8 +140,14 @@ def ingest_text(
         if enforcer.store.get(result.document_id) is None:
             owner_id = user_id or "anonymous"
             public = new_doc_public if (auth_enabled and user_id) else True
-            enforcer.create_acl_for_document(result.document_id, owner=owner_id, public=public)
-        return IngestResponse(document_id=result.document_id, title=result.title, chunk_count=result.chunk_count)
+            enforcer.create_acl_for_document(
+                result.document_id, owner=owner_id, public=public
+            )
+        return IngestResponse(
+            document_id=result.document_id,
+            title=result.title,
+            chunk_count=result.chunk_count,
+        )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -144,7 +170,10 @@ def delete_document(
         enforcer = get_acl_enforcer(default_public=default_public)
         allowed, _ = enforcer.check_access(document_id, user_id, "write")
         if not allowed:
-            raise HTTPException(status_code=403, detail="Insufficient permissions to delete this document")
+            raise HTTPException(
+                status_code=403,
+                detail="Insufficient permissions to delete this document",
+            )
 
     container.document_store.delete(document_id)
     get_acl_store().delete(document_id)
@@ -160,7 +189,9 @@ def delete_all_documents(
     auth_enabled = get_auth().require_auth()
     scopes = getattr(request.state, "scopes", [])
     if auth_enabled and "admin" not in scopes:
-        raise HTTPException(status_code=403, detail="Admin scope required to delete all documents")
+        raise HTTPException(
+            status_code=403, detail="Admin scope required to delete all documents"
+        )
 
     container.document_store.clear()
     get_acl_store().clear()
@@ -190,7 +221,10 @@ async def ingest_file(
     if auth_enabled and "admin" not in scopes:
         existing = container.document_store.get_by_title(effective_title)
         if existing and not enforcer.check_access(existing.id, user_id, "write")[0]:
-            raise HTTPException(status_code=403, detail="Insufficient permissions to update this document")
+            raise HTTPException(
+                status_code=403,
+                detail="Insufficient permissions to update this document",
+            )
 
     try:
         content = await file.read()
@@ -209,7 +243,13 @@ async def ingest_file(
         if enforcer.store.get(result.document_id) is None:
             owner_id = user_id or "anonymous"
             public = new_doc_public if (auth_enabled and user_id) else True
-            enforcer.create_acl_for_document(result.document_id, owner=owner_id, public=public)
-        return IngestResponse(document_id=result.document_id, title=result.title, chunk_count=result.chunk_count)
+            enforcer.create_acl_for_document(
+                result.document_id, owner=owner_id, public=public
+            )
+        return IngestResponse(
+            document_id=result.document_id,
+            title=result.title,
+            chunk_count=result.chunk_count,
+        )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

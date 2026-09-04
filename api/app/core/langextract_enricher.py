@@ -1,6 +1,5 @@
 """LangExtract adapter for optional ingestion-time enrichment."""
 
-
 import json
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
@@ -44,7 +43,9 @@ class LangExtractEnricher:
                 "provider_kwargs": {},
             }
 
-        source = model_source if model_source in self.SUPPORTED_MODEL_SOURCES else "gatherer"
+        source = (
+            model_source if model_source in self.SUPPORTED_MODEL_SOURCES else "gatherer"
+        )
         source_field = f"{source}_model"
         model_id = (
             getattr(provider, source_field, None)
@@ -87,10 +88,19 @@ class LangExtractEnricher:
                 "provider_kwargs": kwargs,
             }
 
-        openai_compat_name = any(key in provider_name for key in ("openai", "openrouter", "lm studio", "lmstudio"))
+        openai_compat_name = any(
+            key in provider_name
+            for key in ("openai", "openrouter", "lm studio", "lmstudio")
+        )
         openai_compat_url = any(
             key in base_lower
-            for key in ("api.openai.com", "openrouter.ai", "/v1", "localhost:1234", "127.0.0.1:1234")
+            for key in (
+                "api.openai.com",
+                "openrouter.ai",
+                "/v1",
+                "localhost:1234",
+                "127.0.0.1:1234",
+            )
         )
         if openai_compat_name or openai_compat_url:
             kwargs = {
@@ -163,7 +173,9 @@ class LangExtractEnricher:
 
         bounded_text = text[: max(1, max_chars)]
         result["truncated_chars"] = max(0, len(text) - len(bounded_text))
-        prompt_description = (prompt_override or "").strip() or extraction_profile["prompt_description"]
+        prompt_description = (prompt_override or "").strip() or extraction_profile[
+            "prompt_description"
+        ]
         examples = self._build_examples(extraction_profile, ExampleData, Extraction)
         config = ModelConfig(
             model_id=resolved_model["model_id"],
@@ -181,7 +193,9 @@ class LangExtractEnricher:
             )
 
         try:
-            raw_result = self._run_with_timeout(_run_extract, timeout=max(1, int(timeout)))
+            raw_result = self._run_with_timeout(
+                _run_extract, timeout=max(1, int(timeout))
+            )
         except TimeoutError as exc:
             result["status"] = "failed_timeout"
             result["error"] = str(exc)
@@ -192,7 +206,9 @@ class LangExtractEnricher:
             return result
 
         normalized = self.normalize_result(raw_result)
-        synthetic_sections = self.to_synthetic_sections(normalized, max_synthetic_facts=max_synthetic_facts)
+        synthetic_sections = self.to_synthetic_sections(
+            normalized, max_synthetic_facts=max_synthetic_facts
+        )
 
         result.update(
             {
@@ -213,7 +229,9 @@ class LangExtractEnricher:
         return result
 
     def normalize_result(self, raw_result: Any) -> dict[str, Any]:
-        document = raw_result[0] if isinstance(raw_result, list) and raw_result else raw_result
+        document = (
+            raw_result[0] if isinstance(raw_result, list) and raw_result else raw_result
+        )
         extractions = getattr(document, "extractions", None) or []
 
         entities: list[dict[str, Any]] = []
@@ -222,11 +240,15 @@ class LangExtractEnricher:
         warnings: list[dict[str, Any]] = []
 
         for extraction in extractions:
-            extraction_class = str(getattr(extraction, "extraction_class", "")).strip().lower()
+            extraction_class = (
+                str(getattr(extraction, "extraction_class", "")).strip().lower()
+            )
             extraction_text = str(getattr(extraction, "extraction_text", "")).strip()
             if not extraction_text:
                 continue
-            attributes = self._normalize_attributes(getattr(extraction, "attributes", None))
+            attributes = self._normalize_attributes(
+                getattr(extraction, "attributes", None)
+            )
             payload = {
                 "text": extraction_text,
                 "attributes": attributes,
@@ -249,7 +271,12 @@ class LangExtractEnricher:
             else:
                 entities.append(payload)
 
-        entities.sort(key=lambda item: (item["text"].lower(), json.dumps(item["attributes"], sort_keys=True)))
+        entities.sort(
+            key=lambda item: (
+                item["text"].lower(),
+                json.dumps(item["attributes"], sort_keys=True),
+            )
+        )
         relations.sort(
             key=lambda item: (
                 str(item.get("source", "")).lower(),
@@ -322,7 +349,9 @@ class LangExtractEnricher:
         path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
         return path
 
-    def _build_examples(self, profile: dict[str, Any], example_cls: Any, extraction_cls: Any) -> list[Any]:
+    def _build_examples(
+        self, profile: dict[str, Any], example_cls: Any, extraction_cls: Any
+    ) -> list[Any]:
         examples: list[Any] = []
         for sample in profile.get("examples", []):
             extractions = []
@@ -334,7 +363,9 @@ class LangExtractEnricher:
                         attributes=item.get("attributes", {}),
                     )
                 )
-            examples.append(example_cls(text=sample.get("text", ""), extractions=extractions))
+            examples.append(
+                example_cls(text=sample.get("text", ""), extractions=extractions)
+            )
         return examples
 
     def _run_with_timeout(self, fn: Any, timeout: int) -> Any:
@@ -361,7 +392,9 @@ class LangExtractEnricher:
             if not key_text:
                 continue
             if isinstance(value, list):
-                rendered = ", ".join(str(item).strip() for item in value if str(item).strip())
+                rendered = ", ".join(
+                    str(item).strip() for item in value if str(item).strip()
+                )
             else:
                 rendered = str(value).strip()
             if rendered:
@@ -371,7 +404,9 @@ class LangExtractEnricher:
     def _attrs_suffix(self, attributes: dict[str, str]) -> str:
         if not attributes:
             return ""
-        rendered = "; ".join(f"{key}={value}" for key, value in sorted(attributes.items()))
+        rendered = "; ".join(
+            f"{key}={value}" for key, value in sorted(attributes.items())
+        )
         return f" | {rendered}" if rendered else ""
 
     def _serialize_document(self, document: Any) -> dict[str, Any]:
@@ -387,7 +422,9 @@ class LangExtractEnricher:
                 {
                     "extraction_class": getattr(extraction, "extraction_class", None),
                     "extraction_text": getattr(extraction, "extraction_text", None),
-                    "attributes": self._normalize_attributes(getattr(extraction, "attributes", None)),
+                    "attributes": self._normalize_attributes(
+                        getattr(extraction, "attributes", None)
+                    ),
                 }
             )
         return serialized

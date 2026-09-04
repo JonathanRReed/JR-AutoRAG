@@ -45,25 +45,39 @@ def validate_docx_archive(content: bytes) -> None:
             for member in members:
                 path = PurePosixPath(member.filename)
                 if path.is_absolute() or ".." in path.parts:
-                    raise UnsafeArchiveError("DOCX archive contains an unsafe member path.")
+                    raise UnsafeArchiveError(
+                        "DOCX archive contains an unsafe member path."
+                    )
                 if member.filename in names:
-                    raise UnsafeArchiveError("DOCX archive contains duplicate member names.")
+                    raise UnsafeArchiveError(
+                        "DOCX archive contains duplicate member names."
+                    )
                 names.add(member.filename)
                 if member.flag_bits & 0x1:
-                    raise UnsafeArchiveError("Encrypted DOCX archive members are not supported.")
+                    raise UnsafeArchiveError(
+                        "Encrypted DOCX archive members are not supported."
+                    )
                 if member.file_size < 0 or member.compress_size < 0:
-                    raise UnsafeArchiveError("DOCX archive contains invalid member sizes.")
+                    raise UnsafeArchiveError(
+                        "DOCX archive contains invalid member sizes."
+                    )
                 if member.file_size > MAX_ARCHIVE_MEMBER_BYTES:
-                    raise UnsafeArchiveError("DOCX archive member exceeds the uncompressed size limit.")
+                    raise UnsafeArchiveError(
+                        "DOCX archive member exceeds the uncompressed size limit."
+                    )
 
                 total_uncompressed += member.file_size
                 if total_uncompressed > MAX_ARCHIVE_UNCOMPRESSED_BYTES:
-                    raise UnsafeArchiveError("DOCX archive exceeds the total uncompressed size limit.")
+                    raise UnsafeArchiveError(
+                        "DOCX archive exceeds the total uncompressed size limit."
+                    )
 
                 if member.file_size:
                     ratio = member.file_size / max(member.compress_size, 1)
                     if ratio > MAX_ARCHIVE_COMPRESSION_RATIO:
-                        raise UnsafeArchiveError("DOCX archive member exceeds the safe compression ratio.")
+                        raise UnsafeArchiveError(
+                            "DOCX archive member exceeds the safe compression ratio."
+                        )
 
             if "word/document.xml" not in names:
                 raise UnsafeArchiveError("DOCX archive is missing word/document.xml.")
@@ -73,7 +87,9 @@ def validate_docx_archive(content: bytes) -> None:
                     continue
                 with archive.open(member) as xml_file:
                     if _contains_forbidden_xml_declaration(xml_file):
-                        raise UnsafeArchiveError("DOCX archive contains a forbidden XML declaration.")
+                        raise UnsafeArchiveError(
+                            "DOCX archive contains a forbidden XML declaration."
+                        )
     except UnsafeArchiveError:
         raise
     except (OSError, zipfile.BadZipFile, zipfile.LargeZipFile) as exc:

@@ -16,6 +16,7 @@ import pytest
 @dataclass
 class MockChunk:
     """Mock evidence chunk for testing."""
+
     id: str
     snippet: str
     doc_id: str = "test-doc"
@@ -156,8 +157,14 @@ class TestRetrievalModeCache:
 
         cache = QueryCache()
 
-        key1 = cache._make_key("test", config_hash="", retrieval_mode=RetrievalMode.STANDARD)
-        key2 = cache._make_key("test", config_hash="", retrieval_mode=RetrievalMode.STANDARD | RetrievalMode.RAPTOR)
+        key1 = cache._make_key(
+            "test", config_hash="", retrieval_mode=RetrievalMode.STANDARD
+        )
+        key2 = cache._make_key(
+            "test",
+            config_hash="",
+            retrieval_mode=RetrievalMode.STANDARD | RetrievalMode.RAPTOR,
+        )
 
         assert key1 != key2, "Different retrieval modes should produce different keys"
 
@@ -229,7 +236,9 @@ class TestPromptGuardIngestion:
         sanitized, attempts = sanitize_at_ingest(malicious, source="test")
 
         assert len(attempts) > 0
-        assert "[FILTERED]" in sanitized or "ignore all previous" not in sanitized.lower()
+        assert (
+            "[FILTERED]" in sanitized or "ignore all previous" not in sanitized.lower()
+        )
 
     def test_get_ingestion_warning_detects_threats(self):
         """Should return warning for content with injection patterns."""
@@ -352,10 +361,14 @@ class TestIncrementalIngestion:
         from app.core.ingest import IngestPipeline
 
         pipeline = IngestPipeline(Mock(), Mock())
-        pipeline._extract_pdf_text = lambda content: "This is a complete PDF export with extractable text." * 5  # type: ignore[method-assign]
+        pipeline._extract_pdf_text = lambda content: (
+            "This is a complete PDF export with extractable text." * 5
+        )  # type: ignore[method-assign]
         pipeline._extract_pdf_text_pdftotext = lambda content: ""  # type: ignore[method-assign]
 
-        text, metadata = pipeline._extract_text_with_metadata(b"%PDF-1.4", {"filename": "report.pdf"})
+        text, metadata = pipeline._extract_text_with_metadata(
+            b"%PDF-1.4", {"filename": "report.pdf"}
+        )
 
         assert "extractable text" in text
         assert metadata["extraction_method"] == "native_text"
@@ -381,7 +394,9 @@ class TestIncrementalIngestion:
 
         monkeypatch.setattr("app.core.ingest.OCRRouter.route", fake_route)
 
-        text, metadata = pipeline._extract_text_with_metadata(b"%PDF-1.4", {"filename": "scan.pdf"})
+        text, metadata = pipeline._extract_text_with_metadata(
+            b"%PDF-1.4", {"filename": "scan.pdf"}
+        )
 
         assert text == "Recovered from OCR"
         assert metadata["extraction_method"] == "dedicated_ocr"
@@ -434,7 +449,9 @@ class TestLocalFirstConfig:
     def test_local_only_rejects_remote_provider_profiles(self):
         from app.schemas.config import AppConfig
 
-        with pytest.raises(ValueError, match="Provider profile 'remote'.*local-only mode"):
+        with pytest.raises(
+            ValueError, match="Provider profile 'remote'.*local-only mode"
+        ):
             AppConfig(
                 deployment_profile="local_only",
                 provider={
@@ -482,11 +499,17 @@ class TestConversationMemory:
             conversation_id="session-1",
             user_query="Remember that our default deployment profile should stay local only for regulated documents.",
             answer="I will keep the default deployment profile set to local only for regulated documents and use hybrid only when you explicitly allow it.",
-            metadata={"chunks_used": ["doc-1-0", "doc-2-1"], "sources_count": 2, "query_type": "policy"},
+            metadata={
+                "chunks_used": ["doc-1-0", "doc-2-1"],
+                "sources_count": 2,
+                "query_type": "policy",
+            },
         )
 
         assert result["memory_written"] is True
-        prompt = memory.build_context_prompt("session-1", "What did I ask you to keep by default?")
+        prompt = memory.build_context_prompt(
+            "session-1", "What did I ask you to keep by default?"
+        )
         assert "local only" in prompt.lower()
 
 
@@ -507,7 +530,11 @@ class TestVisionOCR:
                 return None
 
             def json(self):
-                return {"choices": [{"message": {"content": "Recovered from local vision model"}}]}
+                return {
+                    "choices": [
+                        {"message": {"content": "Recovered from local vision model"}}
+                    ]
+                }
 
         captured = {}
 
@@ -523,11 +550,18 @@ class TestVisionOCR:
             def close(self):
                 return None
 
-        monkeypatch.setattr("app.core.ocr.convert_from_bytes", lambda content, poppler_path=None: [FakeImage()])
+        monkeypatch.setattr(
+            "app.core.ocr.convert_from_bytes",
+            lambda content, poppler_path=None: [FakeImage()],
+        )
         monkeypatch.setattr("app.core.ocr.httpx.Client", FakeClient)
 
         provider = VisionModelOCRProvider(
-            ProviderConfig(name="Ollama", base_url="http://localhost:11434", generator_model="qwen3-vl:8b"),
+            ProviderConfig(
+                name="Ollama",
+                base_url="http://localhost:11434",
+                generator_model="qwen3-vl:8b",
+            ),
         )
         result = provider.extract(b"%PDF-1.4")
 

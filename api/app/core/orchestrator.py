@@ -145,8 +145,8 @@ class Orchestrator:
             ),
             monitor=self._uncertainty_monitor,
         )
-        self._active_tasks = {} # type: dict[str, asyncio.Task]
-        self._cancelled_traces = set() # type: set[str]
+        self._active_tasks = {}  # type: dict[str, asyncio.Task]
+        self._cancelled_traces = set()  # type: set[str]
         self._evidence_contract = EvidenceContract(min_coverage=0.7)
         # Advanced retrieval modes
         self._hierarchy_builder = HierarchyBuilder()
@@ -168,7 +168,9 @@ class Orchestrator:
         # vNext Expansion: G1/G4 Guarantees
         self._citation_verifier = CitationVerifier(max_repair_attempts=2)
         self._artifact_builder = get_artifact_builder()
-        self._hallucination_firewall = HallucinationFirewall(strict_mode=False, min_overlap=0.25, min_pass_rate=0.4)
+        self._hallucination_firewall = HallucinationFirewall(
+            strict_mode=False, min_overlap=0.25, min_pass_rate=0.4
+        )
         self._last_trace_bundle: TraceBundle | None = None
         self._hyde_generator = get_hyde_generator()
         # Abstention rules for insufficient evidence scenarios
@@ -187,7 +189,11 @@ class Orchestrator:
             self._planner.set_provider(self._provider)
 
         # Only build if not already loaded (prevents double-build on startup)
-        if hasattr(self._retrieval, "_chunks") and not self._retrieval._chunks or not hasattr(self._retrieval, "_chunks"):
+        if (
+            hasattr(self._retrieval, "_chunks")
+            and not self._retrieval._chunks
+            or not hasattr(self._retrieval, "_chunks")
+        ):
             self._retrieval.build()
 
         if hasattr(self._retrieval, "get_document_trees"):
@@ -221,12 +227,16 @@ class Orchestrator:
         # Sync artifact status with builder for UI (G4)
         if self._hierarchy_ready:
             self._artifact_builder.set_status("raptor", ArtifactStatus.READY)
-            self._artifact_builder.set_items("raptor", sum(len(t.nodes) for t in self._document_trees.values()))
+            self._artifact_builder.set_items(
+                "raptor", sum(len(t.nodes) for t in self._document_trees.values())
+            )
 
         if self._graph_ready:
             self._artifact_builder.set_status("graph_rag", ArtifactStatus.READY)
             if self._graph_rag:
-                self._artifact_builder.set_items("graph_rag", len(self._graph_rag.entities))
+                self._artifact_builder.set_items(
+                    "graph_rag", len(self._graph_rag.entities)
+                )
         elif getattr(self._retrieval, "_graph_failed", False):
             self._artifact_builder.set_status("graph_rag", ArtifactStatus.FAILED)
         # Web search disabled for offline-only operation
@@ -247,6 +257,7 @@ class Orchestrator:
         to provide context alongside granular chunks.
         """
         from .gatherer import EvidenceChunk
+
         enhanced_chunks = []
 
         for doc_id, tree in self._document_trees.items():
@@ -256,41 +267,54 @@ class Orchestrator:
             # Get overview from root/high-level nodes
             root = tree.get_node(tree.root_id)
             if root and root.summary:
-                enhanced_chunks.append(EvidenceChunk(
-                    id=f"{doc_id}_overview",
-                    title=f"{root.title} (Overview)",
-                    snippet=root.summary,
-                    score=0.85,
-                ))
+                enhanced_chunks.append(
+                    EvidenceChunk(
+                        id=f"{doc_id}_overview",
+                        title=f"{root.title} (Overview)",
+                        snippet=root.summary,
+                        score=0.85,
+                    )
+                )
 
             # Add mid-level summaries for context
             for child_id in root.children[:2] if root else []:
                 child = tree.get_node(child_id)
                 if child and child.summary:
-                    enhanced_chunks.append(EvidenceChunk(
-                        id=f"{doc_id}_{child_id}_summary",
-                        title=f"{child.title} (Summary)",
-                        snippet=child.summary,
-                        score=0.75,
-                    ))
+                    enhanced_chunks.append(
+                        EvidenceChunk(
+                            id=f"{doc_id}_{child_id}_summary",
+                            title=f"{child.title} (Summary)",
+                            snippet=child.summary,
+                            score=0.75,
+                        )
+                    )
 
         return enhanced_chunks
 
     @staticmethod
-    def _normalize_graph_scope(document_ids: list[str] | None) -> tuple[str, ...] | None:
+    def _normalize_graph_scope(
+        document_ids: list[str] | None,
+    ) -> tuple[str, ...] | None:
         """Return a stable GraphRAG document scope, or None for all documents."""
         return tuple(sorted(set(document_ids))) if document_ids else None
 
     def _graph_scope_matches(self, document_ids: list[str] | None) -> bool:
         """Check that the loaded GraphRAG context was built for this request scope."""
-        return self._graph_scope_document_ids == self._normalize_graph_scope(document_ids)
+        return self._graph_scope_document_ids == self._normalize_graph_scope(
+            document_ids
+        )
 
-    def _graph_entity_in_scope(self, entity: Any, allowed_document_ids: set[str]) -> bool:
+    def _graph_entity_in_scope(
+        self, entity: Any, allowed_document_ids: set[str]
+    ) -> bool:
         """Return whether an entity has at least one mention in an allowed document."""
         if self._graph_rag is None:
             return False
         chunk_documents = getattr(self._graph_rag, "chunk_documents", {})
-        return any(chunk_documents.get(chunk_id) in allowed_document_ids for chunk_id in getattr(entity, "mentions", []))
+        return any(
+            chunk_documents.get(chunk_id) in allowed_document_ids
+            for chunk_id in getattr(entity, "mentions", [])
+        )
 
     async def _retrieve_with_graph(
         self,
@@ -316,7 +340,9 @@ class Orchestrator:
         relevant_entities = self._graph_rag.query_entities(query, top_k=5)
         relevant_entity_names: set[str] = set()
         for entity in relevant_entities:
-            if allowed_document_ids and not self._graph_entity_in_scope(entity, allowed_document_ids):
+            if allowed_document_ids and not self._graph_entity_in_scope(
+                entity, allowed_document_ids
+            ):
                 continue
             relevant_entity_names.add(self._graph_rag._normalize_name(entity.name))
 
@@ -327,12 +353,14 @@ class Orchestrator:
         for community in self._graph_rag.communities:
             community_entity_names = set(community.entities)
             if relevant_entity_names & community_entity_names and community.summary:
-                chunks.append(EvidenceChunk(
-                    id=f"community_{community.id}",
-                    title=f"Topic: {', '.join(community.entities[:3])}",
-                    snippet=community.summary,
-                    score=0.8,
-                ))
+                chunks.append(
+                    EvidenceChunk(
+                        id=f"community_{community.id}",
+                        title=f"Topic: {', '.join(community.entities[:3])}",
+                        snippet=community.summary,
+                        score=0.8,
+                    )
+                )
 
         return chunks[:5]  # Limit community chunks
 
@@ -355,7 +383,9 @@ class Orchestrator:
         try:
             graph_builder = GraphRAG()
             evidence_chunks: list[EvidenceChunk] = []
-            scoped_document_ids = set(target_scope) if target_scope is not None else None
+            scoped_document_ids = (
+                set(target_scope) if target_scope is not None else None
+            )
             scoped_records = [
                 (doc_id, chunk)
                 for doc_id, chunk in self._chunk_records
@@ -371,13 +401,15 @@ class Orchestrator:
                     title = root.title if root else ""
                 if not title:
                     title = f"Document {doc_id}"
-                evidence_chunks.append(EvidenceChunk(
-                    id=f"{doc_id}-{chunk.index}",
-                    title=title,
-                    snippet=chunk.text,
-                    score=0.8,
-                    doc_id=doc_id,
-                ))
+                evidence_chunks.append(
+                    EvidenceChunk(
+                        id=f"{doc_id}-{chunk.index}",
+                        title=title,
+                        snippet=chunk.text,
+                        score=0.8,
+                        doc_id=doc_id,
+                    )
+                )
             if not evidence_chunks:
                 self._graph_rag = None
                 self._graph_ready = False
@@ -385,14 +417,11 @@ class Orchestrator:
                 return
 
             await graph_builder.build_from_chunks(
-                evidence_chunks,
-                self._provider,
-                on_progress=on_progress
+                evidence_chunks, self._provider, on_progress=on_progress
             )
             graph_builder.detect_communities()
             await graph_builder.summarize_communities(
-                self._provider,
-                on_progress=on_progress
+                self._provider, on_progress=on_progress
             )
             self._graph_rag = graph_builder
             self._graph_ready = True
@@ -481,24 +510,28 @@ class Orchestrator:
                 context_id = f"{doc_id}_context_{chunk_token}_{idx}"
                 if context_id in seen_ids:
                     continue
-                expanded.append(EvidenceChunk(
-                    id=context_id,
-                    title=f"{chunk.title} Context",
-                    snippet=ctx,
-                    score=chunk.score * 0.9,
-                ))
+                expanded.append(
+                    EvidenceChunk(
+                        id=context_id,
+                        title=f"{chunk.title} Context",
+                        snippet=ctx,
+                        score=chunk.score * 0.9,
+                    )
+                )
                 seen_ids.add(context_id)
             siblings = retriever.expand_with_siblings(chunk_token)
             for idx, sibling in enumerate(siblings[:2]):
                 sibling_id = f"{doc_id}_sibling_{chunk_token}_{idx}"
                 if sibling_id in seen_ids:
                     continue
-                expanded.append(EvidenceChunk(
-                    id=sibling_id,
-                    title="Related Section",
-                    snippet=sibling,
-                    score=chunk.score * 0.85,
-                ))
+                expanded.append(
+                    EvidenceChunk(
+                        id=sibling_id,
+                        title="Related Section",
+                        snippet=sibling,
+                        score=chunk.score * 0.85,
+                    )
+                )
                 seen_ids.add(sibling_id)
         return expanded
 
@@ -524,14 +557,17 @@ class Orchestrator:
         base_answer = await provider.chat(messages)
 
         sentences = [
-            s.strip()
-            for s in re.split(r"(?<=[.!?])\s+", base_answer)
-            if s.strip()
+            s.strip() for s in re.split(r"(?<=[.!?])\s+", base_answer) if s.strip()
         ]
         triggers: list[dict[str, Any]] = []
         threshold = getattr(self._uncertainty_monitor, "threshold", 0.35)
+
         def _maybe_token_stats(text: str) -> dict[str, float | None]:
-            if provider and hasattr(provider, "get_token_stats") and callable(provider.get_token_stats):
+            if (
+                provider
+                and hasattr(provider, "get_token_stats")
+                and callable(provider.get_token_stats)
+            ):
                 try:
                     stats = provider.get_token_stats(text)  # type: ignore[attr-defined]
                     if isinstance(stats, dict):
@@ -621,17 +657,21 @@ class Orchestrator:
         )
         context_excerpt = (context_text or "").strip()
         if context_excerpt:
-            context_excerpt = context_excerpt[:2400] + ("..." if len(context_excerpt) > 2400 else "")
+            context_excerpt = context_excerpt[:2400] + (
+                "..." if len(context_excerpt) > 2400 else ""
+            )
         user_prompt = (
             f"User question:\n{query}\n\n"
             f"Context excerpt:\n{context_excerpt or '[none]'}\n\n"
             "Output only a short bullet outline."
         )
         try:
-            outline = await provider.chat([
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ])
+            outline = await provider.chat(
+                [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ]
+            )
         except ProviderError as exc:
             details["error"] = str(exc)
             return None, details, "skipped"
@@ -748,6 +788,7 @@ class Orchestrator:
         "summarizing_communities": "Thematizing communities...",
         "building_hierarchy": "Building document hierarchy...",
     }
+
     def cancel_trace(self, trace_id: str) -> None:
         """Mark a trace as cancelled."""
         self._cancelled_traces.add(trace_id)
@@ -771,13 +812,19 @@ class Orchestrator:
 
         # Immediate cleanup check
         if trace_id in self._cancelled_traces:
-            self._cancelled_traces.remove(trace_id) # Reset for next use
-            raise asyncio.CancelledError(f"Trace {trace_id} was cancelled before starting")
+            self._cancelled_traces.remove(trace_id)  # Reset for next use
+            raise asyncio.CancelledError(
+                f"Trace {trace_id} was cancelled before starting"
+            )
 
         pipeline_start = datetime.now(UTC)
         pipeline_steps: list[PipelineStep] = []
         reflection_result = None
-        runtime_profile = self._retrieval.get_runtime_profile() if hasattr(self._retrieval, "get_runtime_profile") else {}
+        runtime_profile = (
+            self._retrieval.get_runtime_profile()
+            if hasattr(self._retrieval, "get_runtime_profile")
+            else {}
+        )
         memory_context = ""
         if conversation_id and self._memory is not None:
             memory_context = self._memory.build_context_prompt(conversation_id, query)
@@ -813,7 +860,7 @@ class Orchestrator:
                 "stage": stage,
                 "message": message,
                 "trace_id": trace_id,
-                "elapsed_ms": elapsed_ms, # Use total elapsed for UI consistency
+                "elapsed_ms": elapsed_ms,  # Use total elapsed for UI consistency
                 "stage_elapsed_ms": stage_elapsed_ms,
             }
 
@@ -824,12 +871,16 @@ class Orchestrator:
                 progress_data["progress"] = round(progress, 2)
             elif items_done is not None and items_total is not None and items_total > 0:
                 progress_data["progress"] = round(items_done / items_total, 2)
-                progress_data["detail"] = detail or f"Processing {items_done} of {items_total}"
+                progress_data["detail"] = (
+                    detail or f"Processing {items_done} of {items_total}"
+                )
                 # Estimate remaining time
                 if items_done > 0:
                     time_per_item = stage_elapsed_ms / items_done
                     remaining_items = items_total - items_done
-                    progress_data["estimated_remaining_ms"] = round(time_per_item * remaining_items, 1)
+                    progress_data["estimated_remaining_ms"] = round(
+                        time_per_item * remaining_items, 1
+                    )
 
             on_progress(progress_data)
 
@@ -848,7 +899,9 @@ class Orchestrator:
             for chunk in chunk_list:
                 chunk_id = getattr(chunk, "id", str(id(chunk)))
                 current_best = seen.get(chunk_id)
-                if current_best is None or getattr(chunk, "score", 0) > getattr(current_best, "score", 0):
+                if current_best is None or getattr(chunk, "score", 0) > getattr(
+                    current_best, "score", 0
+                ):
                     seen[chunk_id] = chunk
             return list(seen.values())
 
@@ -859,7 +912,11 @@ class Orchestrator:
         effective_query_mode = query_mode
         if effective_query_mode is None:
             config_mode = getattr(self._config, "query_mode", "grounded")
-            effective_query_mode = QueryMode(config_mode) if config_mode in ("grounded", "open_domain") else QueryMode.GROUNDED
+            effective_query_mode = (
+                QueryMode(config_mode)
+                if config_mode in ("grounded", "open_domain")
+                else QueryMode.GROUNDED
+            )
 
         query_cache_scope = self._query_cache_scope(
             document_ids=document_ids,
@@ -873,24 +930,32 @@ class Orchestrator:
         # G3: Get corpus version and retrieval mode for versioned cache keys
         cache_corpus_version = ""
         cache_retrieval_mode = RetrievalMode.STANDARD
-        if hasattr(self._retrieval, 'get_corpus_version'):
+        if hasattr(self._retrieval, "get_corpus_version"):
             cache_corpus_version = self._retrieval.get_corpus_version()
-        if hasattr(self._retrieval, 'get_retrieval_mode_flags'):
+        if hasattr(self._retrieval, "get_retrieval_mode_flags"):
             cache_retrieval_mode = self._retrieval.get_retrieval_mode_flags()
 
         # P0.3: Get current preset ID for cache key
-        current_preset_id = getattr(self._config.retrieval, "_preset_level", "balanced") if self._config else "balanced"
+        current_preset_id = (
+            getattr(self._config.retrieval, "_preset_level", "balanced")
+            if self._config
+            else "balanced"
+        )
         if not current_preset_id or current_preset_id == "balanced":
             # Try to infer from config
             current_preset_id = "balanced"
 
         # P0.3: Get model IDs for cache key
         provider_config = self._config.provider if self._config else None
-        model_ids = {
-            "planner": getattr(provider_config, "planner_model", "") or "",
-            "gatherer": getattr(provider_config, "gatherer_model", "") or "",
-            "generator": getattr(provider_config, "generator_model", "") or "",
-        } if provider_config else {}
+        model_ids = (
+            {
+                "planner": getattr(provider_config, "planner_model", "") or "",
+                "gatherer": getattr(provider_config, "gatherer_model", "") or "",
+                "generator": getattr(provider_config, "generator_model", "") or "",
+            }
+            if provider_config
+            else {}
+        )
 
         cache_start_time = datetime.now(UTC)
         cache_start = time.perf_counter()
@@ -929,7 +994,9 @@ class Orchestrator:
             )
             record_step(cache_step)
             # Return cached result with updated trace
-            cached_result["steps"] = [pipeline_step_to_public_dict(s) for s in pipeline_steps]
+            cached_result["steps"] = [
+                pipeline_step_to_public_dict(s) for s in pipeline_steps
+            ]
             cached_result["from_cache"] = True
             return cached_result
 
@@ -975,26 +1042,28 @@ class Orchestrator:
             planner_mode = "heuristic"
 
         # Get query type if using SmartPlanner
-        query_type = getattr(plan, 'query_type', 'factual')
-        decomposed = getattr(plan, 'decomposed', False)
+        query_type = getattr(plan, "query_type", "factual")
+        decomposed = getattr(plan, "decomposed", False)
 
-        record_step(self._make_step(
-            "planning",
-            plan_start,
-            plan_start_time,
-            {
-                "num_steps": len(plan.steps),
-                "target_tokens": plan.target_tokens,
-                "coverage_target": plan.coverage_target,
-                "queries": [s.query for s in plan.steps],
-                "query_type": str(query_type),
-                "decomposed": decomposed,
-                "planner_mode": planner_mode,
-                "expanded_terms": getattr(plan, "expanded_terms", []),
-                "iterative": getattr(plan, "iterative", False),
-                "max_iterations": getattr(plan, "max_iterations", 1),
-            },
-        ))
+        record_step(
+            self._make_step(
+                "planning",
+                plan_start,
+                plan_start_time,
+                {
+                    "num_steps": len(plan.steps),
+                    "target_tokens": plan.target_tokens,
+                    "coverage_target": plan.coverage_target,
+                    "queries": [s.query for s in plan.steps],
+                    "query_type": str(query_type),
+                    "decomposed": decomposed,
+                    "planner_mode": planner_mode,
+                    "expanded_terms": getattr(plan, "expanded_terms", []),
+                    "iterative": getattr(plan, "iterative", False),
+                    "max_iterations": getattr(plan, "max_iterations", 1),
+                },
+            )
+        )
         routing_params = dict(getattr(plan, "routing_params", {}) or {})
 
         # Step 1.5: Adaptive Gating (new agentic step)
@@ -1015,11 +1084,21 @@ class Orchestrator:
 
         # Handle no-retrieval case (LLM can answer directly)
         if gate_result.decision == GateDecision.NO_RETRIEVAL:
-            record_step(self._make_step("gating", gating_start, gating_start_time, gating_details))
+            record_step(
+                self._make_step(
+                    "gating", gating_start, gating_start_time, gating_details
+                )
+            )
             # Generate direct answer without retrieval
             return await self._generate_direct_answer(
-                query, pipeline_start, pipeline_steps, cache_hash,
-                on_step, on_token, on_stage, record_step,
+                query,
+                pipeline_start,
+                pipeline_steps,
+                cache_hash,
+                on_step,
+                on_token,
+                on_stage,
+                record_step,
                 conversation_id=conversation_id,
                 memory_context=memory_context,
                 runtime_profile=runtime_profile,
@@ -1028,10 +1107,17 @@ class Orchestrator:
         # Handle clarification case
         if gate_result.decision == GateDecision.CLARIFY_FIRST:
             gating_details["clarification"] = gate_result.clarification_question
-            record_step(self._make_step("gating", gating_start, gating_start_time, gating_details))
+            record_step(
+                self._make_step(
+                    "gating", gating_start, gating_start_time, gating_details
+                )
+            )
             # Return clarification request
             return self._build_clarification_response(
-                query, gate_result.clarification_question, pipeline_start, pipeline_steps,
+                query,
+                gate_result.clarification_question,
+                pipeline_start,
+                pipeline_steps,
                 conversation_id=conversation_id,
                 runtime_profile=runtime_profile,
             )
@@ -1042,7 +1128,9 @@ class Orchestrator:
             max_iterations = max(max_iterations, gate_result.suggested_iterations)
 
         gating_details["max_iterations"] = max_iterations
-        record_step(self._make_step("gating", gating_start, gating_start_time, gating_details))
+        record_step(
+            self._make_step("gating", gating_start, gating_start_time, gating_details)
+        )
 
         # Log gating decision for training data collection
         self._decision_logger.log_gate_decision(
@@ -1102,7 +1190,11 @@ class Orchestrator:
             "use_graph": use_graph,
             "use_colbert_plan": budget_plan.use_colbert,
         }
-        record_step(self._make_step("routing", routing_start, routing_start_time, routing_details))
+        record_step(
+            self._make_step(
+                "routing", routing_start, routing_start_time, routing_details
+            )
+        )
 
         # Log routing decision
         self._decision_logger.log_route_decision(
@@ -1124,15 +1216,21 @@ class Orchestrator:
         # Adjust retrieval k per learned router suggestion
         for step in getattr(plan, "steps", []):
             if hasattr(step, "dense_k"):
-                step.dense_k = max(step.dense_k, learned_route.suggested_k or step.dense_k)
+                step.dense_k = max(
+                    step.dense_k, learned_route.suggested_k or step.dense_k
+                )
             if hasattr(step, "sparse_k"):
-                step.sparse_k = max(step.sparse_k, learned_route.suggested_k or step.sparse_k)
+                step.sparse_k = max(
+                    step.sparse_k, learned_route.suggested_k or step.sparse_k
+                )
 
         # Context building (can be slow)
         if base_use_raptor and not self._hierarchy_ready:
             await self._ensure_hierarchy_context(
                 force=False,
-                on_progress=lambda s, c, t: emit_progress(s, items_done=c, items_total=t)
+                on_progress=lambda s, c, t: emit_progress(
+                    s, items_done=c, items_total=t
+                ),
             )
 
         if base_use_graph:
@@ -1142,24 +1240,30 @@ class Orchestrator:
                 "chunks_available": len(self._chunk_records),
             }
             if self._graph_ready and self._graph_scope_matches(document_ids):
-                record_step(PipelineStep(
-                    name="graph_build",
-                    started_at=datetime.now(UTC),
-                    completed_at=datetime.now(UTC),
-                    duration_ms=0.0,
-                    details=graph_build_details,
-                    status="skipped",
-                ))
+                record_step(
+                    PipelineStep(
+                        name="graph_build",
+                        started_at=datetime.now(UTC),
+                        completed_at=datetime.now(UTC),
+                        duration_ms=0.0,
+                        details=graph_build_details,
+                        status="skipped",
+                    )
+                )
             elif self._provider is None or not self._chunk_records:
-                graph_build_details["reason"] = "no_provider" if self._provider is None else "no_chunks"
-                record_step(PipelineStep(
-                    name="graph_build",
-                    started_at=datetime.now(UTC),
-                    completed_at=datetime.now(UTC),
-                    duration_ms=0.0,
-                    details=graph_build_details,
-                    status="skipped",
-                ))
+                graph_build_details["reason"] = (
+                    "no_provider" if self._provider is None else "no_chunks"
+                )
+                record_step(
+                    PipelineStep(
+                        name="graph_build",
+                        started_at=datetime.now(UTC),
+                        completed_at=datetime.now(UTC),
+                        duration_ms=0.0,
+                        details=graph_build_details,
+                        status="skipped",
+                    )
+                )
             else:
                 if on_stage:
                     on_stage("graph_build")
@@ -1169,18 +1273,24 @@ class Orchestrator:
                 await self._ensure_graph_context(
                     force=False,
                     document_ids=document_ids,
-                    on_progress=lambda s, c, t: emit_progress(s, items_done=c, items_total=t)
+                    on_progress=lambda s, c, t: emit_progress(
+                        s, items_done=c, items_total=t
+                    ),
                 )
                 graph_build_details["graph_ready"] = self._graph_ready
-                graph_build_details["entity_count"] = len(self._graph_rag.entities) if self._graph_rag else 0
+                graph_build_details["entity_count"] = (
+                    len(self._graph_rag.entities) if self._graph_rag else 0
+                )
                 status = "completed" if self._graph_ready else "failed"
-                record_step(self._make_step(
-                    "graph_build",
-                    graph_build_start,
-                    graph_build_start_time,
-                    graph_build_details,
-                    status=status,
-                ))
+                record_step(
+                    self._make_step(
+                        "graph_build",
+                        graph_build_start,
+                        graph_build_start_time,
+                        graph_build_details,
+                        status=status,
+                    )
+                )
 
         # Enable high precision mode if budget allows
         emit_progress("routing", detail="Configuring retrieval engine...")
@@ -1231,14 +1341,14 @@ class Orchestrator:
         if cfg_use_hyde and self._provider is not None:
             try:
                 hyde_result = await self._hyde_generator.generate(
-                    query,
-                    self._provider,
-                    query_type=str(query_type)
+                    query, self._provider, query_type=str(query_type)
                 )
                 if hyde_result.hypotheticals:
                     hyde_enhanced_query = hyde_result.embedding_text
                     hyde_details["hypothetical_generated"] = True
-                    hyde_details["hypothetical_preview"] = hyde_result.hypotheticals[0][:200]
+                    hyde_details["hypothetical_preview"] = hyde_result.hypotheticals[0][
+                        :200
+                    ]
             except Exception as e:
                 hyde_details["error"] = str(e)
 
@@ -1260,12 +1370,18 @@ class Orchestrator:
             "clarification_top_k": 4,
         }
 
-        while iteration < max_iterations and (time.perf_counter() - gatherer_start) < ((budget_plan.estimated_latency_ms / 1000.0) * 2.0):
+        while iteration < max_iterations and (time.perf_counter() - gatherer_start) < (
+            (budget_plan.estimated_latency_ms / 1000.0) * 2.0
+        ):
             if trace_id in self._cancelled_traces:
                 raise asyncio.CancelledError(f"Trace {trace_id} cancelled by user")
             iteration_start = time.perf_counter()
             iteration_chunks = []
-            iteration_details = {"iteration": iteration + 1, "query": current_query, "sub_queries": []}
+            iteration_details = {
+                "iteration": iteration + 1,
+                "query": current_query,
+                "sub_queries": [],
+            }
 
             # Emit per-iteration progress
             emit_progress(
@@ -1287,12 +1403,14 @@ class Orchestrator:
                 _total_steps: int = total_steps,
             ):
                 step_query = step.query if _iteration == 0 else _current_query
-                query_preview = step_query[:50] + "..." if len(step_query) > 50 else step_query
+                query_preview = (
+                    step_query[:50] + "..." if len(step_query) > 50 else step_query
+                )
                 sub_start = time.perf_counter()
 
                 emit_progress(
                     "gatherer",
-                    detail=f"Searching query {idx + 1}/{_total_steps}: \"{query_preview}\"",
+                    detail=f'Searching query {idx + 1}/{_total_steps}: "{query_preview}"',
                     items_done=idx,
                     items_total=_total_steps,
                 )
@@ -1303,16 +1421,17 @@ class Orchestrator:
                     document_ids=document_ids,
                     routing_params=routing_params,
                     on_progress=lambda msg, val: emit_progress(
-                        "gatherer",
-                        detail=f"{query_preview}: {msg}",
-                        progress=val
-                    )
+                        "gatherer", detail=f"{query_preview}: {msg}", progress=val
+                    ),
                 )
                 duration_ms = round((time.perf_counter() - sub_start) * 1000, 2)
                 return idx, step_query, step_evidence, duration_ms
 
             # Run all steps in parallel for this iteration
-            tasks = [asyncio.create_task(run_retrieval_step(i, s)) for i, s in enumerate(plan.steps)]
+            tasks = [
+                asyncio.create_task(run_retrieval_step(i, s))
+                for i, s in enumerate(plan.steps)
+            ]
             try:
                 step_results = await asyncio.gather(*tasks)
             except Exception as e:
@@ -1360,14 +1479,20 @@ class Orchestrator:
                 iteration_details["relevance_filter"] = relevance_stats
 
             # Also check coverage for more granular assessment
-            coverage_verdict, coverage_ratio, missing_aspects = self._retrieval_evaluator.evaluate_coverage(
-                current_query, iteration_chunks
+            coverage_verdict, coverage_ratio, missing_aspects = (
+                self._retrieval_evaluator.evaluate_coverage(
+                    current_query, iteration_chunks
+                )
             )
             iteration_details["coverage_ratio"] = coverage_ratio
-            iteration_details["missing_aspects"] = missing_aspects[:3]  # Limit for logging
+            iteration_details["missing_aspects"] = missing_aspects[
+                :3
+            ]  # Limit for logging
             final_coverage_ratio = coverage_ratio
-            plan_coverage_ratio, missing_plan_queries = self._retrieval_evaluator.evaluate_plan_coverage(
-                plan_queries, iteration_chunks
+            plan_coverage_ratio, missing_plan_queries = (
+                self._retrieval_evaluator.evaluate_plan_coverage(
+                    plan_queries, iteration_chunks
+                )
             )
             plan_coverage_target = min(0.85, max(0.6, target_coverage))
             iteration_details["plan_coverage_ratio"] = round(plan_coverage_ratio, 3)
@@ -1378,9 +1503,13 @@ class Orchestrator:
                 iteration_details["plan_coverage_gap"] = round(
                     max(0.0, plan_coverage_target - plan_coverage_ratio), 3
                 )
-            coverage_sufficient = coverage_ratio >= target_coverage and plan_coverage_sufficient
+            coverage_sufficient = (
+                coverage_ratio >= target_coverage and plan_coverage_sufficient
+            )
             if not coverage_sufficient:
-                iteration_details["coverage_gap"] = round(max(0.0, target_coverage - coverage_ratio), 3)
+                iteration_details["coverage_gap"] = round(
+                    max(0.0, target_coverage - coverage_ratio), 3
+                )
 
             # Handle INCORRECT verdict - widen search or try slot-fill
             if eval_result.verdict == RetrievalVerdict.INCORRECT:
@@ -1389,8 +1518,12 @@ class Orchestrator:
                 # Increase k by configured factor for next iteration
                 for step in plan.steps:
                     step.dense_k = int(step.dense_k * widen_factor)
-                    step.sparse_k = int(getattr(step, 'sparse_k', step.dense_k) * widen_factor)
-                iteration_details["new_dense_k"] = plan.steps[0].dense_k if plan.steps else 0
+                    step.sparse_k = int(
+                        getattr(step, "sparse_k", step.dense_k) * widen_factor
+                    )
+                iteration_details["new_dense_k"] = (
+                    plan.steps[0].dense_k if plan.steps else 0
+                )
                 # Activate advanced modes after incorrect verdict
                 if not use_raptor and self._document_trees:
                     use_raptor = True
@@ -1399,22 +1532,32 @@ class Orchestrator:
                     use_graph = True
                     iteration_details["policy_enable_graph"] = True
                 # Opportunistically pull RAPTOR/Graph context immediately
-                if self._document_trees and iteration_details.get("raptor_chunks_added") is None:
+                if (
+                    self._document_trees
+                    and iteration_details.get("raptor_chunks_added") is None
+                ):
                     try:
                         raptor_chunks = await self._retrieve_with_raptor(
                             current_query, document_ids, iteration_chunks
                         )
                         if raptor_chunks:
                             iteration_chunks.extend(raptor_chunks)
-                            iteration_details["raptor_chunks_added"] = len(raptor_chunks)
+                            iteration_details["raptor_chunks_added"] = len(
+                                raptor_chunks
+                            )
                     except Exception as e:
                         print(f"RAPTOR corrective retrieval failed: {e}")
-                if self._graph_rag is not None and iteration_details.get("graph_chunks_added") is None:
+                if (
+                    self._graph_rag is not None
+                    and iteration_details.get("graph_chunks_added") is None
+                ):
                     try:
                         if on_stage:
                             on_stage("graph_retrieval")
                         graph_start = time.perf_counter()
-                        graph_chunks = await self._retrieve_with_graph(current_query, document_ids)
+                        graph_chunks = await self._retrieve_with_graph(
+                            current_query, document_ids
+                        )
                         graph_retrieval_ms += (time.perf_counter() - graph_start) * 1000
                         if graph_chunks:
                             iteration_chunks.extend(graph_chunks)
@@ -1423,15 +1566,22 @@ class Orchestrator:
                         print(f"GraphRAG corrective retrieval failed: {e}")
 
                 # Web fallback only if available (fixed null check)
-                if self._web_search is not None and hasattr(self._web_search, 'available') and self._web_search.available:
+                if (
+                    self._web_search is not None
+                    and hasattr(self._web_search, "available")
+                    and self._web_search.available
+                ):
                     web_start = time.perf_counter()
-                    web_results = await self._web_search.search(current_query, max_results=3)
+                    web_results = await self._web_search.search(
+                        current_query, max_results=3
+                    )
                     if web_results:
                         iteration_details["web_fallback"] = True
                         iteration_details["web_results"] = len(web_results)
                         # Convert web results to chunk-like format
                         for wr in web_results:
                             from .gatherer import EvidenceChunk
+
                             web_chunk = EvidenceChunk(
                                 id=f"web_{hash(wr.url) % 10000}",
                                 title=wr.title,
@@ -1439,12 +1589,16 @@ class Orchestrator:
                                 score=0.5,
                             )
                             iteration_chunks.append(web_chunk)
-                    iteration_details["web_duration_ms"] = round((time.perf_counter() - web_start) * 1000, 2)
+                    iteration_details["web_duration_ms"] = round(
+                        (time.perf_counter() - web_start) * 1000, 2
+                    )
 
             # Handle LOW_COVERAGE verdict - generate slot-fill queries
             if coverage_verdict == RetrievalVerdict.LOW_COVERAGE:
-                slot_fill_queries = self._retrieval_evaluator.generate_slot_fill_queries(
-                    current_query, iteration_chunks, self._provider
+                slot_fill_queries = (
+                    self._retrieval_evaluator.generate_slot_fill_queries(
+                        current_query, iteration_chunks, self._provider
+                    )
                 )
                 iteration_details["corrective_action"] = "slot_fill"
                 iteration_details["slot_fill_queries"] = slot_fill_queries
@@ -1458,7 +1612,9 @@ class Orchestrator:
                         routing_params=routing_params,
                     )
                     iteration_chunks.extend(sub_evidence.chunks)
-                    iteration_details["slot_fill_chunks_added"] = iteration_details.get("slot_fill_chunks_added", 0) + len(sub_evidence.chunks)
+                    iteration_details["slot_fill_chunks_added"] = iteration_details.get(
+                        "slot_fill_chunks_added", 0
+                    ) + len(sub_evidence.chunks)
 
             # Handle AMBIGUOUS verdict with knowledge strip extraction
             if eval_result.verdict == RetrievalVerdict.AMBIGUOUS:
@@ -1466,12 +1622,16 @@ class Orchestrator:
                     iteration_chunks, current_query
                 )
                 iteration_details["knowledge_strips_extracted"] = len(knowledge_strips)
-                clarification_queries = self._retrieval_evaluator.generate_clarification_queries(
-                    current_query, iteration_chunks
+                clarification_queries = (
+                    self._retrieval_evaluator.generate_clarification_queries(
+                        current_query, iteration_chunks
+                    )
                 )
                 if clarification_queries:
                     iteration_details["clarification_queries"] = clarification_queries
-                    for cq in clarification_queries[: policy_config["max_clarification_queries"]]:
+                    for cq in clarification_queries[
+                        : policy_config["max_clarification_queries"]
+                    ]:
                         clar_evidence = await self._gatherer.gather(
                             cq,
                             top_k=policy_config["clarification_top_k"],
@@ -1480,10 +1640,12 @@ class Orchestrator:
                         )
                         iteration_chunks.extend(clar_evidence.chunks)
                         iteration_details.setdefault("clarification_chunks_added", 0)
-                        iteration_details["clarification_chunks_added"] += len(clar_evidence.chunks)
+                        iteration_details["clarification_chunks_added"] += len(
+                            clar_evidence.chunks
+                        )
 
                 # Try decomposing the query for targeted retrieval
-                if hasattr(self._planner, 'decompose_query'):
+                if hasattr(self._planner, "decompose_query"):
                     try:
                         sub_queries = await self._planner.decompose_query(current_query)
                         for sq in sub_queries[:2]:  # Limit to 2 sub-queries
@@ -1518,7 +1680,9 @@ class Orchestrator:
                     if on_stage:
                         on_stage("graph_retrieval")
                     graph_start = time.perf_counter()
-                    graph_chunks = await self._retrieve_with_graph(current_query, document_ids)
+                    graph_chunks = await self._retrieve_with_graph(
+                        current_query, document_ids
+                    )
                     graph_retrieval_ms += (time.perf_counter() - graph_start) * 1000
                     if graph_chunks:
                         iteration_chunks.extend(graph_chunks)
@@ -1545,21 +1709,30 @@ class Orchestrator:
                 accumulated_chunks.append(chunk)
 
             iteration_details["chunks_this_iteration"] = len(iteration_chunks)
-            iteration_details["duration_ms"] = round((time.perf_counter() - iteration_start) * 1000, 2)
+            iteration_details["duration_ms"] = round(
+                (time.perf_counter() - iteration_start) * 1000, 2
+            )
             gatherer_details["iterations"].append(iteration_details)
 
             # Check stopping criteria
             if iteration > 0 and len(accumulated_chunks) > 0:
                 # Compute marginal gain
-                prev_chunk_dicts = [{"text": c.snippet, "score": c.score} for c in accumulated_chunks[:-len(iteration_chunks)]]
-                new_chunk_dicts = [{"text": c.snippet, "score": c.score} for c in iteration_chunks]
+                prev_chunk_dicts = [
+                    {"text": c.snippet, "score": c.score}
+                    for c in accumulated_chunks[: -len(iteration_chunks)]
+                ]
+                new_chunk_dicts = [
+                    {"text": c.snippet, "score": c.score} for c in iteration_chunks
+                ]
                 marginal_gain = compute_marginal_gain(prev_chunk_dicts, new_chunk_dicts)
 
                 iteration_details["marginal_gain"] = marginal_gain
                 stop_threshold = getattr(plan, "stop_threshold", 0.1)
 
                 if marginal_gain < stop_threshold and coverage_sufficient:
-                    iteration_details["stopped_reason"] = f"marginal_gain ({marginal_gain:.3f}) < threshold ({stop_threshold})"
+                    iteration_details["stopped_reason"] = (
+                        f"marginal_gain ({marginal_gain:.3f}) < threshold ({stop_threshold})"
+                    )
                     break
 
             # Check if verdict suggests we should stop or refine
@@ -1576,12 +1749,18 @@ class Orchestrator:
 
         all_chunks = accumulated_chunks
         gatherer_details["total_iterations"] = iteration + 1
-        gatherer_details["final_verdict"] = retrieval_verdict.value if retrieval_verdict else "unknown"
+        gatherer_details["final_verdict"] = (
+            retrieval_verdict.value if retrieval_verdict else "unknown"
+        )
         gatherer_details["embedding_cache_hits"] = embedding_cache_hits
         gatherer_details["embedding_cache_misses"] = embedding_cache_misses
         gatherer_details["raptor_total"] = total_raptor_chunks
         gatherer_details["graph_total"] = total_graph_chunks
-        record_step(self._make_step("gatherer", gatherer_start, gatherer_start_time, gatherer_details))
+        record_step(
+            self._make_step(
+                "gatherer", gatherer_start, gatherer_start_time, gatherer_details
+            )
+        )
 
         if cfg_use_graph:
             graph_status = "completed" if total_graph_chunks > 0 else "skipped"
@@ -1671,7 +1850,11 @@ class Orchestrator:
             precision_stats = retrieval_details.get("precision_stats", {})
             colbert_enabled = retrieval_details.get("colbert_enabled", False)
             rerank_enabled = retrieval_details.get("rerank_enabled", rerank_enabled)
-        record_step(self._make_step("retrieval", retrieval_start, retrieval_start_time, retrieval_details))
+        record_step(
+            self._make_step(
+                "retrieval", retrieval_start, retrieval_start_time, retrieval_details
+            )
+        )
         retrieval_backend = retrieval_details.get("retrieval_backend", "float32")
 
         # P0.1: Grounded mode no-evidence check
@@ -1679,13 +1862,17 @@ class Orchestrator:
         if effective_query_mode == QueryMode.GROUNDED and not chunks:
             no_evidence_response = build_no_evidence_answer(
                 query=query,
-                corpus_doc_count=len(getattr(self._retrieval, '_document_store', {}) or []),
-                corpus_chunk_count=len(getattr(self._retrieval, '_chunks', []) or []),
-                search_terms_tried=[s.query for s in plan.steps] if hasattr(plan, 'steps') else [query],
+                corpus_doc_count=len(
+                    getattr(self._retrieval, "_document_store", {}) or []
+                ),
+                corpus_chunk_count=len(getattr(self._retrieval, "_chunks", []) or []),
+                search_terms_tried=[s.query for s in plan.steps]
+                if hasattr(plan, "steps")
+                else [query],
             )
             no_evidence_response["trace_id"] = trace_id
             no_evidence_response["steps"] = [
-                step.__dict__ if hasattr(step, '__dict__') else step
+                step.__dict__ if hasattr(step, "__dict__") else step
                 for step in pipeline_steps
             ]
             no_evidence_response["metrics"]["total_duration_ms"] = round(
@@ -1702,7 +1889,11 @@ class Orchestrator:
                     "mode": "grounded",
                     "reason": "no_supporting_documents",
                     "chunks_found": 0,
-                    "suggested_actions": len(no_evidence_response.get("grounding", {}).get("no_evidence_response", {}).get("suggested_actions", [])),
+                    "suggested_actions": len(
+                        no_evidence_response.get("grounding", {})
+                        .get("no_evidence_response", {})
+                        .get("suggested_actions", [])
+                    ),
                 },
                 status="no_evidence",
             )
@@ -1716,9 +1907,13 @@ class Orchestrator:
             abstention_result = self._abstention_rules.check(
                 chunks=chunks,
                 retrieval_verdict=retrieval_verdict,
-                verdict_confidence=eval_result.confidence if 'eval_result' in dir() else 0.5,
+                verdict_confidence=eval_result.confidence
+                if "eval_result" in dir()
+                else 0.5,
                 coverage_ratio=final_coverage_ratio,
-                plan_coverage_ratio=plan_coverage_ratio if 'plan_coverage_ratio' in dir() else 0.5,
+                plan_coverage_ratio=plan_coverage_ratio
+                if "plan_coverage_ratio" in dir()
+                else 0.5,
                 query=query,
             )
 
@@ -1730,7 +1925,9 @@ class Orchestrator:
                     completed_at=datetime.now(UTC),
                     duration_ms=0.0,
                     details={
-                        "reason": abstention_result.reason.value if abstention_result.reason else "unknown",
+                        "reason": abstention_result.reason.value
+                        if abstention_result.reason
+                        else "unknown",
                         "confidence": abstention_result.confidence,
                         **abstention_result.details,
                     },
@@ -1750,7 +1947,9 @@ class Orchestrator:
 
         compression_enabled = bool(self._config and self._config.retrieval.compression)
 
-        def run_compression_step(step_name: str, chunk_list: list[EvidenceChunk]) -> tuple[str, list[dict]]:
+        def run_compression_step(
+            step_name: str, chunk_list: list[EvidenceChunk]
+        ) -> tuple[str, list[dict]]:
             if on_stage:
                 on_stage(step_name)
             compression_start_time = datetime.now(UTC)
@@ -1771,7 +1970,9 @@ class Orchestrator:
                 }
                 compression_status = "completed"
             else:
-                context_text, citation_payload = self._compressor.format_with_citations(chunk_list)
+                context_text, citation_payload = self._compressor.format_with_citations(
+                    chunk_list
+                )
                 compression_details = {
                     "enabled": False,
                     "chunks_used": len(chunk_list),
@@ -1794,9 +1995,12 @@ class Orchestrator:
             and getattr(self._config.retrieval, "flare_generation", False)
             and isinstance(self._retrieval, HybridRetrievalEngine)
         )
-        retriever_for_flare = cast(HybridRetrievalEngine, self._retrieval) if enable_flare else None
+        retriever_for_flare = (
+            cast(HybridRetrievalEngine, self._retrieval) if enable_flare else None
+        )
         enforce_evidence_contract = bool(
-            self._config and getattr(self._config.retrieval, "enforce_evidence_contract", False)
+            self._config
+            and getattr(self._config.retrieval, "enforce_evidence_contract", False)
         )
         max_evidence_contract_retries = 2
 
@@ -1906,12 +2110,18 @@ For each question:
                                 **flare_kwargs,
                             )
                         else:
-                            flare_result = await self._flare_generator.generate_with_flare(**flare_kwargs)
+                            flare_result = (
+                                await self._flare_generator.generate_with_flare(
+                                    **flare_kwargs
+                                )
+                            )
                         answer = flare_result.answer
                         gen_details["mode"] = "flare"
                         gen_details["status"] = "success"
                         gen_details["flare_retrievals"] = flare_result.total_retrievals
-                        gen_details["flare_chunks_used"] = flare_result.total_chunks_used
+                        gen_details["flare_chunks_used"] = (
+                            flare_result.total_chunks_used
+                        )
                         gen_details["flare_steps"] = len(flare_result.steps)
                     else:
                         if enable_flare and retriever_for_flare is not None:
@@ -1933,14 +2143,18 @@ For each question:
                                 {"role": "system", "content": system_prompt},
                             ]
                             if memory_context:
-                                messages.append({"role": "system", "content": memory_context})
+                                messages.append(
+                                    {"role": "system", "content": memory_context}
+                                )
                             # Inject history if available (Phase 12)
                             if history:
                                 for turn in history:
                                     role = turn.get("role", "user")
                                     content = turn.get("content", "")
                                     if role in ("user", "assistant") and content:
-                                        messages.append({"role": role, "content": content})
+                                        messages.append(
+                                            {"role": role, "content": content}
+                                        )
 
                             messages.append({"role": "user", "content": user_prompt})
                             if on_token is not None:
@@ -1964,7 +2178,9 @@ For each question:
                     gen_details["status"] = "error"
                     gen_details["error"] = PUBLIC_PROVIDER_ERROR_MESSAGE
 
-            record_step(self._make_step(step_name, gen_start, gen_start_time, gen_details))
+            record_step(
+                self._make_step(step_name, gen_start, gen_start_time, gen_details)
+            )
             return answer, gen_details
 
         # Step 3: Context Compression (new!)
@@ -2000,7 +2216,14 @@ The retrieved evidence contains some conflicting information. When you encounter
 3. State which source appears more authoritative if applicable
 4. Do not fabricate a resolution - acknowledge uncertainty"""
 
-        record_step(self._make_step("conflict_detection", conflict_start, conflict_start_time, conflict_details))
+        record_step(
+            self._make_step(
+                "conflict_detection",
+                conflict_start,
+                conflict_start_time,
+                conflict_details,
+            )
+        )
 
         # Step 3.75: Thinking / Outline (user-visible, no chain-of-thought)
         if on_stage:
@@ -2015,13 +2238,15 @@ The retrieved evidence contains some conflicting information. When you encounter
             citations_count=len(citations),
             allow_query_only=False,
         )
-        record_step(self._make_step(
-            "thinking",
-            thinking_start,
-            thinking_start_time,
-            thinking_details,
-            status=thinking_status,
-        ))
+        record_step(
+            self._make_step(
+                "thinking",
+                thinking_start,
+                thinking_start_time,
+                thinking_details,
+                status=thinking_status,
+            )
+        )
 
         # Step 4: Generation (with optional FLARE mid-generation retrieval)
         answer, gen_details = await run_generation_step(
@@ -2037,7 +2262,9 @@ The retrieved evidence contains some conflicting information. When you encounter
             answer_text: str,
             chunk_list: list[EvidenceChunk],
         ) -> tuple[str, dict]:
-            stage_label = "verification" if step_name == "verification" else "verification_retry"
+            stage_label = (
+                "verification" if step_name == "verification" else "verification_retry"
+            )
             if on_stage:
                 on_stage(stage_label)
             firewall_start_time = datetime.now(UTC)
@@ -2057,8 +2284,14 @@ The retrieved evidence contains some conflicting information. When you encounter
             sanitized_answer = answer_text
             if self._hallucination_firewall.strict_mode:
                 sanitized_answer = firewall_result.cleaned_answer
-                firewall_details["answer_modified"] = sanitized_answer != firewall_result.original_answer
-            record_step(self._make_step(step_name, firewall_start, firewall_start_time, firewall_details))
+                firewall_details["answer_modified"] = (
+                    sanitized_answer != firewall_result.original_answer
+                )
+            record_step(
+                self._make_step(
+                    step_name, firewall_start, firewall_start_time, firewall_details
+                )
+            )
             return sanitized_answer, firewall_details
 
         # Step 4.5: Hallucination Firewall (SOTA enhancement)
@@ -2102,7 +2335,11 @@ The retrieved evidence contains some conflicting information. When you encounter
                     else f"evidence_contract_retry_{contract_retries}"
                 )
                 if on_stage:
-                    on_stage("evidence_contract" if contract_checks == 1 else "evidence_contract_retry")
+                    on_stage(
+                        "evidence_contract"
+                        if contract_checks == 1
+                        else "evidence_contract_retry"
+                    )
                 contract_start_time = datetime.now(UTC)
                 contract_start = time.perf_counter()
                 contract_result = self._evidence_contract.verify_answer(answer, chunks)
@@ -2113,8 +2350,18 @@ The retrieved evidence contains some conflicting information. When you encounter
                     "unsupported_claims": len(contract_result.unsupported_claims),
                     "suggested_retrievals": contract_result.suggested_retrievals[:3],
                 }
-                record_step(self._make_step(contract_step_name, contract_start, contract_start_time, contract_details))
-                if contract_result.pass_threshold or contract_retries >= max_evidence_contract_retries:
+                record_step(
+                    self._make_step(
+                        contract_step_name,
+                        contract_start,
+                        contract_start_time,
+                        contract_details,
+                    )
+                )
+                if (
+                    contract_result.pass_threshold
+                    or contract_retries >= max_evidence_contract_retries
+                ):
                     break
                 suggestions = [s for s in contract_result.suggested_retrievals if s][:3]
                 if not suggestions:
@@ -2140,7 +2387,7 @@ The retrieved evidence contains some conflicting information. When you encounter
                     contract_step_name,
                     detail=f"Contract failed ({round(contract_result.coverage_ratio, 2)} coverage). Retrying with {len(targeted_chunks)} new chunks...",
                     items_done=contract_retries,
-                    items_total=max_evidence_contract_retries
+                    items_total=max_evidence_contract_retries,
                 )
                 context, citations = run_compression_step(
                     f"compression_contract_retry_{contract_retries}",
@@ -2157,7 +2404,7 @@ The retrieved evidence contains some conflicting information. When you encounter
                     f"generation_contract_retry_{contract_retries}",
                     detail="Verification successful. Finalizing answer...",
                     items_done=contract_retries,
-                    items_total=max_evidence_contract_retries
+                    items_total=max_evidence_contract_retries,
                 )
                 answer, _ = run_firewall_step(
                     f"verification_contract_retry_{contract_retries}",
@@ -2167,7 +2414,9 @@ The retrieved evidence contains some conflicting information. When you encounter
                 # Loop continues for another contract check
                 if contract_retries >= max_evidence_contract_retries:
                     break
-            contract_passed = contract_result.pass_threshold if contract_result else None
+            contract_passed = (
+                contract_result.pass_threshold if contract_result else None
+            )
 
         # Step 4.7: Citation Verification (G1 Guarantee - vNext Expansion)
         # Ensures every citation maps to a retrieved chunk ID or gets repaired/marked
@@ -2196,13 +2445,15 @@ The retrieved evidence contains some conflicting information. When you encounter
             except Exception as e:
                 citation_details["repair_error"] = str(e)
 
-        record_step(self._make_step(
-            "citation_verification",
-            citation_start,
-            citation_start_time,
-            citation_details,
-            status="passed" if citation_result.final_pass else "repaired",
-        ))
+        record_step(
+            self._make_step(
+                "citation_verification",
+                citation_start,
+                citation_start_time,
+                citation_details,
+                status="passed" if citation_result.final_pass else "repaired",
+            )
+        )
 
         if on_stage:
             on_stage("reflection")
@@ -2225,7 +2476,9 @@ The retrieved evidence contains some conflicting information. When you encounter
         }
 
         # Phase 2: Self-RAG LLM-based critic (v2.0 enhancement)
-        cfg_self_rag = getattr(cfg_retrieval, "self_rag_critic", False) if cfg_retrieval else False
+        cfg_self_rag = (
+            getattr(cfg_retrieval, "self_rag_critic", False) if cfg_retrieval else False
+        )
         critic_result = None
         if cfg_self_rag and self._provider is not None:
             try:
@@ -2240,7 +2493,9 @@ The retrieved evidence contains some conflicting information. When you encounter
                     "support": critic_result.support.value,
                     "utility": critic_result.utility.value,
                     "should_regenerate": critic_result.should_regenerate,
-                    "critique": critic_result.critique[:200] if critic_result.critique else "",
+                    "critique": critic_result.critique[:200]
+                    if critic_result.critique
+                    else "",
                 }
                 # Override retry decision if critic strongly recommends regeneration
                 if critic_result.should_regenerate and critic_result.utility <= 2:
@@ -2248,7 +2503,14 @@ The retrieved evidence contains some conflicting information. When you encounter
             except Exception as e:
                 reflection_details["self_rag_error"] = str(e)
 
-        record_step(self._make_step("reflection", reflection_start, reflection_start_time, reflection_details))
+        record_step(
+            self._make_step(
+                "reflection",
+                reflection_start,
+                reflection_start_time,
+                reflection_details,
+            )
+        )
 
         # Log comprehensive answer quality metrics (SOTA enhancement)
         # We calculate these before retry to capture the initial attempt quality
@@ -2270,7 +2532,9 @@ The retrieved evidence contains some conflicting information. When you encounter
             context_precision=ragas_metrics.context_precision,
             context_recall=ragas_metrics.context_recall,
             overall_score=ragas_metrics.overall_score,
-            reflection_quality=reflection_result.quality.value if reflection_result else "unknown",
+            reflection_quality=reflection_result.quality.value
+            if reflection_result
+            else "unknown",
             should_retry=reflection_result.should_retry if reflection_result else False,
         )
 
@@ -2356,7 +2620,9 @@ The retrieved evidence contains some conflicting information. When you encounter
             retrieval_mode = "graph"
         elif total_raptor_chunks:
             retrieval_mode = "raptor"
-        flare_retrievals = int(gen_details.get("flare_retrievals", 0)) if gen_details else 0
+        flare_retrievals = (
+            int(gen_details.get("flare_retrievals", 0)) if gen_details else 0
+        )
         firewall_pass_rate = firewall_details.get("pass_rate", 1.0)
         memory_result = None
         if conversation_id and self._memory is not None:
@@ -2389,9 +2655,15 @@ The retrieved evidence contains some conflicting information. When you encounter
                 "retrieval_backend": retrieval_backend,
                 "flare_retrievals": flare_retrievals,
                 "firewall_pass_rate": firewall_pass_rate,
-                "quality_rating": reflection_result.quality.value if reflection_result else "unknown",
-                "answer_quality": reflection_result.quality.value if reflection_result else "unknown",
-                "answer_confidence": reflection_result.confidence if reflection_result else 0.0,
+                "quality_rating": reflection_result.quality.value
+                if reflection_result
+                else "unknown",
+                "answer_quality": reflection_result.quality.value
+                if reflection_result
+                else "unknown",
+                "answer_confidence": reflection_result.confidence
+                if reflection_result
+                else 0.0,
                 "faithfulness": ragas_metrics.faithfulness,
                 "coherence": ragas_metrics.overall_score,
                 "ragas": ragas_metrics.to_dict(),
@@ -2402,8 +2674,12 @@ The retrieved evidence contains some conflicting information. When you encounter
                 "pii_redacted": pii_redacted,
                 "deployment_profile": runtime_profile.get("deployment_profile", ""),
                 "runtime_backends": runtime_profile.get("backends", {}),
-                "memory_written": bool(memory_result and memory_result.get("memory_written")),
-                "memory_score": memory_result.get("memory_score", 0.0) if memory_result else 0.0,
+                "memory_written": bool(
+                    memory_result and memory_result.get("memory_written")
+                ),
+                "memory_score": memory_result.get("memory_score", 0.0)
+                if memory_result
+                else 0.0,
                 "conversation_id": conversation_id or "",
             },
             steps=pipeline_steps,
@@ -2441,9 +2717,15 @@ The retrieved evidence contains some conflicting information. When you encounter
                 "retrieval_mode": retrieval_mode,
                 "flare_retrievals": flare_retrievals,
                 "firewall_pass_rate": firewall_pass_rate,
-                "quality_rating": reflection_result.quality.value if reflection_result else "unknown",
-                "answer_quality": reflection_result.quality.value if reflection_result else "unknown",
-                "answer_confidence": reflection_result.confidence if reflection_result else 0.0,
+                "quality_rating": reflection_result.quality.value
+                if reflection_result
+                else "unknown",
+                "answer_quality": reflection_result.quality.value
+                if reflection_result
+                else "unknown",
+                "answer_confidence": reflection_result.confidence
+                if reflection_result
+                else 0.0,
                 "faithfulness": ragas_metrics.faithfulness,
                 "coherence": ragas_metrics.overall_score,
                 "ragas": ragas_metrics.to_dict(),
@@ -2454,19 +2736,33 @@ The retrieved evidence contains some conflicting information. When you encounter
                 "pii_redacted": pii_redacted,
                 "deployment_profile": runtime_profile.get("deployment_profile", ""),
                 "runtime_backends": runtime_profile.get("backends", {}),
-                "memory_written": bool(memory_result and memory_result.get("memory_written")),
-                "memory_score": memory_result.get("memory_score", 0.0) if memory_result else 0.0,
+                "memory_written": bool(
+                    memory_result and memory_result.get("memory_written")
+                ),
+                "memory_score": memory_result.get("memory_score", 0.0)
+                if memory_result
+                else 0.0,
                 "conversation_id": conversation_id or "",
             },
             "confidence": {
                 "overall": reflection_result.confidence if reflection_result else 0.5,
                 "factors": {
-                    "retrieval": min(1.0, final_coverage_ratio / target_coverage) if target_coverage > 0 else 0.5,
-                    "generation": reflection_result.confidence if reflection_result else 0.5,
-                    "citation": citation_result.pass_rate if 'citation_result' in dir() and citation_result else 0.5,
+                    "retrieval": min(1.0, final_coverage_ratio / target_coverage)
+                    if target_coverage > 0
+                    else 0.5,
+                    "generation": reflection_result.confidence
+                    if reflection_result
+                    else 0.5,
+                    "citation": citation_result.pass_rate
+                    if "citation_result" in dir() and citation_result
+                    else 0.5,
                 },
-                "hallucination_pass": firewall_passed if 'firewall_passed' in dir() else None,
-                "evidence_contract_pass": contract_passed if 'contract_passed' in dir() else None,
+                "hallucination_pass": firewall_passed
+                if "firewall_passed" in dir()
+                else None,
+                "evidence_contract_pass": contract_passed
+                if "contract_passed" in dir()
+                else None,
             },
             "steps": steps_out,
         }
@@ -2474,9 +2770,9 @@ The retrieved evidence contains some conflicting information. When you encounter
         # vNext E1: Create trace bundle for export
         corpus_version = ""
         retrieval_mode_flags = RetrievalMode.STANDARD
-        if hasattr(self._retrieval, 'get_corpus_version'):
+        if hasattr(self._retrieval, "get_corpus_version"):
             corpus_version = self._retrieval.get_corpus_version()
-        if hasattr(self._retrieval, 'get_retrieval_mode_flags'):
+        if hasattr(self._retrieval, "get_retrieval_mode_flags"):
             retrieval_mode_flags = self._retrieval.get_retrieval_mode_flags()
 
         self._last_trace_bundle = create_trace_bundle(
@@ -2487,10 +2783,14 @@ The retrieved evidence contains some conflicting information. When you encounter
             config_hash=cache_hash,
             retrieval_mode=retrieval_mode_flags,
             evaluator_verdicts={
-                "reflection_quality": reflection_result.quality.value if reflection_result else "unknown",
-                "retrieval_verdict": retrieval_verdict.value if retrieval_verdict else "unknown",
+                "reflection_quality": reflection_result.quality.value
+                if reflection_result
+                else "unknown",
+                "retrieval_verdict": retrieval_verdict.value
+                if retrieval_verdict
+                else "unknown",
             },
-            citation_check=citation_details if 'citation_details' in dir() else {},
+            citation_check=citation_details if "citation_details" in dir() else {},
             total_duration_ms=total_duration_ms,
         )
         result["trace_bundle_available"] = True
@@ -2545,13 +2845,15 @@ The retrieved evidence contains some conflicting information. When you encounter
             citations_count=0,
             allow_query_only=True,
         )
-        record_step(self._make_step(
-            "thinking",
-            thinking_start,
-            thinking_start_time,
-            thinking_details,
-            status=thinking_status,
-        ))
+        record_step(
+            self._make_step(
+                "thinking",
+                thinking_start,
+                thinking_start_time,
+                thinking_details,
+                status=thinking_status,
+            )
+        )
 
         if on_stage:
             on_stage("generation")
@@ -2607,7 +2909,9 @@ Be helpful, accurate, and concise."""
                 gen_details["status"] = "error"
                 gen_details["error"] = PUBLIC_PROVIDER_ERROR_MESSAGE
 
-        record_step(self._make_step("generation", gen_start, gen_start_time, gen_details))
+        record_step(
+            self._make_step("generation", gen_start, gen_start_time, gen_details)
+        )
 
         total_duration_ms = sum(s.duration_ms for s in pipeline_steps)
 
@@ -2618,7 +2922,11 @@ Be helpful, accurate, and concise."""
                 conversation_id=conversation_id,
                 user_query=query,
                 answer=answer,
-                metadata={"chunks_used": [], "sources_count": 0, "query_type": "direct"},
+                metadata={
+                    "chunks_used": [],
+                    "sources_count": 0,
+                    "query_type": "direct",
+                },
             )
         trace = self._telemetry.record(
             prompt=query,
@@ -2631,11 +2939,17 @@ Be helpful, accurate, and concise."""
                 "cache_hit": False,
                 "mode": "direct_no_retrieval",
                 "pii_redacted": pii_redacted,
-                "deployment_profile": (runtime_profile or {}).get("deployment_profile", ""),
+                "deployment_profile": (runtime_profile or {}).get(
+                    "deployment_profile", ""
+                ),
                 "runtime_backends": (runtime_profile or {}).get("backends", {}),
                 "conversation_id": conversation_id or "",
-                "memory_written": bool(memory_result and memory_result.get("memory_written")),
-                "memory_score": memory_result.get("memory_score", 0.0) if memory_result else 0.0,
+                "memory_written": bool(
+                    memory_result and memory_result.get("memory_written")
+                ),
+                "memory_score": memory_result.get("memory_score", 0.0)
+                if memory_result
+                else 0.0,
             },
             steps=pipeline_steps,
             started_at=pipeline_start,
@@ -2656,11 +2970,17 @@ Be helpful, accurate, and concise."""
                 "cache_hit": False,
                 "mode": "direct_no_retrieval",
                 "pii_redacted": pii_redacted,
-                "deployment_profile": (runtime_profile or {}).get("deployment_profile", ""),
+                "deployment_profile": (runtime_profile or {}).get(
+                    "deployment_profile", ""
+                ),
                 "runtime_backends": (runtime_profile or {}).get("backends", {}),
                 "conversation_id": conversation_id or "",
-                "memory_written": bool(memory_result and memory_result.get("memory_written")),
-                "memory_score": memory_result.get("memory_score", 0.0) if memory_result else 0.0,
+                "memory_written": bool(
+                    memory_result and memory_result.get("memory_written")
+                ),
+                "memory_score": memory_result.get("memory_score", 0.0)
+                if memory_result
+                else 0.0,
             },
             "steps": steps_out,
         }
@@ -2682,7 +3002,10 @@ Be helpful, accurate, and concise."""
         """Build response asking user for clarification."""
         total_duration_ms = sum(s.duration_ms for s in pipeline_steps)
 
-        clarification = clarification_question or "Could you provide more context for your question?"
+        clarification = (
+            clarification_question
+            or "Could you provide more context for your question?"
+        )
         answer = f"I need a bit more information to answer your question effectively.\n\n**Clarification needed:** {clarification}"
 
         trace = self._telemetry.record(
@@ -2695,7 +3018,9 @@ Be helpful, accurate, and concise."""
                 "duration_ms": total_duration_ms,
                 "cache_hit": False,
                 "mode": "clarification_needed",
-                "deployment_profile": (runtime_profile or {}).get("deployment_profile", ""),
+                "deployment_profile": (runtime_profile or {}).get(
+                    "deployment_profile", ""
+                ),
                 "runtime_backends": (runtime_profile or {}).get("backends", {}),
                 "conversation_id": conversation_id or "",
             },
@@ -2718,7 +3043,9 @@ Be helpful, accurate, and concise."""
                 "cache_hit": False,
                 "mode": "clarification_needed",
                 "clarification_question": clarification,
-                "deployment_profile": (runtime_profile or {}).get("deployment_profile", ""),
+                "deployment_profile": (runtime_profile or {}).get(
+                    "deployment_profile", ""
+                ),
                 "runtime_backends": (runtime_profile or {}).get("backends", {}),
                 "conversation_id": conversation_id or "",
             },
@@ -2760,9 +3087,13 @@ Be helpful, accurate, and concise."""
                 "duration_ms": total_duration_ms,
                 "cache_hit": False,
                 "mode": "abstained",
-                "abstention_reason": abstention_result.reason.value if abstention_result.reason else "unknown",
+                "abstention_reason": abstention_result.reason.value
+                if abstention_result.reason
+                else "unknown",
                 "pii_redacted": pii_redacted,
-                "deployment_profile": (runtime_profile or {}).get("deployment_profile", ""),
+                "deployment_profile": (runtime_profile or {}).get(
+                    "deployment_profile", ""
+                ),
                 "runtime_backends": (runtime_profile or {}).get("backends", {}),
                 "conversation_id": conversation_id or "",
             },
@@ -2777,7 +3108,9 @@ Be helpful, accurate, and concise."""
             {
                 "id": c.id,
                 "title": c.title,
-                "snippet_preview": c.snippet[:200] if len(c.snippet) > 200 else c.snippet,
+                "snippet_preview": c.snippet[:200]
+                if len(c.snippet) > 200
+                else c.snippet,
                 "score": c.score,
             }
             for c in chunks[:5]
@@ -2785,7 +3118,10 @@ Be helpful, accurate, and concise."""
 
         return {
             "answer": answer,
-            "chunks": [{"id": c.id, "title": c.title, "snippet": c.snippet, "score": c.score} for c in chunks[:5]],
+            "chunks": [
+                {"id": c.id, "title": c.title, "snippet": c.snippet, "score": c.score}
+                for c in chunks[:5]
+            ],
             "sources": sources,
             "trace_id": trace.id,
             "metrics": {
@@ -2795,7 +3131,9 @@ Be helpful, accurate, and concise."""
                 "duration_ms": total_duration_ms,
                 "cache_hit": False,
                 "mode": "abstained",
-                "abstention_reason": abstention_result.reason.value if abstention_result.reason else "unknown",
+                "abstention_reason": abstention_result.reason.value
+                if abstention_result.reason
+                else "unknown",
                 "abstention_confidence": abstention_result.confidence,
                 "pii_redacted": pii_redacted,
             },
@@ -2807,7 +3145,9 @@ Be helpful, accurate, and concise."""
                     "coverage": abstention_result.details.get("coverage_ratio", 0.0),
                 },
                 "abstained": True,
-                "abstention_reason": abstention_result.reason.value if abstention_result.reason else "unknown",
+                "abstention_reason": abstention_result.reason.value
+                if abstention_result.reason
+                else "unknown",
             },
         }
 
@@ -2847,28 +3187,35 @@ Be helpful, accurate, and concise."""
             evidence_chunks = []
             for doc_id, chunk in self._chunk_records:
                 # Basic reconstruction - title lookup would be better but this is sufficient for v1
-                evidence_chunks.append(EvidenceChunk(
-                    id=f"{doc_id}-{chunk.index}",
-                    title=f"Document {doc_id}",
-                    snippet=chunk.text,
-                    score=1.0,
-                    doc_id=doc_id,
-                ))
+                evidence_chunks.append(
+                    EvidenceChunk(
+                        id=f"{doc_id}-{chunk.index}",
+                        title=f"Document {doc_id}",
+                        snippet=chunk.text,
+                        score=1.0,
+                        doc_id=doc_id,
+                    )
+                )
 
-            asyncio.create_task(self._artifact_builder.build_all_async(
-                evidence_chunks,
-                provider,
-                corpus_version=corpus_version or "manual_trigger",
-                force_rebuild=force
-            ))
+            asyncio.create_task(
+                self._artifact_builder.build_all_async(
+                    evidence_chunks,
+                    provider,
+                    corpus_version=corpus_version or "manual_trigger",
+                    force_rebuild=force,
+                )
+            )
 
             return {
                 "status": "triggered",
                 "message": "Background build started",
-                "chunk_count": len(evidence_chunks)
+                "chunk_count": len(evidence_chunks),
             }
         except Exception as e:
-            return {"status": "error", "message": f"Failed to trigger artifact build: {e}"}
+            return {
+                "status": "error",
+                "message": f"Failed to trigger artifact build: {e}",
+            }
 
     def get_artifact_build_status(self) -> dict:
         """Get current status of background artifact builds (G4).
@@ -2878,14 +3225,16 @@ Be helpful, accurate, and concise."""
         """
         progress = self._artifact_builder.progress
         payload = progress.to_dict()
-        payload.update({
-            "graph_rag_status": progress.graph_rag.status.value,
-            "raptor_status": progress.raptor.status.value,
-            "graph_build_progress": progress.graph_rag.progress,
-            "raptor_build_progress": progress.raptor.progress,
-            "graph_version": progress.graph_rag.corpus_version,
-            "raptor_version": progress.raptor.corpus_version,
-        })
+        payload.update(
+            {
+                "graph_rag_status": progress.graph_rag.status.value,
+                "raptor_status": progress.raptor.status.value,
+                "graph_build_progress": progress.graph_rag.progress,
+                "raptor_build_progress": progress.raptor.progress,
+                "graph_version": progress.graph_rag.corpus_version,
+                "raptor_version": progress.raptor.corpus_version,
+            }
+        )
         if hasattr(self._retrieval, "get_corpus_version"):
             payload["corpus_version"] = self._retrieval.get_corpus_version()
         return payload
@@ -2901,7 +3250,11 @@ Be helpful, accurate, and concise."""
 
         return {
             "entities": [
-                {"name": e.name, "type": e.type.value if hasattr(e.type, 'value') else str(e.type), "description": e.description}
+                {
+                    "name": e.name,
+                    "type": e.type.value if hasattr(e.type, "value") else str(e.type),
+                    "description": e.description,
+                }
                 for e in self._graph_rag.entities.values()
             ],
             "relationships": [
@@ -2911,7 +3264,7 @@ Be helpful, accurate, and concise."""
             "communities": [
                 {"id": c.id, "entities": c.entities, "summary": c.summary}
                 for c in self._graph_rag.communities
-            ]
+            ],
         }
 
     def get_raptor_data(self) -> dict[str, Any]:
@@ -2926,18 +3279,20 @@ Be helpful, accurate, and concise."""
         for doc_id, tree in self._document_trees.items():
             nodes_data = []
             for node_id, node in tree.nodes.items():
-                nodes_data.append({
-                    "id": node_id,
-                    "title": node.title,
-                    "summary": node.summary,
-                    "level": node.level,
-                    "children": node.children,
-                    "parent": node.parent_id
-                })
+                nodes_data.append(
+                    {
+                        "id": node_id,
+                        "title": node.title,
+                        "summary": node.summary,
+                        "level": node.level,
+                        "children": node.children,
+                        "parent": node.parent_id,
+                    }
+                )
             result[doc_id] = {
                 "doc_id": doc_id,
                 "root_id": tree.root_id,
-                "nodes": nodes_data
+                "nodes": nodes_data,
             }
         return {"trees": result}
 
@@ -2979,20 +3334,31 @@ Be helpful, accurate, and concise."""
         chunk_count = int(snapshot.get("chunk_count", 0) or 0)
         embedding_count = int(snapshot.get("embedding_count", 0) or 0)
         index_ready = bool(snapshot.get("index_ready", False))
-        model_status = snapshot.get("model_status", {}) if isinstance(snapshot.get("model_status"), dict) else {}
-        config = snapshot.get("config", {}) if isinstance(snapshot.get("config"), dict) else {}
+        model_status = (
+            snapshot.get("model_status", {})
+            if isinstance(snapshot.get("model_status"), dict)
+            else {}
+        )
+        config = (
+            snapshot.get("config", {})
+            if isinstance(snapshot.get("config"), dict)
+            else {}
+        )
 
-        checks.setdefault("retrieval_engine", {
-            "status": "ok",
-            "message": None,
-            "details": {
-                "chunk_count": chunk_count,
-                "sparse_ready": bool(snapshot.get("sparse_ready", False)),
-                "dense_ready": bool(snapshot.get("dense_ready", False)),
-                "bq_enabled": bool(snapshot.get("bq_enabled", False)),
-                "bq_ready": bool(snapshot.get("bq_ready", False)),
+        checks.setdefault(
+            "retrieval_engine",
+            {
+                "status": "ok",
+                "message": None,
+                "details": {
+                    "chunk_count": chunk_count,
+                    "sparse_ready": bool(snapshot.get("sparse_ready", False)),
+                    "dense_ready": bool(snapshot.get("dense_ready", False)),
+                    "bq_enabled": bool(snapshot.get("bq_enabled", False)),
+                    "bq_ready": bool(snapshot.get("bq_ready", False)),
+                },
             },
-        })
+        )
         checks["document_store"] = {
             "status": "ok",
             "message": None,
@@ -3000,7 +3366,9 @@ Be helpful, accurate, and concise."""
         }
         checks["retrieval_index"] = {
             "status": "ok" if index_ready else "fail",
-            "message": None if index_ready else "Documents exist but no retrieval chunks are indexed",
+            "message": None
+            if index_ready
+            else "Documents exist but no retrieval chunks are indexed",
             "details": {
                 "document_count": document_count,
                 "chunk_count": chunk_count,
@@ -3008,23 +3376,47 @@ Be helpful, accurate, and concise."""
             },
         }
 
-        embedding = model_status.get("embedding_model", {}) if isinstance(model_status, dict) else {}
-        embedding_state = embedding.get("status", "unknown") if isinstance(embedding, dict) else "unknown"
+        embedding = (
+            model_status.get("embedding_model", {})
+            if isinstance(model_status, dict)
+            else {}
+        )
+        embedding_state = (
+            embedding.get("status", "unknown")
+            if isinstance(embedding, dict)
+            else "unknown"
+        )
         checks["embedding_model"] = {
             "status": "warn" if embedding_state in {"failed", "unknown"} else "ok",
-            "message": None if embedding_state not in {"failed", "unknown"} else "Embedding model is not ready; sparse retrieval may still work",
+            "message": None
+            if embedding_state not in {"failed", "unknown"}
+            else "Embedding model is not ready; sparse retrieval may still work",
             "details": {
                 "state": embedding_state,
-                "model": embedding.get("name") if isinstance(embedding, dict) else config.get("embedding_model"),
-                "backend_id": embedding.get("backend_id") if isinstance(embedding, dict) else None,
+                "model": embedding.get("name")
+                if isinstance(embedding, dict)
+                else config.get("embedding_model"),
+                "backend_id": embedding.get("backend_id")
+                if isinstance(embedding, dict)
+                else None,
             },
         }
 
-        reranker = model_status.get("reranker_model", {}) if isinstance(model_status, dict) else {}
-        reranker_state = reranker.get("status", "disabled") if isinstance(reranker, dict) else "disabled"
+        reranker = (
+            model_status.get("reranker_model", {})
+            if isinstance(model_status, dict)
+            else {}
+        )
+        reranker_state = (
+            reranker.get("status", "disabled")
+            if isinstance(reranker, dict)
+            else "disabled"
+        )
         use_reranking = bool(config.get("use_reranking", False))
         checks["reranker_model"] = {
-            "status": "warn" if use_reranking and reranker_state in {"failed", "unknown"} else "ok",
+            "status": "warn"
+            if use_reranking and reranker_state in {"failed", "unknown"}
+            else "ok",
             "message": (
                 "Reranker is enabled but not ready"
                 if use_reranking and reranker_state in {"failed", "unknown"}
@@ -3032,15 +3424,21 @@ Be helpful, accurate, and concise."""
             ),
             "details": {
                 "state": reranker_state,
-                "model": reranker.get("name") if isinstance(reranker, dict) else config.get("reranker_model"),
+                "model": reranker.get("name")
+                if isinstance(reranker, dict)
+                else config.get("reranker_model"),
                 "enabled": use_reranking,
-                "backend_id": reranker.get("backend_id") if isinstance(reranker, dict) else None,
+                "backend_id": reranker.get("backend_id")
+                if isinstance(reranker, dict)
+                else None,
             },
         }
 
         checks["provider"] = {
             "status": "ok" if self._provider is not None else "warn",
-            "message": None if self._provider is not None else "No generator provider configured; grounded summaries remain available",
+            "message": None
+            if self._provider is not None
+            else "No generator provider configured; grounded summaries remain available",
             "details": {"configured": self._provider is not None},
         }
 
@@ -3048,7 +3446,9 @@ Be helpful, accurate, and concise."""
         has_warnings = any(check["status"] == "warn" for check in checks.values())
         return {
             "ready": not has_failures,
-            "level": "not_ready" if has_failures else ("degraded" if has_warnings else "ready"),
+            "level": "not_ready"
+            if has_failures
+            else ("degraded" if has_warnings else "ready"),
             "checks": checks,
         }
 
@@ -3067,7 +3467,9 @@ Be helpful, accurate, and concise."""
         model_status = self.get_model_status()
         config_snapshot: dict[str, Any] = {}
         if self._config is not None:
-            config_snapshot = self._redacted_config_snapshot(self._config.model_dump(mode="json"))
+            config_snapshot = self._redacted_config_snapshot(
+                self._config.model_dump(mode="json")
+            )
 
         return {
             "corpus": corpus,
@@ -3079,12 +3481,22 @@ Be helpful, accurate, and concise."""
     @staticmethod
     def _redacted_config_snapshot(value: Any) -> Any:
         """Remove secret-shaped values from config snapshots."""
-        secret_terms = ("apikey", "authorization", "token", "secret", "password", "credential")
+        secret_terms = (
+            "apikey",
+            "authorization",
+            "token",
+            "secret",
+            "password",
+            "credential",
+        )
         if isinstance(value, dict):
             return {
                 key: (
                     "[redacted]"
-                    if any(term in re.sub(r"[^a-z0-9]", "", key.lower()) for term in secret_terms)
+                    if any(
+                        term in re.sub(r"[^a-z0-9]", "", key.lower())
+                        for term in secret_terms
+                    )
                     and item is not None
                     else Orchestrator._redacted_config_snapshot(item)
                 )

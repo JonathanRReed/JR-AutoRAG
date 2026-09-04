@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 
 class AbstentionReason(str, Enum):
     """Reasons for abstaining from providing an answer."""
+
     INSUFFICIENT_EVIDENCE = "insufficient_evidence"
     LOW_COVERAGE = "low_coverage"
     NO_RELEVANT_DOCUMENTS = "no_relevant_documents"
@@ -33,6 +34,7 @@ class AbstentionReason(str, Enum):
 @dataclass
 class AbstentionResult:
     """Result of abstention check."""
+
     should_abstain: bool
     reason: AbstentionReason | None = None
     confidence: float = 0.0
@@ -43,6 +45,7 @@ class AbstentionResult:
 @dataclass
 class AbstentionConfig:
     """Configuration for abstention rules."""
+
     # Enable/disable abstention entirely
     enabled: bool = True
 
@@ -59,7 +62,9 @@ class AbstentionConfig:
     abstain_on_low_coverage: bool = False  # Was True - too aggressive
 
     # Confidence thresholds
-    min_verdict_confidence: float = 0.6  # Was 0.4 - require higher confidence to abstain
+    min_verdict_confidence: float = (
+        0.6  # Was 0.4 - require higher confidence to abstain
+    )
 
     # Response templates
     insufficient_evidence_response: str = (
@@ -237,11 +242,14 @@ class AbstentionRules:
         if not result.should_abstain:
             return ""
 
-        response = result.suggested_response or self.config.insufficient_evidence_response
+        response = (
+            result.suggested_response or self.config.insufficient_evidence_response
+        )
 
         if include_details and result.details:
             details_str = ", ".join(
-                f"{k}={v}" for k, v in result.details.items()
+                f"{k}={v}"
+                for k, v in result.details.items()
                 if k not in ("chunks_count", "verdict")
             )
             response += f"\n\n_Technical details: {details_str}_"

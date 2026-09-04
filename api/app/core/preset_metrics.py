@@ -132,18 +132,24 @@ class PresetMetricsTracker:
         metrics_data = result.get("metrics", {})
 
         # Extract relevant metrics
-        duration = metrics_data.get("duration_ms") or metrics_data.get("total_duration_ms", 0)
+        duration = metrics_data.get("duration_ms") or metrics_data.get(
+            "total_duration_ms", 0
+        )
         tokens = metrics_data.get("tokens", 0)
         chunks = len(result.get("chunks", []))
-        cache_hit = result.get("from_cache", False) or metrics_data.get("cache_hit", False)
+        cache_hit = result.get("from_cache", False) or metrics_data.get(
+            "cache_hit", False
+        )
 
-        self.record(RunMetrics(
-            preset=preset,
-            total_duration_ms=float(duration),
-            tokens_used=int(tokens),
-            chunks_retrieved=chunks,
-            cache_hit=cache_hit,
-        ))
+        self.record(
+            RunMetrics(
+                preset=preset,
+                total_duration_ms=float(duration),
+                tokens_used=int(tokens),
+                chunks_retrieved=chunks,
+                cache_hit=cache_hit,
+            )
+        )
 
     def get_estimate(self, preset: str) -> PresetEstimate | None:
         """Get latency/token estimates for a preset."""
@@ -240,7 +246,9 @@ def get_preset_metrics_tracker(data_path: Path | None = None) -> PresetMetricsTr
     """Get or create the global preset metrics tracker."""
     global _tracker
     if _tracker is None:
-        default_path = Path("data/preset_metrics.json") if data_path is None else data_path
+        default_path = (
+            Path("data/preset_metrics.json") if data_path is None else data_path
+        )
         _tracker = PresetMetricsTracker(data_path=default_path)
     return _tracker
 

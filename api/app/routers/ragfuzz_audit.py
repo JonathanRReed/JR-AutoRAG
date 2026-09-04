@@ -31,11 +31,15 @@ router = APIRouter(prefix="/rag/audit", tags=["ragfuzz"])
 
 def _is_production_env() -> bool:
     env = (
-        os.environ.get("AUTORAG_ENV")
-        or os.environ.get("ENVIRONMENT")
-        or os.environ.get("NODE_ENV")
-        or ""
-    ).strip().lower()
+        (
+            os.environ.get("AUTORAG_ENV")
+            or os.environ.get("ENVIRONMENT")
+            or os.environ.get("NODE_ENV")
+            or ""
+        )
+        .strip()
+        .lower()
+    )
     return env in {"prod", "production"}
 
 
@@ -69,7 +73,9 @@ def _verify_ragfuzz_secret(x_ragfuzz_secret: str | None = Header(None)) -> None:
             status_code=503,
             detail="AUTORAG_RAGFUZZ_SECRET is required in production.",
         )
-    if expected and (not x_ragfuzz_secret or not secrets.compare_digest(x_ragfuzz_secret, expected)):
+    if expected and (
+        not x_ragfuzz_secret or not secrets.compare_digest(x_ragfuzz_secret, expected)
+    ):
         raise HTTPException(
             status_code=401,
             detail="Invalid or missing X-RagFuzz-Secret header",
@@ -78,14 +84,20 @@ def _verify_ragfuzz_secret(x_ragfuzz_secret: str | None = Header(None)) -> None:
 
 class PoisonDocumentRequest(BaseModel):
     """Request to inject a poisoned document for testing."""
+
     content: str = Field(..., description="Poisoned document content")
-    metadata: dict[str, Any] = Field(default_factory=dict, description="Document metadata")
+    metadata: dict[str, Any] = Field(
+        default_factory=dict, description="Document metadata"
+    )
     canary_token: str | None = Field(None, description="Optional canary token to embed")
-    poison_type: str = Field("canary", description="Type: canary, adversarial, injection")
+    poison_type: str = Field(
+        "canary", description="Type: canary, adversarial, injection"
+    )
 
 
 class PoisonDocumentResponse(BaseModel):
     """Response after injecting a poisoned document."""
+
     document_id: str
     canary_token: str
     injected_at: str
@@ -94,13 +106,17 @@ class PoisonDocumentResponse(BaseModel):
 
 class CanaryCheckRequest(BaseModel):
     """Request to check if a canary was leaked."""
+
     query: str = Field(..., description="Query to test for canary leakage")
     canary_token: str = Field(..., description="Canary token to look for")
-    document_ids: list[str] | None = Field(None, description="Limit to specific documents")
+    document_ids: list[str] | None = Field(
+        None, description="Limit to specific documents"
+    )
 
 
 class CanaryCheckResponse(BaseModel):
     """Result of canary leak detection."""
+
     leaked: bool
     canary_token: str
     answer: str
@@ -110,6 +126,7 @@ class CanaryCheckResponse(BaseModel):
 
 class TraceRequest(BaseModel):
     """Request for grey-box pipeline tracing."""
+
     query: str
     document_ids: list[str] | None = None
     trace_depth: str = Field("full", description="Trace depth: minimal, standard, full")
@@ -117,6 +134,7 @@ class TraceRequest(BaseModel):
 
 class TraceResponse(BaseModel):
     """Grey-box trace of pipeline execution."""
+
     trace_id: str
     query: str
     answer: str
@@ -128,6 +146,7 @@ class TraceResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     """RAGFuzz health check response."""
+
     status: str
     ragfuzz_enabled: bool
     corpus_size: int
@@ -153,7 +172,11 @@ async def ragfuzz_health(
     corpus_size = 0
     try:
         if container.orchestrator and hasattr(container.orchestrator, "doc_store"):
-            docs = container.orchestrator.doc_store.list() if container.orchestrator.doc_store else []
+            docs = (
+                container.orchestrator.doc_store.list()
+                if container.orchestrator.doc_store
+                else []
+            )
             corpus_size = len(docs)
     except Exception:
         pass
@@ -161,6 +184,7 @@ async def ragfuzz_health(
     providers = []
     try:
         from ..core.providers import discover_local_providers
+
         local = await discover_local_providers()
         providers = [p.name for p in local if p.status == "ok"]
     except Exception:
@@ -210,7 +234,9 @@ async def inject_poison_document(
                 metadata=metadata,
             )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to inject document: {exc}") from exc
+        raise HTTPException(
+            status_code=500, detail=f"Failed to inject document: {exc}"
+        ) from exc
 
     audit_log = get_audit_log()
     audit_log.log(
@@ -271,7 +297,9 @@ async def check_canary_leak(
     leak_score = 1.0 if leaked else 0.0
     if not leaked:
         canary_parts = request.canary_token.split("_")
-        partial_matches = sum(1 for part in canary_parts if part.lower() in answer_lower)
+        partial_matches = sum(
+            1 for part in canary_parts if part.lower() in answer_lower
+        )
         leak_score = partial_matches / max(len(canary_parts), 1) * 0.5
 
     audit_log = get_audit_log()
@@ -316,12 +344,14 @@ async def trace_pipeline(
     token_counts: dict[str, int] = {}
 
     def on_step(step: Any) -> None:
-        stages.append({
-            "name": step.name,
-            "duration_ms": step.duration_ms,
-            "status": step.status,
-            "details": step.details,
-        })
+        stages.append(
+            {
+                "name": step.name,
+                "duration_ms": step.duration_ms,
+                "status": step.status,
+                "details": step.details,
+            }
+        )
         timing_ms[step.name] = step.duration_ms
 
     try:
@@ -337,14 +367,15 @@ async def trace_pipeline(
     retrieval_details: dict[str, Any] = {}
     if "documents" in result:
         retrieval_details["document_count"] = len(result["documents"])
-        retrieval_details["document_ids"] = [d.get("id", "") for d in result.get("documents", [])]
+        retrieval_details["document_ids"] = [
+            d.get("id", "") for d in result.get("documents", [])
+        ]
     if "sources" in result:
         retrieval_details["sources"] = result["sources"]
 
     token_counts["answer"] = len(answer.split())
     token_counts["context"] = sum(
-        len(str(d.get("content", "")).split())
-        for d in result.get("documents", [])
+        len(str(d.get("content", "")).split()) for d in result.get("documents", [])
     )
 
     return TraceResponse(
@@ -368,10 +399,14 @@ async def remove_poison_document(
     _check_ragfuzz_enabled()
 
     try:
-        if container.orchestrator and hasattr(container.orchestrator, "delete_document"):
+        if container.orchestrator and hasattr(
+            container.orchestrator, "delete_document"
+        ):
             await container.orchestrator.delete_document(document_id)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to remove document: {exc}") from exc
+        raise HTTPException(
+            status_code=500, detail=f"Failed to remove document: {exc}"
+        ) from exc
 
     audit_log = get_audit_log()
     audit_log.log(
@@ -399,16 +434,22 @@ async def list_poison_documents(
     poison_docs = []
     try:
         if container.orchestrator and hasattr(container.orchestrator, "doc_store"):
-            docs = container.orchestrator.doc_store.list() if container.orchestrator.doc_store else []
+            docs = (
+                container.orchestrator.doc_store.list()
+                if container.orchestrator.doc_store
+                else []
+            )
             for doc in docs:
                 meta = getattr(doc, "metadata", {}) or {}
                 if meta.get("_ragfuzz_poison"):
-                    poison_docs.append({
-                        "document_id": getattr(doc, "id", ""),
-                        "poison_type": meta.get("_poison_type"),
-                        "canary_token": meta.get("_canary_token"),
-                        "injected_at": meta.get("_injected_at"),
-                    })
+                    poison_docs.append(
+                        {
+                            "document_id": getattr(doc, "id", ""),
+                            "poison_type": meta.get("_poison_type"),
+                            "canary_token": meta.get("_canary_token"),
+                            "injected_at": meta.get("_injected_at"),
+                        }
+                    )
     except Exception:
         pass
 

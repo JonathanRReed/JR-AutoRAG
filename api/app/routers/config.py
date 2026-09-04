@@ -41,7 +41,9 @@ def _download_model(model_id: str) -> None:
     try:
         from huggingface_hub import snapshot_download
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Download unavailable: {exc}") from exc
+        raise HTTPException(
+            status_code=500, detail=f"Download unavailable: {exc}"
+        ) from exc
     try:
         snapshot_download(repo_id=model_id, local_files_only=False)
     except Exception as exc:
@@ -52,7 +54,9 @@ def _delete_model_cache(model_id: str) -> None:
     try:
         from huggingface_hub import scan_cache_dir
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Delete unavailable: {exc}") from exc
+        raise HTTPException(
+            status_code=500, detail=f"Delete unavailable: {exc}"
+        ) from exc
     try:
         cache_info = scan_cache_dir()
         cache_info.delete_repos(model_id)
@@ -60,10 +64,14 @@ def _delete_model_cache(model_id: str) -> None:
         raise HTTPException(status_code=500, detail=f"Delete failed: {exc}") from exc
 
 
-def _resolve_managed_model(payload: ModelDownloadRequest, container: ServiceContainer) -> str:
+def _resolve_managed_model(
+    payload: ModelDownloadRequest, container: ServiceContainer
+) -> str:
     kind = payload.kind.lower().strip()
     if kind not in {"embedding", "reranker"}:
-        raise HTTPException(status_code=400, detail="kind must be 'embedding' or 'reranker'")
+        raise HTTPException(
+            status_code=400, detail="kind must be 'embedding' or 'reranker'"
+        )
 
     model = payload.model.strip()
     if not model:
@@ -92,13 +100,19 @@ def read_config(container: ServiceContainer = Depends(get_container)):
 def update_config(
     cfg: AppConfig,
     container: ServiceContainer = Depends(get_container),
-    active_profile: str | None = Query(default=None, description="Optional provider profile to activate"),
+    active_profile: str | None = Query(
+        default=None, description="Optional provider profile to activate"
+    ),
 ):
     try:
         if active_profile and cfg.provider_profiles:
-            profile = next((p for p in cfg.provider_profiles if p.name == active_profile), None)
+            profile = next(
+                (p for p in cfg.provider_profiles if p.name == active_profile), None
+            )
             if not profile:
-                raise HTTPException(status_code=404, detail=f"Profile '{active_profile}' not found")
+                raise HTTPException(
+                    status_code=404, detail=f"Profile '{active_profile}' not found"
+                )
             cfg.provider = profile.provider
             cfg = AppConfig.model_validate(cfg.model_dump())
         sanitized = container.prepare_config_for_storage(cfg)
@@ -116,14 +130,18 @@ async def list_models(
 ):
     try:
         cfg = container.config_store.read()
-        models = await discover_models(payload, deployment_profile=cfg.deployment_profile)
+        models = await discover_models(
+            payload, deployment_profile=cfg.deployment_profile
+        )
         return models
     except ProviderError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.post("/models/status", response_model=ModelStatusResponse)
-def model_status(payload: ModelStatusRequest, container: ServiceContainer = Depends(get_container)):
+def model_status(
+    payload: ModelStatusRequest, container: ServiceContainer = Depends(get_container)
+):
     embedding_status = "unknown"
     reranker_status = "unknown"
     embedding_message = None
@@ -131,7 +149,9 @@ def model_status(payload: ModelStatusRequest, container: ServiceContainer = Depe
     cfg = container.config_store.read()
 
     if payload.embedding_model:
-        embedding_status, embedding_message = _check_model_cached(payload.embedding_model)
+        embedding_status, embedding_message = _check_model_cached(
+            payload.embedding_model
+        )
     if payload.reranker_model:
         reranker_status, reranker_message = _check_model_cached(payload.reranker_model)
 
@@ -144,7 +164,9 @@ def model_status(payload: ModelStatusRequest, container: ServiceContainer = Depe
         local_only_ready=cfg.deployment_profile != "local_only"
         or (
             cfg.provider is None
-            or str(cfg.provider.base_url).startswith(("http://localhost", "http://127.0.0.1", "http://0.0.0.0"))
+            or str(cfg.provider.base_url).startswith(
+                ("http://localhost", "http://127.0.0.1", "http://0.0.0.0")
+            )
         ),
     )
 
@@ -168,9 +190,7 @@ def quality_recommendations(
         enforcer = get_acl_enforcer(default_public=default_public)
         user_id = getattr(request.state, "user_id", None)
         docs = [
-            doc
-            for doc in docs
-            if enforcer.check_access(doc.id, user_id, "read")[0]
+            doc for doc in docs if enforcer.check_access(doc.id, user_id, "read")[0]
         ]
     parser_counts: dict[str, int] = {}
     low_confidence = 0
@@ -190,53 +210,65 @@ def quality_recommendations(
     retrieval = cfg.retrieval
     recommendations: list[dict[str, object]] = []
     if not docs:
-        recommendations.append({
-            "id": "ingest-corpus",
-            "title": "Ingest a mixed benchmark corpus",
-            "priority": "high",
-            "detail": "Add PDFs, DOCX files, Markdown, and scanned material before promoting retrieval presets.",
-            "action": "documents",
-        })
+        recommendations.append(
+            {
+                "id": "ingest-corpus",
+                "title": "Ingest a mixed benchmark corpus",
+                "priority": "high",
+                "detail": "Add PDFs, DOCX files, Markdown, and scanned material before promoting retrieval presets.",
+                "action": "documents",
+            }
+        )
     if parser_counts.get("docling", 0) == 0:
-        recommendations.append({
-            "id": "enable-docling",
-            "title": "Install Docling for structured parsing",
-            "priority": "high",
-            "detail": "The parser adapter is ready and will prefer Docling when the package is installed locally.",
-            "action": "parser",
-        })
+        recommendations.append(
+            {
+                "id": "enable-docling",
+                "title": "Install Docling for structured parsing",
+                "priority": "high",
+                "detail": "The parser adapter is ready and will prefer Docling when the package is installed locally.",
+                "action": "parser",
+            }
+        )
     if low_confidence:
-        recommendations.append({
-            "id": "review-low-confidence",
-            "title": "Review low-confidence extractions",
-            "priority": "medium",
-            "detail": f"{low_confidence} document(s) have parser confidence below 0.70.",
-            "action": "preview",
-        })
+        recommendations.append(
+            {
+                "id": "review-low-confidence",
+                "title": "Review low-confidence extractions",
+                "priority": "medium",
+                "detail": f"{low_confidence} document(s) have parser confidence below 0.70.",
+                "action": "preview",
+            }
+        )
     if not getattr(retrieval, "use_reranking", False):
-        recommendations.append({
-            "id": "enable-reranker",
-            "title": "Enable reranking for expert answers",
-            "priority": "medium",
-            "detail": "Reranking usually improves context precision when enough local compute is available.",
-            "action": "config",
-        })
+        recommendations.append(
+            {
+                "id": "enable-reranker",
+                "title": "Enable reranking for expert answers",
+                "priority": "medium",
+                "detail": "Reranking usually improves context precision when enough local compute is available.",
+                "action": "config",
+            }
+        )
     if not getattr(retrieval, "enforce_evidence_contract", False):
-        recommendations.append({
-            "id": "evidence-contract",
-            "title": "Turn on evidence contract checks",
-            "priority": "medium",
-            "detail": "Evidence contracts make answer generation stricter and easier to audit.",
-            "action": "config",
-        })
+        recommendations.append(
+            {
+                "id": "evidence-contract",
+                "title": "Turn on evidence contract checks",
+                "priority": "medium",
+                "detail": "Evidence contracts make answer generation stricter and easier to audit.",
+                "action": "config",
+            }
+        )
     if processing_errors:
-        recommendations.append({
-            "id": "processing-errors",
-            "title": "Fix ingestion errors",
-            "priority": "high",
-            "detail": f"{processing_errors} document(s) failed background indexing.",
-            "action": "documents",
-        })
+        recommendations.append(
+            {
+                "id": "processing-errors",
+                "title": "Fix ingestion errors",
+                "priority": "high",
+                "detail": f"{processing_errors} document(s) failed background indexing.",
+                "action": "documents",
+            }
+        )
 
     return {
         "deployment_profile": cfg.deployment_profile,
@@ -321,7 +353,7 @@ def get_active_preset(container: ServiceContainer = Depends(get_container)):
             "graph": current.graph,
             "flare": current.flare_generation,
             "evidence_contract": current.enforce_evidence_contract,
-        }
+        },
     }
 
 
@@ -335,7 +367,7 @@ def apply_preset(
     if preset_name_lower not in RETRIEVAL_PRESETS:
         raise HTTPException(
             status_code=404,
-            detail=f"Preset '{preset_name}' not found. Available: {list(RETRIEVAL_PRESETS.keys())}"
+            detail=f"Preset '{preset_name}' not found. Available: {list(RETRIEVAL_PRESETS.keys())}",
         )
 
     cfg = container.config_store.read()

@@ -15,6 +15,7 @@ from typing import Any
 @dataclass
 class PipelineStep:
     """A single step in the RAG pipeline with timing and details."""
+
     name: str
     started_at: datetime
     completed_at: datetime
@@ -34,10 +35,14 @@ class Trace:
     steps: list[PipelineStep] = field(default_factory=list)
 
 
-PUBLIC_PROVIDER_ERROR_MESSAGE = "Provider request failed; check server logs for details."
+PUBLIC_PROVIDER_ERROR_MESSAGE = (
+    "Provider request failed; check server logs for details."
+)
 
 
-def sanitize_step_details(step_name: str, details: dict[str, Any] | None) -> dict[str, Any]:
+def sanitize_step_details(
+    step_name: str, details: dict[str, Any] | None
+) -> dict[str, Any]:
     """Return step details safe to persist or expose through public APIs.
 
     Generation steps can otherwise carry provider endpoints, deployment/model IDs,
@@ -170,10 +175,16 @@ class TelemetryStore:
 
             latencies = [t.metrics.get("duration_ms", 0) for t in self._traces]
             chunk_counts = [t.metrics.get("context_chunks", 0) for t in self._traces]
-            embedding_hits = sum(int(t.metrics.get("embedding_cache_hits", 0)) for t in self._traces)
-            embedding_misses = sum(int(t.metrics.get("embedding_cache_misses", 0)) for t in self._traces)
+            embedding_hits = sum(
+                int(t.metrics.get("embedding_cache_hits", 0)) for t in self._traces
+            )
+            embedding_misses = sum(
+                int(t.metrics.get("embedding_cache_misses", 0)) for t in self._traces
+            )
             embedding_total = embedding_hits + embedding_misses
-            cache_hits = sum(1 for t in self._traces if t.metrics.get("embedding_cache") == "hit")
+            cache_hits = sum(
+                1 for t in self._traces if t.metrics.get("embedding_cache") == "hit"
+            )
             cache_hit_rate = (
                 embedding_hits / embedding_total
                 if embedding_total > 0
@@ -184,9 +195,15 @@ class TelemetryStore:
                 "total_queries": len(self._traces),
                 "cache_hit_rate": cache_hit_rate,
                 "avg_latency_ms": sum(latencies) / len(latencies) if latencies else 0,
-                "p50_latency_ms": sorted(latencies)[len(latencies) // 2] if latencies else 0,
-                "p95_latency_ms": sorted(latencies)[int(len(latencies) * 0.95)] if latencies else 0,
-                "avg_chunks_per_query": sum(chunk_counts) / len(chunk_counts) if chunk_counts else 0,
+                "p50_latency_ms": sorted(latencies)[len(latencies) // 2]
+                if latencies
+                else 0,
+                "p95_latency_ms": sorted(latencies)[int(len(latencies) * 0.95)]
+                if latencies
+                else 0,
+                "avg_chunks_per_query": sum(chunk_counts) / len(chunk_counts)
+                if chunk_counts
+                else 0,
                 "queries_per_hour": self._calculate_queries_per_hour(),
                 "quality_distribution": self._calculate_quality_distribution(),
                 "rerank_usage_rate": self._calculate_rerank_usage(),
@@ -253,6 +270,7 @@ class TelemetryStore:
 
     def get_stage_latency_percentiles(self) -> dict[str, dict[str, float]]:
         """Get latency percentiles per pipeline stage."""
+
         def percentile(values: list[float], pct: float) -> float:
             if not values:
                 return 0.0
@@ -305,7 +323,10 @@ class TelemetryStore:
             for trace in self._traces:
                 # Check if any FLARE step triggered retrieval
                 for step in trace.steps:
-                    if step.name == "flare" and step.details.get("retrievals_triggered", 0) > 0:
+                    if (
+                        step.name == "flare"
+                        and step.details.get("retrievals_triggered", 0) > 0
+                    ):
                         flare_count += 1
                         break
                     # Also check metrics
@@ -335,11 +356,13 @@ class TelemetryStore:
         Combines export_metrics with additional stage and feature metrics.
         """
         base = self.export_metrics()
-        base.update({
-            "stage_latency_breakdown": self.get_stage_latency_breakdown(),
-            "stage_latency_percentiles": self.get_stage_latency_percentiles(),
-            "retrieval_mode_distribution": self.get_retrieval_mode_distribution(),
-            "flare_trigger_rate": self.get_flare_trigger_rate(),
-            "hallucination_pass_rate": self.get_hallucination_pass_rate(),
-        })
+        base.update(
+            {
+                "stage_latency_breakdown": self.get_stage_latency_breakdown(),
+                "stage_latency_percentiles": self.get_stage_latency_percentiles(),
+                "retrieval_mode_distribution": self.get_retrieval_mode_distribution(),
+                "flare_trigger_rate": self.get_flare_trigger_rate(),
+                "hallucination_pass_rate": self.get_hallucination_pass_rate(),
+            }
+        )
         return base

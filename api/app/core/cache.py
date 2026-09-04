@@ -30,6 +30,7 @@ class RetrievalMode(IntFlag):
     different retrieval configurations. This prevents stale cache
     hits when switching retrieval modes.
     """
+
     STANDARD = 1
     RAPTOR = 2
     GRAPH = 4
@@ -38,8 +39,14 @@ class RetrievalMode(IntFlag):
     BINARY = 32
 
     @classmethod
-    def from_config(cls, *, raptor: bool = False, graph: bool = False,
-                    rerank: bool = False, colbert: bool = False) -> RetrievalMode:
+    def from_config(
+        cls,
+        *,
+        raptor: bool = False,
+        graph: bool = False,
+        rerank: bool = False,
+        colbert: bool = False,
+    ) -> RetrievalMode:
         """Create mode flags from config booleans."""
         mode = cls.STANDARD
         if raptor:
@@ -56,6 +63,7 @@ class RetrievalMode(IntFlag):
 @dataclass
 class CacheEntry(Generic[T]):
     """A cached item with metadata."""
+
     key: str
     value: T
     created_at: float
@@ -154,10 +162,7 @@ class LRUCache(Generic[T]):
     def cleanup_expired(self) -> int:
         """Remove expired entries. Returns count removed."""
         with self._lock:
-            expired = [
-                key for key, entry in self._cache.items()
-                if entry.is_expired
-            ]
+            expired = [key for key, entry in self._cache.items() if entry.is_expired]
             for key in expired:
                 del self._cache[key]
             return len(expired)

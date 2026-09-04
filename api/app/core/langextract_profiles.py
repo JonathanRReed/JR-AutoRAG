@@ -113,12 +113,18 @@ LANGEXTRACT_PROFILES: dict[str, ExtractionProfile] = {
                     {
                         "extraction_class": "claim",
                         "extraction_text": "Termination requires 30 days notice.",
-                        "attributes": {"term_type": "termination", "notice_period": "30 days"},
+                        "attributes": {
+                            "term_type": "termination",
+                            "notice_period": "30 days",
+                        },
                     },
                     {
                         "extraction_class": "claim",
                         "extraction_text": "Late payment incurs 1.5% monthly interest.",
-                        "attributes": {"term_type": "payment", "interest_rate": "1.5% monthly"},
+                        "attributes": {
+                            "term_type": "payment",
+                            "interest_rate": "1.5% monthly",
+                        },
                     },
                     {
                         "extraction_class": "warning",
@@ -137,7 +143,9 @@ DEFAULT_LANGEXTRACT_PROFILE = "generic_entities_v1"
 def resolve_profile(name: str | None) -> ExtractionProfile:
     if not name:
         return LANGEXTRACT_PROFILES[DEFAULT_LANGEXTRACT_PROFILE]
-    return LANGEXTRACT_PROFILES.get(name, LANGEXTRACT_PROFILES[DEFAULT_LANGEXTRACT_PROFILE])
+    return LANGEXTRACT_PROFILES.get(
+        name, LANGEXTRACT_PROFILES[DEFAULT_LANGEXTRACT_PROFILE]
+    )
 
 
 def list_profiles() -> list[str]:

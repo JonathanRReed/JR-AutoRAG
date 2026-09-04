@@ -56,7 +56,9 @@ def test_compose_requires_api_keys_for_published_api() -> None:
 
 
 @pytest.mark.asyncio
-async def test_config_route_rejects_missing_api_key_when_auth_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_config_route_rejects_missing_api_key_when_auth_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("AUTORAG_AUTH_ENABLED", "true")
     monkeypatch.setenv("AUTORAG_API_KEYS", "test-admin-key")
     monkeypatch.delenv("AUTORAG_EXPOSE", raising=False)
@@ -71,7 +73,9 @@ async def test_config_route_rejects_missing_api_key_when_auth_enabled(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_exposed_mode_fails_closed_without_auth(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_exposed_mode_fails_closed_without_auth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("AUTORAG_EXPOSE", "true")
     monkeypatch.setenv("AUTORAG_AUTH_ENABLED", "false")
     monkeypatch.delenv("AUTORAG_API_KEYS", raising=False)
@@ -85,7 +89,9 @@ async def test_exposed_mode_fails_closed_without_auth(monkeypatch: pytest.Monkey
     _reset_auth()
 
 
-def test_generation_step_details_redact_provider_metadata_before_exposure(tmp_path: Path) -> None:
+def test_generation_step_details_redact_provider_metadata_before_exposure(
+    tmp_path: Path,
+) -> None:
     step = PipelineStep(
         name="generation",
         started_at=datetime.now(UTC),
@@ -109,7 +115,10 @@ def test_generation_step_details_redact_provider_metadata_before_exposure(tmp_pa
     assert public_step["details"]["provider"] == "configured"
     assert public_step["details"]["model"] == "configured"
     assert public_step["details"]["error"] == PUBLIC_PROVIDER_ERROR_MESSAGE
-    assert public_step["details"]["uncertainty_fallback_error"] == PUBLIC_PROVIDER_ERROR_MESSAGE
+    assert (
+        public_step["details"]["uncertainty_fallback_error"]
+        == PUBLIC_PROVIDER_ERROR_MESSAGE
+    )
     assert "secretpass" not in str(public_step)
     assert "internal-provider.local" not in str(public_step)
     assert "private-deployment" not in str(public_step)

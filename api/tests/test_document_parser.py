@@ -9,7 +9,11 @@ import zipfile
 import pytest
 
 from app.core.archive_safety import UnsafeArchiveError, validate_docx_archive
-from app.core.document_parser import DoclingDocumentParser, DocumentParserRouter, parser_result_to_metadata
+from app.core.document_parser import (
+    DoclingDocumentParser,
+    DocumentParserRouter,
+    parser_result_to_metadata,
+)
 from app.core.ingest import IngestPipeline
 
 
@@ -74,9 +78,13 @@ def test_docx_validator_rejects_entity_declarations() -> None:
 
 def test_docx_validator_scans_past_the_initial_xml_chunk() -> None:
     rng = random.Random(0)
-    padding = "".join(rng.choice(string.ascii_letters) for _ in range(70 * 1024)).encode()
+    padding = "".join(
+        rng.choice(string.ascii_letters) for _ in range(70 * 1024)
+    ).encode()
     content = _docx_with_xml(
-        b"<!--" + padding + b"--><!DOCTYPE document [<!ENTITY x 'expanded'>]><document>&x;</document>"
+        b"<!--"
+        + padding
+        + b"--><!DOCTYPE document [<!ENTITY x 'expanded'>]><document>&x;</document>"
     )
 
     with pytest.raises(UnsafeArchiveError, match="forbidden XML declaration"):
@@ -84,4 +92,6 @@ def test_docx_validator_scans_past_the_initial_xml_chunk() -> None:
 
 
 def test_docx_validator_accepts_bounded_archive() -> None:
-    validate_docx_archive(_docx_with_xml(b"<document><paragraph>Safe text</paragraph></document>"))
+    validate_docx_archive(
+        _docx_with_xml(b"<document><paragraph>Safe text</paragraph></document>")
+    )

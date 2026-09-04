@@ -170,9 +170,9 @@ class CorpusHealthChecker:
             if hasattr(self._retrieval, "get_model_status"):
                 try:
                     model_status = self._retrieval.get_model_status()
-                    stats.embedding_status = (
-                        model_status.get("embedding_model", {}).get("status", "unknown")
-                    )
+                    stats.embedding_status = model_status.get(
+                        "embedding_model", {}
+                    ).get("status", "unknown")
                 except Exception:
                     pass
 
@@ -197,90 +197,112 @@ class CorpusHealthChecker:
 
         # Check 1: Document count
         if stats.document_count == 0:
-            checks.append(HealthCheck(
-                name="Document Count",
-                status="critical",
-                message="No documents loaded",
-                metric=0,
-                recommendation="Ingest some documents to get started",
-            ))
+            checks.append(
+                HealthCheck(
+                    name="Document Count",
+                    status="critical",
+                    message="No documents loaded",
+                    metric=0,
+                    recommendation="Ingest some documents to get started",
+                )
+            )
         elif stats.document_count < 5:
-            checks.append(HealthCheck(
-                name="Document Count",
-                status="warning",
-                message=f"Only {stats.document_count} documents - small corpus",
-                metric=stats.document_count,
-                recommendation="Consider adding more documents for better coverage",
-            ))
+            checks.append(
+                HealthCheck(
+                    name="Document Count",
+                    status="warning",
+                    message=f"Only {stats.document_count} documents - small corpus",
+                    metric=stats.document_count,
+                    recommendation="Consider adding more documents for better coverage",
+                )
+            )
         else:
-            checks.append(HealthCheck(
-                name="Document Count",
-                status="healthy",
-                message=f"{stats.document_count} documents loaded",
-                metric=stats.document_count,
-            ))
+            checks.append(
+                HealthCheck(
+                    name="Document Count",
+                    status="healthy",
+                    message=f"{stats.document_count} documents loaded",
+                    metric=stats.document_count,
+                )
+            )
 
         # Check 2: Chunk size
         if stats.avg_chunk_size > 0:
             if stats.avg_chunk_size < 50:
-                checks.append(HealthCheck(
-                    name="Chunk Size",
-                    status="warning",
-                    message=f"Chunks are very small ({stats.avg_chunk_size} words avg)",
-                    metric=stats.avg_chunk_size,
-                    recommendation="Consider larger chunk sizes for better context",
-                ))
+                checks.append(
+                    HealthCheck(
+                        name="Chunk Size",
+                        status="warning",
+                        message=f"Chunks are very small ({stats.avg_chunk_size} words avg)",
+                        metric=stats.avg_chunk_size,
+                        recommendation="Consider larger chunk sizes for better context",
+                    )
+                )
             elif stats.avg_chunk_size > 500:
-                checks.append(HealthCheck(
-                    name="Chunk Size",
-                    status="warning",
-                    message=f"Chunks are large ({stats.avg_chunk_size} words avg)",
-                    metric=stats.avg_chunk_size,
-                    recommendation="Consider smaller chunks for more precise retrieval",
-                ))
+                checks.append(
+                    HealthCheck(
+                        name="Chunk Size",
+                        status="warning",
+                        message=f"Chunks are large ({stats.avg_chunk_size} words avg)",
+                        metric=stats.avg_chunk_size,
+                        recommendation="Consider smaller chunks for more precise retrieval",
+                    )
+                )
             else:
-                checks.append(HealthCheck(
-                    name="Chunk Size",
-                    status="healthy",
-                    message=f"Good chunk size ({stats.avg_chunk_size} words avg)",
-                    metric=stats.avg_chunk_size,
-                ))
+                checks.append(
+                    HealthCheck(
+                        name="Chunk Size",
+                        status="healthy",
+                        message=f"Good chunk size ({stats.avg_chunk_size} words avg)",
+                        metric=stats.avg_chunk_size,
+                    )
+                )
 
         # Check 3: Index status
         if stats.index_status == "ready":
-            checks.append(HealthCheck(
-                name="Vector Index",
-                status="healthy",
-                message="Index is ready",
-            ))
+            checks.append(
+                HealthCheck(
+                    name="Vector Index",
+                    status="healthy",
+                    message="Index is ready",
+                )
+            )
         else:
-            checks.append(HealthCheck(
-                name="Vector Index",
-                status="critical",
-                message="Index not built",
-                recommendation="Ingest documents to build index",
-            ))
+            checks.append(
+                HealthCheck(
+                    name="Vector Index",
+                    status="critical",
+                    message="Index not built",
+                    recommendation="Ingest documents to build index",
+                )
+            )
 
         # Check 4: Embedding model
         if stats.embedding_status == "ready":
-            checks.append(HealthCheck(
-                name="Embedding Model",
-                status="healthy",
-                message="Model loaded and ready",
-            ))
+            checks.append(
+                HealthCheck(
+                    name="Embedding Model",
+                    status="healthy",
+                    message="Model loaded and ready",
+                )
+            )
         elif stats.embedding_status == "missing":
-            checks.append(HealthCheck(
-                name="Embedding Model",
-                status="critical",
-                message="Embedding model not loaded",
-                recommendation="Download embedding model in settings",
-            ))
+            checks.append(
+                HealthCheck(
+                    name="Embedding Model",
+                    status="critical",
+                    message="Embedding model not loaded",
+                    recommendation="Download embedding model in settings",
+                )
+            )
         else:
-            checks.append(HealthCheck(
-                name="Embedding Model",
-                status="warning",
-                message=f"Status: {stats.embedding_status}",
-            ))
+            checks.append(
+                HealthCheck(
+                    name="Embedding Model",
+                    status="warning",
+                    message=f"Status: {stats.embedding_status}",
+                )
+            )
 
         return checks
 
@@ -299,8 +321,7 @@ class CorpusHealthChecker:
 
         # Collect recommendations
         recommendations = [
-            c.recommendation for c in checks
-            if c.recommendation is not None
+            c.recommendation for c in checks if c.recommendation is not None
         ]
 
         return CorpusHealthReport(
