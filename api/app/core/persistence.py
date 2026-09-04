@@ -785,30 +785,37 @@ class IndexPersistence:
         return data, metadata
 
     def save_trees(self, index_name: str, trees: dict[str, Any], metadata: IndexMetadata) -> Path:
-        """Save RAPTOR hierarchical trees to disk."""
-        path = self._base_path / f"{index_name}_trees.pkl"
-        with open(path, "wb") as f:
-            pickle.dump(trees, f)
+        """Save RAPTOR hierarchical trees to disk using JSON."""
+        path = self._base_path / f"{index_name}_trees.json"
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(trees, f, indent=2)
 
         # Save metadata for trees
         metadata_path = self._metadata_path(f"{index_name}_trees")
-        with open(metadata_path, "w") as f:
+        with open(metadata_path, "w", encoding="utf-8") as f:
             json.dump(metadata.to_dict(), f, indent=2)
 
         return path
 
     def load_trees(self, index_name: str) -> tuple[dict[str, Any] | None, IndexMetadata | None]:
         """Load RAPTOR hierarchical trees from disk."""
-        path = self._base_path / f"{index_name}_trees.pkl"
+        json_path = self._base_path / f"{index_name}_trees.json"
+        pkl_path = self._base_path / f"{index_name}_trees.pkl"
         metadata_path = self._metadata_path(f"{index_name}_trees")
 
-        if not path.exists() or not metadata_path.exists():
+        if not metadata_path.exists():
             return None, None
 
-        with open(path, "rb") as f:
-            trees = pickle.load(f)
+        if json_path.exists():
+            with open(json_path, "r", encoding="utf-8") as f:
+                trees = json.load(f)
+        elif pkl_path.exists():
+            with open(pkl_path, "rb") as f:
+                trees = pickle.load(f)
+        else:
+            return None, None
 
-        with open(metadata_path) as f:
+        with open(metadata_path, "r", encoding="utf-8") as f:
             metadata = IndexMetadata.from_dict(json.load(f))
 
         return trees, metadata
