@@ -134,7 +134,9 @@ class DiskEmbeddingCache(DiskCacheBase):
 
         # Deserialize embedding
         embedding_bytes = row[0]
-        return pickle.loads(embedding_bytes)
+        if isinstance(embedding_bytes, bytes):
+            embedding_bytes = embedding_bytes.decode("utf-8")
+        return json.loads(embedding_bytes)
 
     def set(
         self,
@@ -163,7 +165,7 @@ class DiskEmbeddingCache(DiskCacheBase):
             """, (to_remove,))
 
         # Serialize and store
-        embedding_bytes = pickle.dumps(embedding)
+        embedding_bytes = json.dumps(embedding).encode("utf-8")
         conn.execute("""
             INSERT OR REPLACE INTO embeddings
             (key, model, text_hash, embedding, created_at, hit_count)
