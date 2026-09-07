@@ -603,10 +603,10 @@ class IndexPersistence:
         return self._base_path / f"{index_name}_chunks.pkl"
 
     def _bm25_path(self, index_name: str) -> Path:
-        return self._base_path / f"{index_name}_bm25.pkl"
+        return self._base_path / f"{index_name}_bm25.json"
 
     def _tokenized_path(self, index_name: str) -> Path:
-        return self._base_path / f"{index_name}_tokenized.pkl"
+        return self._base_path / f"{index_name}_tokenized.json"
 
     def compute_config_hash(self, config: dict) -> str:
         """Compute hash of config for invalidation."""
@@ -675,16 +675,21 @@ class IndexPersistence:
         tokenized_corpus: list[list[str]],
         metadata: IndexMetadata,
     ) -> Path:
-        """Save BM25 index to disk."""
-        # Save BM25 object
+        """Save BM25 index to disk using safe JSON serialization."""
+        # Save BM25 parameters safely as JSON
         bm25_path = self._bm25_path(index_name)
-        with open(bm25_path, "wb") as f:
-            pickle.dump(bm25, f)
+        bm25_params = {
+            "k1": getattr(bm25, "k1", 1.5),
+            "b": getattr(bm25, "b", 0.75),
+            "epsilon": getattr(bm25, "epsilon", 0.25),
+        }
+        with open(bm25_path, "w") as f:
+            json.dump(bm25_params, f, indent=2)
 
-        # Save tokenized corpus
+        # Save tokenized corpus safely as JSON
         tokenized_path = self._tokenized_path(index_name)
-        with open(tokenized_path, "wb") as f:
-            pickle.dump(tokenized_corpus, f)
+        with open(tokenized_path, "w") as f:
+            json.dump(tokenized_corpus, f)
 
         # Save metadata
         metadata_path = self._metadata_path(f"{index_name}_sparse")
@@ -697,7 +702,7 @@ class IndexPersistence:
         self,
         index_name: str,
     ) -> tuple[Any | None, list | None, IndexMetadata | None]:
-        """Load BM25 index from disk."""
+        """Load BM25 index from disk safely without pickle."""
         bm25_path = self._bm25_path(index_name)
         tokenized_path = self._tokenized_path(index_name)
         metadata_path = self._metadata_path(f"{index_name}_sparse")
@@ -705,13 +710,20 @@ class IndexPersistence:
         if not all(p.exists() for p in [bm25_path, tokenized_path, metadata_path]):
             return None, None, None
 
-        # Load BM25
-        with open(bm25_path, "rb") as f:
-            bm25 = pickle.load(f)
+        # Load tokenized corpus from JSON
+        with open(tokenized_path, "r") as f:
+            tokenized_corpus = json.load(f)
 
-        # Load tokenized corpus
-        with open(tokenized_path, "rb") as f:
-            tokenized_corpus = pickle.load(f)
+        # Load BM25 params and reconstruct object
+        with open(bm25_path, "r") as f:
+            bm25_params = json.load(f)
+
+        from rank_bm25 import BM25Okapi
+
+        k1 = bm25_params.get("k1", 1.5)
+        b = bm25_params.get("b", 0.75)
+        epsilon = bm25_params.get("epsilon", 0.25)
+        bm25 = BM25Okapi(tokenized_corpus, k1=k1, b=b, epsilon=epsilon)
 
         # Load metadata
         with open(metadata_path) as f:
@@ -748,6 +760,8 @@ class IndexPersistence:
             self._chunks_path(index_name),
             self._bm25_path(index_name),
             self._tokenized_path(index_name),
+            self._base_path / f"{index_name}_bm25.pkl",
+            self._base_path / f"{index_name}_tokenized.pkl",
             self._metadata_path(index_name),
             self._metadata_path(f"{index_name}_sparse"),
         ]
