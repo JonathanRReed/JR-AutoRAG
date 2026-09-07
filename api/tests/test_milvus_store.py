@@ -8,7 +8,6 @@ Tests cover:
 - Mock-based search tests (without actual Milvus connection)
 """
 
-
 import pytest
 
 from app.core.binary_quantization import BQConfig
@@ -96,11 +95,21 @@ class TestMilvusSearchResult:
     def test_score_conversion(self):
         # Lower distance = higher score
         result1 = MilvusSearchResult(
-            id=1, doc_id="d1", chunk_id="c1", source="", text="", metadata={},
+            id=1,
+            doc_id="d1",
+            chunk_id="c1",
+            source="",
+            text="",
+            metadata={},
             distance=0.0,
         )
         result2 = MilvusSearchResult(
-            id=2, doc_id="d2", chunk_id="c2", source="", text="", metadata={},
+            id=2,
+            doc_id="d2",
+            chunk_id="c2",
+            source="",
+            text="",
+            metadata={},
             distance=100.0,
         )
 
@@ -268,18 +277,27 @@ class TestBinaryVectorStoreSearch:
         assert len(results) == 1
         assert results[0].doc_id == "doc2"
 
-
     def test_search_binary_filters_before_distance_for_missing_doc(self, monkeypatch):
         store = MilvusVectorStore(embedding_dim=8)
         store.connect()
         store.create_collection()
-        store.insert([
-            MilvusChunk(doc_id="doc1", chunk_id="c1", source="", text="", embedding=[1.0] * 8),
-        ])
+        store.insert(
+            [
+                MilvusChunk(
+                    doc_id="doc1",
+                    chunk_id="c1",
+                    source="",
+                    text="",
+                    embedding=[1.0] * 8,
+                ),
+            ]
+        )
         store.build_index()
 
         def fail_if_called(*args, **kwargs):
-            raise AssertionError("distance calculation should be skipped when no documents match")
+            raise AssertionError(
+                "distance calculation should be skipped when no documents match"
+            )
 
         monkeypatch.setattr(store, "_hamming_distance_batch", fail_if_called)
 
@@ -291,11 +309,31 @@ class TestBinaryVectorStoreSearch:
         store = MilvusVectorStore(embedding_dim=8)
         store.connect()
         store.create_collection()
-        store.insert([
-            MilvusChunk(doc_id="doc1", chunk_id="c1", source="", text="", embedding=[1.0] * 8),
-            MilvusChunk(doc_id="doc2", chunk_id="c2", source="", text="", embedding=[-1.0] * 8),
-            MilvusChunk(doc_id="doc3", chunk_id="c3", source="", text="", embedding=[1.0] * 8),
-        ])
+        store.insert(
+            [
+                MilvusChunk(
+                    doc_id="doc1",
+                    chunk_id="c1",
+                    source="",
+                    text="",
+                    embedding=[1.0] * 8,
+                ),
+                MilvusChunk(
+                    doc_id="doc2",
+                    chunk_id="c2",
+                    source="",
+                    text="",
+                    embedding=[-1.0] * 8,
+                ),
+                MilvusChunk(
+                    doc_id="doc3",
+                    chunk_id="c3",
+                    source="",
+                    text="",
+                    embedding=[1.0] * 8,
+                ),
+            ]
+        )
         store.build_index()
 
         calls = []
@@ -307,7 +345,9 @@ class TestBinaryVectorStoreSearch:
 
         monkeypatch.setattr(store, "_hamming_distance_batch", count_call)
 
-        results = store.search_binary(b"\xff", top_k=5, document_ids=["doc1", "doc2", "missing"])
+        results = store.search_binary(
+            b"\xff", top_k=5, document_ids=["doc1", "doc2", "missing"]
+        )
 
         assert len(results) == 2
         assert {result.doc_id for result in results} == {"doc1", "doc2"}
@@ -319,9 +359,15 @@ class TestBinaryVectorStoreSearch:
         store.create_collection()
 
         chunks = [
-            MilvusChunk(doc_id="doc1", chunk_id="c1", source="", text="", embedding=[1.0] * 8),
-            MilvusChunk(doc_id="doc1", chunk_id="c2", source="", text="", embedding=[1.0] * 8),
-            MilvusChunk(doc_id="doc2", chunk_id="c3", source="", text="", embedding=[1.0] * 8),
+            MilvusChunk(
+                doc_id="doc1", chunk_id="c1", source="", text="", embedding=[1.0] * 8
+            ),
+            MilvusChunk(
+                doc_id="doc1", chunk_id="c2", source="", text="", embedding=[1.0] * 8
+            ),
+            MilvusChunk(
+                doc_id="doc2", chunk_id="c3", source="", text="", embedding=[1.0] * 8
+            ),
         ]
 
         store.insert(chunks)
@@ -336,10 +382,66 @@ class TestBinaryVectorStoreSearch:
         store.connect()
         store.create_collection()
 
-        store.insert([
-            MilvusChunk(doc_id="d1", chunk_id="c1", source="", text="", embedding=[1.0] * 8)
-        ])
+        store.insert(
+            [
+                MilvusChunk(
+                    doc_id="d1", chunk_id="c1", source="", text="", embedding=[1.0] * 8
+                )
+            ]
+        )
         assert store.count() == 1
 
         store.clear()
         assert store.count() == 0
+
+
+class TestMilvusStorePersistence:
+    def test_save_and_load_persistence(self, tmp_path):
+        persist_file = tmp_path / "store_index.json"
+        config = MilvusConfig(persist_path=str(persist_file))
+
+        store1 = MilvusVectorStore(config=config, embedding_dim=8)
+        store1.connect()
+        store1.create_collection()
+
+        chunks = [
+            MilvusChunk(
+                doc_id="doc1",
+                chunk_id="c1",
+                source="src1",
+                text="text 1",
+                metadata={"key": "val1"},
+                embedding=[1.0] * 8,
+            ),
+            MilvusChunk(
+                doc_id="doc2",
+                chunk_id="c2",
+                source="src2",
+                text="text 2",
+                metadata={"key": "val2"},
+                embedding=[-1.0] * 8,
+            ),
+        ]
+        store1.insert(chunks)
+        assert store1.count() == 2
+        store1.disconnect()
+        assert persist_file.exists()
+
+        # Load store from persisted JSON file
+        store2 = MilvusVectorStore(config=config, embedding_dim=8)
+        store2.connect()
+        assert store2.count() == 2
+
+        results = store2.search(query_embedding=[1.0] * 8, top_k=2)
+        assert len(results) == 2
+        assert results[0].doc_id == "doc1"
+        assert results[0].metadata == {"key": "val1"}
+
+        # Confirm the file is valid JSON and not pickle
+        import json
+
+        with open(persist_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        assert "chunks" in data
+        assert len(data["chunks"]) == 2
+        assert "bq_vector" in data["chunks"][0]
