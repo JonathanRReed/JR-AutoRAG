@@ -36,8 +36,8 @@ def test_disk_embedding_cache_json_roundtrip(tmp_path: Path) -> None:
     cache.close()
 
 
-def test_disk_embedding_cache_legacy_pickle_fallback(tmp_path: Path) -> None:
-    """Test that legacy pickle-encoded cache entries still deserialize safely via fallback."""
+def test_disk_embedding_cache_legacy_pickle_discarded(tmp_path: Path) -> None:
+    """Test that legacy pickle-encoded cache entries are safely discarded without pickle.loads execution."""
     db_path = tmp_path / "embedding_cache.db"
     cache = DiskEmbeddingCache(CacheConfig(db_path=db_path))
 
@@ -57,15 +57,19 @@ def test_disk_embedding_cache_legacy_pickle_fallback(tmp_path: Path) -> None:
     )
     conn.commit()
 
-    # Get should deserialize legacy pickle data without failing
+    # Get should discard legacy pickle data safely and return None
     retrieved = cache.get(test_text)
-    assert retrieved == legacy_embedding
+    assert retrieved is None
+
+    # Verify entry was deleted from database
+    cursor = conn.execute("SELECT COUNT(*) FROM embeddings WHERE key = ?", (key,))
+    assert cursor.fetchone()[0] == 0
 
     cache.close()
 
 
 def test_disk_embedding_cache_malformed_payload_graceful_handling(tmp_path: Path) -> None:
-    """Test that corrupt or unparseable byte payloads return None rather than crashing."""
+    """Test that corrupt or unparseable byte payloads return None and are deleted rather than crashing."""
     db_path = tmp_path / "embedding_cache.db"
     cache = DiskEmbeddingCache(CacheConfig(db_path=db_path))
 
@@ -85,5 +89,9 @@ def test_disk_embedding_cache_malformed_payload_graceful_handling(tmp_path: Path
 
     retrieved = cache.get(test_text)
     assert retrieved is None
+
+    # Verify entry was deleted
+    cursor = conn.execute("SELECT COUNT(*) FROM embeddings WHERE key = ?", (key,))
+    assert cursor.fetchone()[0] == 0
 
     cache.close()

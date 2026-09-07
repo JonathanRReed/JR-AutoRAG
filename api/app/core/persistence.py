@@ -132,15 +132,14 @@ class DiskEmbeddingCache(DiskCacheBase):
         )
         conn.commit()
 
-        # Deserialize embedding safely
+        # Deserialize embedding safely using JSON only; discard legacy pickle/corrupt entries
         embedding_bytes = row[0]
         try:
             return json.loads(embedding_bytes.decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError):
-            try:
-                return pickle.loads(embedding_bytes)
-            except Exception:
-                return None
+            conn.execute("DELETE FROM embeddings WHERE key = ?", (key,))
+            conn.commit()
+            return None
 
     def set(
         self,
