@@ -458,10 +458,9 @@ class DiskQueryCache(DiskCacheBase):
         try:
             return json.loads(result_bytes.decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError):
-            try:
-                return pickle.loads(result_bytes)
-            except Exception:
-                return None
+            # Do not use pickle.loads as fallback due to insecure deserialization risk.
+            # On decode failure, treat as cache miss.
+            return None
 
     def set(
         self,
