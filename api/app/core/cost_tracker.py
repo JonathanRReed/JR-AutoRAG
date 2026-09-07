@@ -1,12 +1,11 @@
-"""Cost and Latency Tracker: Monitor RAG pipeline costs and performance.
+"""Cost Tracker: Monitor RAG pipeline token usage and estimated costs.
 
-Provides real-time tracking of:
-- Token usage and costs per provider
-- Latency breakdowns by stage
-- Budget enforcement and alerts
-- Historical aggregations
+Provides tracking of:
+- Token usage and estimated costs per provider and model
+- Historical transaction logging and total cost aggregation
+- Distinguishes known pricing models from unknown fallback models
 
-Enables cost-aware routing and budget management.
+Enables cost-aware tracking for LLM operations.
 """
 
 from __future__ import annotations
@@ -58,6 +57,7 @@ class CostEstimate:
     total_cost_usd: float = 0.0
     provider: str = "unknown"
     model: str = "unknown"
+    is_known_model: bool = True
 
     def __post_init__(self) -> None:
         """Calculate total cost if zero or ensure consistency."""
@@ -72,6 +72,7 @@ class CostEstimate:
             total_cost_usd=round(self.total_cost_usd + other.total_cost_usd, 6),
             provider=self.provider if self.provider == other.provider else "mixed",
             model=self.model if self.model == other.model else "mixed",
+            is_known_model=self.is_known_model and other.is_known_model,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -82,6 +83,7 @@ class CostEstimate:
             "total_cost_usd": self.total_cost_usd,
             "provider": self.provider,
             "model": self.model,
+            "is_known_model": self.is_known_model,
         }
 
 
@@ -97,7 +99,7 @@ DEFAULT_MODEL_PRICING: dict[str, dict[str, float]] = {
 
 
 class CostTracker:
-    """Tracks token usage, calculates costs, and monitors budget thresholds."""
+    """Tracks token usage, calculates costs, and monitors thresholds."""
 
     def __init__(self, pricing_table: dict[str, dict[str, float]] | None = None) -> None:
         self.pricing = pricing_table if pricing_table is not None else DEFAULT_MODEL_PRICING
@@ -110,7 +112,14 @@ class CostTracker:
         provider: str = "openai",
     ) -> CostEstimate:
         """Calculate cost USD for a given TokenUsage and model."""
-        rates = self.pricing.get(model, {"prompt": 0.0, "completion": 0.0})
+        if model in self.pricing:
+            is_known = True
+            rates = self.pricing[model]
+        else:
+            is_known = False
+            rates = {"prompt": 0.0, "completion": 0.0}
+            logger.warning("Unknown model '%s' encountered. Defaulting cost calculation to $0.0 rates.", model)
+
         prompt_cost = (usage.prompt_tokens / 1000.0) * rates.get("prompt", 0.0)
         completion_cost = (usage.completion_tokens / 1000.0) * rates.get("completion", 0.0)
         total_cost = prompt_cost + completion_cost
@@ -121,6 +130,7 @@ class CostTracker:
             total_cost_usd=round(total_cost, 6),
             provider=provider,
             model=model,
+            is_known_model=is_known,
         )
 
         record = {
