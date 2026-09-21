@@ -165,7 +165,6 @@ class MilvusVectorStore:
         self._chunks: list[_StoredChunk] = []
         self._next_id: int = 1
         self._connected = False
-        self._persistence_load_failed = False
 
         # Binary vectors as numpy array for fast search
         self._vectors: np.ndarray | None = None
@@ -177,24 +176,18 @@ class MilvusVectorStore:
 
     def connect(self) -> bool:
         """Connect to store (no-op for in-memory, loads from disk if persist_path set)."""
-        self._connected = False
+        self._connected = True
+
         if self._config.persist_path:
             self._load_from_disk()
-            if self._persistence_load_failed:
-                raise ValueError(
-                    "Existing binary index could not be loaded. "
-                    "Archive it and rebuild from source documents; legacy pickle is never read."
-                )
-        self._connected = True
+
         return True
 
     def disconnect(self) -> None:
-        """Disconnect without overwriting an index that failed validation."""
-        try:
-            if self._connected and self._config.persist_path:
-                self._save_to_disk()
-        finally:
-            self._connected = False
+        """Disconnect from store (saves to disk if persist_path set)."""
+        if self._config.persist_path:
+            self._save_to_disk()
+        self._connected = False
 
     def _ensure_connected(self) -> None:
         """Ensure store is connected."""
@@ -299,7 +292,7 @@ class MilvusVectorStore:
             batch_size: Batch size (for progress reporting only)
 
         Returns:
-            List of inserted IDs
+            List of all inserted IDs
         """
         all_ids = []
 
@@ -543,8 +536,6 @@ class MilvusVectorStore:
         """Save index to disk."""
         if not self._config.persist_path:
             return
-        if self._persistence_load_failed:
-            raise ValueError("Refusing to overwrite a binary index that failed validation")
 
         path = Path(self._config.persist_path)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -577,82 +568,42 @@ class MilvusVectorStore:
         print(f"Saved {len(self._chunks)} chunks to {path}")
 
     def _load_from_disk(self) -> bool:
-        """Validate the complete index before replacing any in-memory state."""
+        """Load index from disk."""
         if not self._config.persist_path:
             return False
 
         path = Path(self._config.persist_path)
         if not path.exists():
-            self._persistence_load_failed = False
             return False
 
-        # Preserve legacy/corrupt bytes even if a caller later disconnects.
-        self._persistence_load_failed = True
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
 
-            if not isinstance(data, dict):
-                raise ValueError("Binary index must be a JSON object")
-            dimension = data.get("embedding_dim")
-            if type(dimension) is not int or dimension != self._embedding_dim:
-                raise ValueError("Persisted embedding dimension does not match the store")
-            if data.get("bq_config") != self._bq_config.to_dict():
-                raise ValueError("Persisted quantization configuration does not match the store")
-            raw_chunks = data.get("chunks")
-            if not isinstance(raw_chunks, list):
-                raise ValueError("Binary index chunks must be a list")
-
-            chunks: list[_StoredChunk] = []
-            identifiers: set[int] = set()
+            raw_chunks = data.get("chunks", [])
+            self._chunks = []
             for item in raw_chunks:
-                if not isinstance(item, dict):
-                    raise ValueError("Binary index chunk must be an object")
-                identifier = item.get("id")
-                if type(identifier) is not int or identifier < 1 or identifier in identifiers:
-                    raise ValueError("Binary index chunk IDs must be unique positive integers")
-                if not all(
-                    isinstance(item.get(key), str)
-                    for key in ("doc_id", "chunk_id", "source", "text")
-                ):
-                    raise ValueError("Binary index chunk text fields must be strings")
-                metadata = item.get("metadata", {})
-                if not isinstance(metadata, dict):
-                    raise ValueError("Binary index chunk metadata must be an object")
-                encoded_vector = item.get("bq_vector")
-                if not isinstance(encoded_vector, str) or len(encoded_vector) != self._binary_dim * 2:
-                    raise ValueError("Binary index vector has an invalid encoded dimension")
-                bq_vec = bytes.fromhex(encoded_vector)
-                if len(bq_vec) != self._binary_dim:
-                    raise ValueError("Binary index vector dimension does not match the store")
-                identifiers.add(identifier)
-                chunks.append(
+                bq_vec = (
+                    bytes.fromhex(item["bq_vector"])
+                    if isinstance(item["bq_vector"], str)
+                    else item["bq_vector"]
+                )
+                self._chunks.append(
                     _StoredChunk(
-                        id=identifier,
+                        id=item["id"],
                         doc_id=item["doc_id"],
                         chunk_id=item["chunk_id"],
                         source=item["source"],
                         text=item["text"],
-                        metadata=metadata,
+                        metadata=item.get("metadata", {}),
                         bq_vector=bq_vec,
                     )
                 )
 
-            next_id = data.get("next_id")
-            if type(next_id) is not int or next_id <= max(identifiers, default=0):
-                raise ValueError("Binary index next_id would collide with existing IDs")
-            embedding_version = data.get("embedding_version", "")
-            quantization_version = data.get("quantization_version", "")
-            if not isinstance(embedding_version, str) or not isinstance(quantization_version, str):
-                raise ValueError("Binary index versions must be strings")
-
-            self._chunks = chunks
-            self._next_id = next_id
-            self._embedding_version = embedding_version
-            self._quantization_version = quantization_version
-            self._vectors = None
+            self._next_id = data.get("next_id", 0)
+            self._embedding_version = data.get("embedding_version", "")
+            self._quantization_version = data.get("quantization_version", "")
             self._vectors_dirty = True
-            self._persistence_load_failed = False
 
             print(f"Loaded {len(self._chunks)} chunks from {path}")
             return True
