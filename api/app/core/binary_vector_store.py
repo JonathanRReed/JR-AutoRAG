@@ -292,7 +292,7 @@ class MilvusVectorStore:
             batch_size: Batch size (for progress reporting only)
 
         Returns:
-            List of all inserted IDs
+            List of inserted IDs
         """
         all_ids = []
 
@@ -568,7 +568,7 @@ class MilvusVectorStore:
         print(f"Saved {len(self._chunks)} chunks to {path}")
 
     def _load_from_disk(self) -> bool:
-        """Load index from disk."""
+        """Validate the complete index before replacing any in-memory state."""
         if not self._config.persist_path:
             return False
 
@@ -580,29 +580,65 @@ class MilvusVectorStore:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
 
-            raw_chunks = data.get("chunks", [])
-            self._chunks = []
+            if not isinstance(data, dict):
+                raise ValueError("Binary index must be a JSON object")
+            dimension = data.get("embedding_dim")
+            if type(dimension) is not int or dimension != self._embedding_dim:
+                raise ValueError("Persisted embedding dimension does not match the store")
+            if data.get("bq_config") != self._bq_config.to_dict():
+                raise ValueError("Persisted quantization configuration does not match the store")
+            raw_chunks = data.get("chunks")
+            if not isinstance(raw_chunks, list):
+                raise ValueError("Binary index chunks must be a list")
+
+            chunks: list[_StoredChunk] = []
+            identifiers: set[int] = set()
             for item in raw_chunks:
-                bq_vec = (
-                    bytes.fromhex(item["bq_vector"])
-                    if isinstance(item["bq_vector"], str)
-                    else item["bq_vector"]
-                )
-                self._chunks.append(
+                if not isinstance(item, dict):
+                    raise ValueError("Binary index chunk must be an object")
+                identifier = item.get("id")
+                if type(identifier) is not int or identifier < 1 or identifier in identifiers:
+                    raise ValueError("Binary index chunk IDs must be unique positive integers")
+                if not all(
+                    isinstance(item.get(key), str)
+                    for key in ("doc_id", "chunk_id", "source", "text")
+                ):
+                    raise ValueError("Binary index chunk text fields must be strings")
+                metadata = item.get("metadata", {})
+                if not isinstance(metadata, dict):
+                    raise ValueError("Binary index chunk metadata must be an object")
+                encoded_vector = item.get("bq_vector")
+                if not isinstance(encoded_vector, str) or len(encoded_vector) != self._binary_dim * 2:
+                    raise ValueError("Binary index vector has an invalid encoded dimension")
+                bq_vec = bytes.fromhex(encoded_vector)
+                if len(bq_vec) != self._binary_dim:
+                    raise ValueError("Binary index vector dimension does not match the store")
+                identifiers.add(identifier)
+                chunks.append(
                     _StoredChunk(
-                        id=item["id"],
+                        id=identifier,
                         doc_id=item["doc_id"],
                         chunk_id=item["chunk_id"],
                         source=item["source"],
                         text=item["text"],
-                        metadata=item.get("metadata", {}),
+                        metadata=metadata,
                         bq_vector=bq_vec,
                     )
                 )
 
-            self._next_id = data.get("next_id", 0)
-            self._embedding_version = data.get("embedding_version", "")
-            self._quantization_version = data.get("quantization_version", "")
+            next_id = data.get("next_id")
+            if type(next_id) is not int or next_id <= max(identifiers, default=0):
+                raise ValueError("Binary index next_id would collide with existing IDs")
+            embedding_version = data.get("embedding_version", "")
+            quantization_version = data.get("quantization_version", "")
+            if not isinstance(embedding_version, str) or not isinstance(quantization_version, str):
+                raise ValueError("Binary index versions must be strings")
+
+            self._chunks = chunks
+            self._next_id = next_id
+            self._embedding_version = embedding_version
+            self._quantization_version = quantization_version
+            self._vectors = None
             self._vectors_dirty = True
 
             print(f"Loaded {len(self._chunks)} chunks from {path}")
