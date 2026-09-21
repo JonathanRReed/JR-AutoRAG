@@ -165,6 +165,7 @@ class MilvusVectorStore:
         self._chunks: list[_StoredChunk] = []
         self._next_id: int = 1
         self._connected = False
+        self._persistence_load_failed = False
 
         # Binary vectors as numpy array for fast search
         self._vectors: np.ndarray | None = None
@@ -176,18 +177,24 @@ class MilvusVectorStore:
 
     def connect(self) -> bool:
         """Connect to store (no-op for in-memory, loads from disk if persist_path set)."""
-        self._connected = True
-
+        self._connected = False
         if self._config.persist_path:
             self._load_from_disk()
-
+            if self._persistence_load_failed:
+                raise ValueError(
+                    "Existing binary index could not be loaded. "
+                    "Archive it and rebuild from source documents; legacy pickle is never read."
+                )
+        self._connected = True
         return True
 
     def disconnect(self) -> None:
-        """Disconnect from store (saves to disk if persist_path set)."""
-        if self._config.persist_path:
-            self._save_to_disk()
-        self._connected = False
+        """Disconnect without overwriting an index that failed validation."""
+        try:
+            if self._connected and self._config.persist_path:
+                self._save_to_disk()
+        finally:
+            self._connected = False
 
     def _ensure_connected(self) -> None:
         """Ensure store is connected."""
@@ -536,6 +543,8 @@ class MilvusVectorStore:
         """Save index to disk."""
         if not self._config.persist_path:
             return
+        if self._persistence_load_failed:
+            raise ValueError("Refusing to overwrite a binary index that failed validation")
 
         path = Path(self._config.persist_path)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -574,8 +583,11 @@ class MilvusVectorStore:
 
         path = Path(self._config.persist_path)
         if not path.exists():
+            self._persistence_load_failed = False
             return False
 
+        # Preserve legacy/corrupt bytes even if a caller later disconnects.
+        self._persistence_load_failed = True
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -640,6 +652,7 @@ class MilvusVectorStore:
             self._quantization_version = quantization_version
             self._vectors = None
             self._vectors_dirty = True
+            self._persistence_load_failed = False
 
             print(f"Loaded {len(self._chunks)} chunks from {path}")
             return True
