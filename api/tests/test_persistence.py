@@ -79,6 +79,7 @@ def test_disk_embedding_cache_legacy_pickle_returns_none_without_unpickling(cach
         b"[1.0, Infinity, 3.0]",
         b"\xff\xfe",
         b"null",
+        b"[1" + b"0" * 400 + b"]",
     ],
 )
 def test_disk_embedding_cache_malformed_json_and_invalid_vectors(cache, payload):

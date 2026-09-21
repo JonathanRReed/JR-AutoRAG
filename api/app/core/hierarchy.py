@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 @dataclass
 class HierarchyNode:
     """A node in the document hierarchy tree."""
+
     id: str
     level: int  # 0 = root, 1 = section, 2 = subsection, etc.
     title: str
@@ -42,6 +43,7 @@ class HierarchyNode:
 @dataclass
 class DocumentTree:
     """Complete document hierarchy tree."""
+
     root_id: str
     nodes: dict[str, HierarchyNode]
     document_id: str
@@ -104,8 +106,9 @@ class DocumentTree:
                     "chunk_ids": n.chunk_ids,
                 }
                 for nid, n in self.nodes.items()
-            }
+            },
         }
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DocumentTree:
         """Create a tree from a dictionary."""
@@ -136,7 +139,7 @@ class HierarchyBuilder:
     """
 
     # Header pattern for markdown
-    HEADER_PATTERN = re.compile(r'^(#{1,6})\s+(.+)$', re.MULTILINE)
+    HEADER_PATTERN = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
 
     def __init__(self, summary_max_length: int = 200) -> None:
         self.summary_max_length = summary_max_length
@@ -144,8 +147,8 @@ class HierarchyBuilder:
     def _generate_summary(self, text: str) -> str:
         """Generate a summary for a node."""
         # Simple extractive summary - take first sentences
-        clean = re.sub(r'\s+', ' ', text).strip()
-        sentences = re.split(r'(?<=[.!?])\s+', clean)
+        clean = re.sub(r"\s+", " ", text).strip()
+        sentences = re.split(r"(?<=[.!?])\s+", clean)
 
         summary_parts = []
         current_len = 0
@@ -156,7 +159,11 @@ class HierarchyBuilder:
             summary_parts.append(sentence)
             current_len += len(sentence)
 
-        return ' '.join(summary_parts) if summary_parts else clean[:self.summary_max_length]
+        return (
+            " ".join(summary_parts)
+            if summary_parts
+            else clean[: self.summary_max_length]
+        )
 
     def _find_sections(self, text: str) -> list[tuple[int, str, int, int]]:
         """Find all sections with their boundaries.
@@ -179,7 +186,9 @@ class HierarchyBuilder:
 
         return sections
 
-    def build(self, text: str, document_id: str, title: str = "Document") -> DocumentTree:
+    def build(
+        self, text: str, document_id: str, title: str = "Document"
+    ) -> DocumentTree:
         """Build a hierarchy tree from document text.
 
         Args:
@@ -299,27 +308,35 @@ class HierarchyBuilder:
             root_id = str(uuid.uuid4())
             return DocumentTree(
                 root_id=root_id,
-                nodes={root_id: HierarchyNode(
-                    id=root_id, level=0, title="Empty", text="", summary=""
-                )},
+                nodes={
+                    root_id: HierarchyNode(
+                        id=root_id, level=0, title="Empty", text="", summary=""
+                    )
+                },
                 document_id=document_id,
             )
 
         nodes: dict[str, HierarchyNode] = {}
-        current_level_texts: list[tuple[str, str, list[str]]] = []  # (node_id, text, chunk_ids)
+        current_level_texts: list[
+            tuple[str, str, list[str]]
+        ] = []  # (node_id, text, chunk_ids)
 
         # Level 0: Create leaf nodes from chunks
         for chunk in chunks:
             node_id = str(uuid.uuid4())
-            text = chunk.text if hasattr(chunk, 'text') else getattr(chunk, 'snippet', '')
-            chunk_id = str(chunk.index) if hasattr(chunk, 'index') else str(id(chunk))
+            text = (
+                chunk.text if hasattr(chunk, "text") else getattr(chunk, "snippet", "")
+            )
+            chunk_id = str(chunk.index) if hasattr(chunk, "index") else str(id(chunk))
 
             node = HierarchyNode(
                 id=node_id,
                 level=0,
                 title=f"Chunk {chunk_id}",
                 text=text,
-                summary=text[:self.summary_max_length] if len(text) > self.summary_max_length else text,
+                summary=text[: self.summary_max_length]
+                if len(text) > self.summary_max_length
+                else text,
                 chunk_ids=[chunk_id],
             )
             nodes[node_id] = node
@@ -348,14 +365,15 @@ class HierarchyBuilder:
                 if not cluster_indices:
                     continue
 
-                # Gather cluster members
-                cluster_node_ids = [current_level_texts[i][0] for i in cluster_indices]
+                # Gather cluster members and combine texts for summary
+                cluster_node_ids = []
                 cluster_chunk_ids = []
+                cluster_texts = []
                 for i in cluster_indices:
-                    cluster_chunk_ids.extend(current_level_texts[i][2])
-
-                # Combine texts for summary
-                cluster_texts = [current_level_texts[i][1] for i in cluster_indices]
+                    node_id, text, chunk_ids = current_level_texts[i]
+                    cluster_node_ids.append(node_id)
+                    cluster_chunk_ids.extend(chunk_ids)
+                    cluster_texts.append(text)
                 combined_text = "\n\n".join(cluster_texts)
 
                 # Generate summary
@@ -475,13 +493,13 @@ class HierarchyBuilder:
         # Take first sentence from each text
         summaries = []
         for text in texts[:3]:  # Limit to 3 texts
-            sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+            sentences = re.split(r"(?<=[.!?])\s+", text.strip())
             if sentences:
                 summaries.append(sentences[0][:150])
 
         combined = " ".join(summaries)
         if len(combined) > self.summary_max_length:
-            combined = combined[:self.summary_max_length] + "..."
+            combined = combined[: self.summary_max_length] + "..."
         return combined
 
     async def _summarize_cluster_llm(
@@ -511,15 +529,19 @@ Sections:
 Summary:"""
 
         try:
-            response = await provider.chat([
-                {"role": "system", "content": "You are a precise document summarizer."},
-                {"role": "user", "content": prompt},
-            ])
-            return response.strip()[:self.summary_max_length]
+            response = await provider.chat(
+                [
+                    {
+                        "role": "system",
+                        "content": "You are a precise document summarizer.",
+                    },
+                    {"role": "user", "content": prompt},
+                ]
+            )
+            return response.strip()[: self.summary_max_length]
         except Exception:
             # Fallback to extractive
             return self._summarize_cluster_extractive(texts)
-
 
     def associate_chunks(
         self,
@@ -546,9 +568,9 @@ Summary:"""
 
             # Find position of node's title in text
             title_match = re.search(
-                r'^#{' + str(node.level) + r'}\s+' + re.escape(node.title[:50]),
+                r"^#{" + str(node.level) + r"}\s+" + re.escape(node.title[:50]),
                 text,
-                re.MULTILINE
+                re.MULTILINE,
             )
             if title_match:
                 start = title_match.start()

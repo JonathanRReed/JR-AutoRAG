@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 # Disk-Backed Embedding Cache
 # ============================================================================
 
+
 class DiskCacheBase:
     """Base class for disk-backed SQLite caches."""
 
@@ -46,6 +47,7 @@ class DiskCacheBase:
 @dataclass
 class CacheConfig:
     """Configuration for disk cache."""
+
     db_path: Path
     model_name: str = "default"
     max_entries: int = 100000
@@ -111,8 +113,7 @@ class DiskEmbeddingCache(DiskCacheBase):
         conn = self._get_conn()
 
         cursor = conn.execute(
-            "SELECT embedding, created_at FROM embeddings WHERE key = ?",
-            (key,)
+            "SELECT embedding, created_at FROM embeddings WHERE key = ?", (key,)
         )
         row = cursor.fetchone()
 
@@ -128,8 +129,7 @@ class DiskEmbeddingCache(DiskCacheBase):
 
         # Update hit count
         conn.execute(
-            "UPDATE embeddings SET hit_count = hit_count + 1 WHERE key = ?",
-            (key,)
+            "UPDATE embeddings SET hit_count = hit_count + 1 WHERE key = ?", (key,)
         )
         conn.commit()
 
@@ -143,12 +143,16 @@ class DiskEmbeddingCache(DiskCacheBase):
                 return None
             result: list[float] = []
             for item in data:
-                if isinstance(item, (int, float)) and not isinstance(item, bool) and math.isfinite(item):
+                if (
+                    isinstance(item, (int, float))
+                    and not isinstance(item, bool)
+                    and math.isfinite(item)
+                ):
                     result.append(float(item))
                 else:
                     return None
             return result
-        except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
+        except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError, OverflowError):
             return None
 
     def set(
@@ -169,21 +173,27 @@ class DiskEmbeddingCache(DiskCacheBase):
         if count >= self._config.max_entries:
             # Remove oldest 10%
             to_remove = int(self._config.max_entries * 0.1)
-            conn.execute("""
+            conn.execute(
+                """
                 DELETE FROM embeddings WHERE key IN (
                     SELECT key FROM embeddings
                     ORDER BY created_at ASC
                     LIMIT ?
                 )
-            """, (to_remove,))
+            """,
+                (to_remove,),
+            )
 
         # Serialize and store
         embedding_bytes = json.dumps(embedding).encode("utf-8")
-        conn.execute("""
+        conn.execute(
+            """
             INSERT OR REPLACE INTO embeddings
             (key, model, text_hash, embedding, created_at, hit_count)
             VALUES (?, ?, ?, ?, ?, 0)
-        """, (key, model, text_hash, embedding_bytes, time.time()))
+        """,
+            (key, model, text_hash, embedding_bytes, time.time()),
+        )
         conn.commit()
 
     def get_many(
@@ -207,20 +217,20 @@ class DiskEmbeddingCache(DiskCacheBase):
     def invalidate_by_model(self, model: str) -> int:
         """Invalidate all entries for a model."""
         conn = self._get_conn()
-        cursor = conn.execute(
-            "DELETE FROM embeddings WHERE model = ?",
-            (model,)
-        )
+        cursor = conn.execute("DELETE FROM embeddings WHERE model = ?", (model,))
         conn.commit()
         return cursor.rowcount
 
     def set_corpus_version(self, version: str) -> None:
         """Set corpus version for invalidation tracking."""
         conn = self._get_conn()
-        conn.execute("""
+        conn.execute(
+            """
             INSERT OR REPLACE INTO metadata (key, value, updated_at)
             VALUES (?, ?, ?)
-        """, (self._config.corpus_version_key, version, time.time()))
+        """,
+            (self._config.corpus_version_key, version, time.time()),
+        )
         conn.commit()
 
     def get_corpus_version(self) -> str | None:
@@ -228,7 +238,7 @@ class DiskEmbeddingCache(DiskCacheBase):
         conn = self._get_conn()
         cursor = conn.execute(
             "SELECT value FROM metadata WHERE key = ?",
-            (self._config.corpus_version_key,)
+            (self._config.corpus_version_key,),
         )
         row = cursor.fetchone()
         return row[0] if row else None
@@ -243,10 +253,7 @@ class DiskEmbeddingCache(DiskCacheBase):
         """Remove expired entries."""
         cutoff = time.time() - self._config.ttl_days * 86400
         conn = self._get_conn()
-        cursor = conn.execute(
-            "DELETE FROM embeddings WHERE created_at < ?",
-            (cutoff,)
-        )
+        cursor = conn.execute("DELETE FROM embeddings WHERE created_at < ?", (cutoff,))
         conn.commit()
         return cursor.rowcount
 
@@ -281,6 +288,7 @@ class DiskEmbeddingCache(DiskCacheBase):
 # Disk-Backed Query Cache (P0.3)
 # ============================================================================
 
+
 @dataclass
 class CacheEvent:
     """Record of a cache operation for tracing."""
@@ -306,13 +314,16 @@ class CacheEvent:
             "corpus_version": self.corpus_version,
             "retrieval_mode": self.retrieval_mode,
             "preset_id": self.preset_id,
-            "scope_key": self.scope_key[:12] + "..." if len(self.scope_key) > 12 else self.scope_key,
+            "scope_key": self.scope_key[:12] + "..."
+            if len(self.scope_key) > 12
+            else self.scope_key,
         }
 
 
 @dataclass
 class QueryCacheConfig:
     """Configuration for disk query cache."""
+
     db_path: Path
     max_entries: int = 10000
     ttl_hours: int = 24  # Queries expire faster than embeddings
@@ -394,13 +405,15 @@ class DiskQueryCache(DiskCacheBase):
 
         Returns None on miss. Records cache event for tracing.
         """
-        key = self._make_key(query, corpus_version, retrieval_mode, preset_id, model_ids, scope_key)
+        key = self._make_key(
+            query, corpus_version, retrieval_mode, preset_id, model_ids, scope_key
+        )
         conn = self._get_conn()
 
         cursor = conn.execute(
             """SELECT result, created_at, corpus_version, retrieval_mode, preset_id
                FROM query_cache WHERE key = ?""",
-            (key,)
+            (key,),
         )
         row = cursor.fetchone()
 
@@ -448,8 +461,7 @@ class DiskQueryCache(DiskCacheBase):
 
         # Update hit count
         conn.execute(
-            "UPDATE query_cache SET hit_count = hit_count + 1 WHERE key = ?",
-            (key,)
+            "UPDATE query_cache SET hit_count = hit_count + 1 WHERE key = ?", (key,)
         )
         conn.commit()
 
@@ -475,7 +487,9 @@ class DiskQueryCache(DiskCacheBase):
         scope_key: str | None = None,
     ) -> None:
         """Cache query result."""
-        key = self._make_key(query, corpus_version, retrieval_mode, preset_id, model_ids, scope_key)
+        key = self._make_key(
+            query, corpus_version, retrieval_mode, preset_id, model_ids, scope_key
+        )
         normalized = self._normalize_query(query)
         model_str = json.dumps(model_ids or {}, sort_keys=True)
         conn = self._get_conn()
@@ -487,20 +501,35 @@ class DiskQueryCache(DiskCacheBase):
         if count >= self._config.max_entries:
             # Remove oldest 10%
             to_remove = int(self._config.max_entries * 0.1)
-            conn.execute("""
+            conn.execute(
+                """
                 DELETE FROM query_cache WHERE key IN (
                     SELECT key FROM query_cache
                     ORDER BY created_at ASC
                     LIMIT ?
                 )
-            """, (to_remove,))
+            """,
+                (to_remove,),
+            )
 
         result_bytes = pickle.dumps(result)
-        conn.execute("""
+        conn.execute(
+            """
             INSERT OR REPLACE INTO query_cache
             (key, query_normalized, corpus_version, retrieval_mode, preset_id, model_ids, result, created_at, hit_count)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
-        """, (key, normalized, corpus_version, retrieval_mode, preset_id, model_str, result_bytes, time.time()))
+        """,
+            (
+                key,
+                normalized,
+                corpus_version,
+                retrieval_mode,
+                preset_id,
+                model_str,
+                result_bytes,
+                time.time(),
+            ),
+        )
         conn.commit()
 
     def get_last_event(self) -> CacheEvent | None:
@@ -511,8 +540,7 @@ class DiskQueryCache(DiskCacheBase):
         """Invalidate all entries for a corpus version."""
         conn = self._get_conn()
         cursor = conn.execute(
-            "DELETE FROM query_cache WHERE corpus_version = ?",
-            (corpus_version,)
+            "DELETE FROM query_cache WHERE corpus_version = ?", (corpus_version,)
         )
         conn.commit()
         return cursor.rowcount
@@ -578,9 +606,11 @@ def get_disk_query_cache() -> DiskQueryCache:
 # Index Persistence
 # ============================================================================
 
+
 @dataclass
 class IndexMetadata:
     """Metadata for persisted indexes."""
+
     corpus_version: str
     config_hash: str
     chunk_count: int
@@ -618,10 +648,10 @@ class IndexPersistence:
         return self._base_path / f"{index_name}_chunks.pkl"
 
     def _bm25_path(self, index_name: str) -> Path:
-        return self._base_path / f"{index_name}_bm25.pkl"
+        return self._base_path / f"{index_name}_bm25.json"
 
     def _tokenized_path(self, index_name: str) -> Path:
-        return self._base_path / f"{index_name}_tokenized.pkl"
+        return self._base_path / f"{index_name}_tokenized.json"
 
     def compute_config_hash(self, config: dict) -> str:
         """Compute hash of config for invalidation."""
@@ -690,16 +720,21 @@ class IndexPersistence:
         tokenized_corpus: list[list[str]],
         metadata: IndexMetadata,
     ) -> Path:
-        """Save BM25 index to disk."""
-        # Save BM25 object
+        """Save BM25 index to disk using safe JSON serialization."""
+        # Save BM25 parameters safely as JSON
         bm25_path = self._bm25_path(index_name)
-        with open(bm25_path, "wb") as f:
-            pickle.dump(bm25, f)
+        bm25_params = {
+            "k1": getattr(bm25, "k1", 1.5),
+            "b": getattr(bm25, "b", 0.75),
+            "epsilon": getattr(bm25, "epsilon", 0.25),
+        }
+        with open(bm25_path, "w") as f:
+            json.dump(bm25_params, f, indent=2)
 
-        # Save tokenized corpus
+        # Save tokenized corpus safely as JSON
         tokenized_path = self._tokenized_path(index_name)
-        with open(tokenized_path, "wb") as f:
-            pickle.dump(tokenized_corpus, f)
+        with open(tokenized_path, "w") as f:
+            json.dump(tokenized_corpus, f)
 
         # Save metadata
         metadata_path = self._metadata_path(f"{index_name}_sparse")
@@ -712,7 +747,7 @@ class IndexPersistence:
         self,
         index_name: str,
     ) -> tuple[Any | None, list | None, IndexMetadata | None]:
-        """Load BM25 index from disk."""
+        """Load BM25 index from disk safely without pickle."""
         bm25_path = self._bm25_path(index_name)
         tokenized_path = self._tokenized_path(index_name)
         metadata_path = self._metadata_path(f"{index_name}_sparse")
@@ -720,13 +755,29 @@ class IndexPersistence:
         if not all(p.exists() for p in [bm25_path, tokenized_path, metadata_path]):
             return None, None, None
 
-        # Load BM25
-        with open(bm25_path, "rb") as f:
-            bm25 = pickle.load(f)
+        # Load tokenized corpus from JSON and validate schema
+        with open(tokenized_path, "r") as f:
+            tokenized_corpus = json.load(f)
 
-        # Load tokenized corpus
-        with open(tokenized_path, "rb") as f:
-            tokenized_corpus = pickle.load(f)
+        if not isinstance(tokenized_corpus, list) or not all(
+            isinstance(doc, list) and all(isinstance(tok, str) for tok in doc)
+            for doc in tokenized_corpus
+        ):
+            raise ValueError(f"Invalid tokenized_corpus schema in {tokenized_path}")
+
+        # Load BM25 params and validate schema
+        with open(bm25_path, "r") as f:
+            bm25_params = json.load(f)
+
+        if not isinstance(bm25_params, dict):
+            raise ValueError(f"Invalid bm25_params schema in {bm25_path}")
+
+        from rank_bm25 import BM25Okapi
+
+        k1 = bm25_params.get("k1", 1.5)
+        b = bm25_params.get("b", 0.75)
+        epsilon = bm25_params.get("epsilon", 0.25)
+        bm25 = BM25Okapi(tokenized_corpus, k1=k1, b=b, epsilon=epsilon)
 
         # Load metadata
         with open(metadata_path) as f:
@@ -763,6 +814,8 @@ class IndexPersistence:
             self._chunks_path(index_name),
             self._bm25_path(index_name),
             self._tokenized_path(index_name),
+            self._base_path / f"{index_name}_bm25.pkl",
+            self._base_path / f"{index_name}_tokenized.pkl",
             self._metadata_path(index_name),
             self._metadata_path(f"{index_name}_sparse"),
         ]
@@ -770,7 +823,9 @@ class IndexPersistence:
             if path.exists():
                 path.unlink()
 
-    def save_graph(self, index_name: str, graph_data: dict[str, Any], metadata: IndexMetadata) -> Path:
+    def save_graph(
+        self, index_name: str, graph_data: dict[str, Any], metadata: IndexMetadata
+    ) -> Path:
         """Save GraphRAG data to disk."""
         path = self._base_path / f"{index_name}_graph.pkl"
         with open(path, "wb") as f:
@@ -783,7 +838,9 @@ class IndexPersistence:
 
         return path
 
-    def load_graph(self, index_name: str) -> tuple[dict[str, Any] | None, IndexMetadata | None]:
+    def load_graph(
+        self, index_name: str
+    ) -> tuple[dict[str, Any] | None, IndexMetadata | None]:
         """Load GraphRAG data from disk."""
         path = self._base_path / f"{index_name}_graph.pkl"
         metadata_path = self._metadata_path(f"{index_name}_graph")
@@ -799,7 +856,9 @@ class IndexPersistence:
 
         return data, metadata
 
-    def save_trees(self, index_name: str, trees: dict[str, Any], metadata: IndexMetadata) -> Path:
+    def save_trees(
+        self, index_name: str, trees: dict[str, Any], metadata: IndexMetadata
+    ) -> Path:
         """Save RAPTOR hierarchical trees to disk."""
         path = self._base_path / f"{index_name}_trees.pkl"
         with open(path, "wb") as f:
@@ -812,7 +871,9 @@ class IndexPersistence:
 
         return path
 
-    def load_trees(self, index_name: str) -> tuple[dict[str, Any] | None, IndexMetadata | None]:
+    def load_trees(
+        self, index_name: str
+    ) -> tuple[dict[str, Any] | None, IndexMetadata | None]:
         """Load RAPTOR hierarchical trees from disk."""
         path = self._base_path / f"{index_name}_trees.pkl"
         metadata_path = self._metadata_path(f"{index_name}_trees")
@@ -832,7 +893,12 @@ class IndexPersistence:
         """List all saved indexes."""
         indexes = set()
         for path in self._base_path.glob("*_metadata.json"):
-            name = path.stem.replace("_metadata", "").replace("_sparse", "").replace("_graph", "").replace("_trees", "")
+            name = (
+                path.stem.replace("_metadata", "")
+                .replace("_sparse", "")
+                .replace("_graph", "")
+                .replace("_trees", "")
+            )
             indexes.add(name)
         return sorted(indexes)
 
