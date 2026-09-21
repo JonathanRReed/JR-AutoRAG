@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import pickle
 import sqlite3
 import time
@@ -132,9 +133,27 @@ class DiskEmbeddingCache(DiskCacheBase):
         )
         conn.commit()
 
-        # Deserialize embedding
+        # Deserialize and validate embedding
         embedding_bytes = row[0]
-        return pickle.loads(embedding_bytes)
+        try:
+            if isinstance(embedding_bytes, bytes):
+                embedding_bytes = embedding_bytes.decode("utf-8")
+            data = json.loads(embedding_bytes)
+            if not isinstance(data, list) or not data:
+                return None
+            result: list[float] = []
+            for item in data:
+                if (
+                    isinstance(item, (int, float))
+                    and not isinstance(item, bool)
+                    and math.isfinite(item)
+                ):
+                    result.append(float(item))
+                else:
+                    return None
+            return result
+        except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError, OverflowError):
+            return None
 
     def set(
         self,
@@ -166,7 +185,7 @@ class DiskEmbeddingCache(DiskCacheBase):
             )
 
         # Serialize and store
-        embedding_bytes = pickle.dumps(embedding)
+        embedding_bytes = json.dumps(embedding).encode("utf-8")
         conn.execute(
             """
             INSERT OR REPLACE INTO embeddings
