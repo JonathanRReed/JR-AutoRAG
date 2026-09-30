@@ -386,3 +386,29 @@ def test_each_index_rejects_malformed_metadata(tmp_path, metadata, chunks, graph
     path.write_text('{"corpus_version": [], "config_hash": "cfg", "chunk_count": 2, "created_at": 1.0}')
     loaded = getattr(store, f"load_{kind}_index" if kind in ("dense", "sparse") else f"load_{kind}")("index")
     assert loaded == ((None, None, None) if kind in ("dense", "sparse") else (None, None))
+
+
+def test_dense_corrupt_numpy_container_is_miss(tmp_path, metadata, chunks):
+    store = IndexPersistence(tmp_path)
+    store.save_dense_index("dense", np.ones((2, 2)), chunks, metadata)
+    (tmp_path / "dense_embeddings.npy").write_bytes(b"PK\x03\x04broken archive")
+    assert store.load_dense_index("dense") == (None, None, None)
+
+
+def test_dense_numpy_archive_is_closed_and_rejected(tmp_path, metadata, chunks):
+    store = IndexPersistence(tmp_path)
+    store.save_dense_index("dense", np.ones((2, 2)), chunks, metadata)
+    path = tmp_path / "dense_embeddings.npy"
+    with path.open("wb") as handle:
+        np.savez(handle, vectors=np.ones((2, 2)))
+    real_load = np.load
+    archives = []
+
+    def capture_archive(*args, **kwargs):
+        archive = real_load(*args, **kwargs)
+        archives.append(archive)
+        return archive
+
+    with patch("app.core.persistence.np.load", side_effect=capture_archive):
+        assert store.load_dense_index("dense") == (None, None, None)
+    assert archives[0].zip is None
