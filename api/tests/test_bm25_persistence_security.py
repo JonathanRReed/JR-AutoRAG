@@ -3,7 +3,6 @@ import time
 from unittest.mock import MagicMock, patch
 
 import numpy as np
-import pytest
 from rank_bm25 import BM25Okapi
 
 from app.core.chunking import Chunk
@@ -141,7 +140,7 @@ def test_legacy_pickle_fallback_rebuilds_without_unpickling(tmp_path):
     assert len(scores) == 2
 
 
-def test_invalid_json_schema_raises_error(tmp_path):
+def test_invalid_json_schema_returns_miss(tmp_path):
     persistence = IndexPersistence(base_path=tmp_path)
     index_name = "test_invalid_schema"
 
@@ -155,5 +154,4 @@ def test_invalid_json_schema_raises_error(tmp_path):
         '{"corpus_version": "v1", "config_hash": "h", "chunk_count": 1, "created_at": 1.0, "model_name": ""}'
     )
 
-    with pytest.raises(ValueError, match="Invalid tokenized_corpus schema"):
-        persistence.load_sparse_index(index_name)
+    assert persistence.load_sparse_index(index_name) == (None, None, None)
