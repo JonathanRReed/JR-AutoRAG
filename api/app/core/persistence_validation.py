@@ -9,12 +9,14 @@ from __future__ import annotations
 import json
 import math
 from typing import Any
+from zipfile import BadZipFile
 
 import numpy as np
 
 
 INVALID_DATA_ERRORS = (
     OSError,
+    BadZipFile,
     UnicodeError,
     ValueError,
     TypeError,
@@ -92,6 +94,42 @@ def validate_vector(value: Any) -> list[float]:
     require(isinstance(value, list) and bool(value), "Expected a nonempty vector")
     require(all(finite_number(item) for item in value), "Invalid vector values")
     return [float(item) for item in value]
+
+
+
+def validate_query_result(data: Any) -> None:
+    """Validate known response fields while retaining generic JSON cache values."""
+    require(isinstance(data, dict), "Expected a query result object")
+    for key in ("answer", "trace_id"):
+        if key in data:
+            require(isinstance(data[key], str), f"Invalid query {key}")
+    for key in ("chunks", "sources", "steps"):
+        if key in data:
+            require(
+                isinstance(data[key], list) and all(isinstance(item, dict) for item in data[key]),
+                f"Invalid query {key}",
+            )
+    for chunk in data.get("chunks", []):
+        for key in ("id", "title", "snippet"):
+            if key in chunk:
+                require(isinstance(chunk[key], str), f"Invalid query chunk {key}")
+        if "score" in chunk:
+            require(finite_number(chunk["score"]), "Invalid query chunk score")
+    for step in data.get("steps", []):
+        for key in ("name", "status"):
+            if key in step:
+                require(isinstance(step[key], str), f"Invalid query step {key}")
+        if "duration_ms" in step:
+            require(finite_number(step["duration_ms"]), "Invalid query step duration")
+        if "details" in step:
+            require(isinstance(step["details"], dict), "Invalid query step details")
+    if "metrics" in data:
+        require(isinstance(data["metrics"], dict), "Invalid query metrics")
+    if "confidence" in data:
+        require(data["confidence"] is None or isinstance(data["confidence"], dict), "Invalid query confidence")
+    for key in ("needs_clarification", "trace_bundle_available", "from_cache"):
+        if key in data:
+            require(data[key] is None or isinstance(data[key], bool), f"Invalid query {key}")
 
 
 def validate_metadata(data: Any) -> None:

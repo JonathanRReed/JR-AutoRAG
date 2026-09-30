@@ -28,6 +28,7 @@ from .persistence_validation import (
     validate_dense_array,
     validate_graph,
     validate_metadata,
+    validate_query_result,
     validate_sparse,
     validate_trees,
     validate_vector,
@@ -477,7 +478,7 @@ class DiskQueryCache(DiskCacheBase):
 
         try:
             result = decode_json(result_bytes)
-            require(isinstance(result, dict), "Expected a query result object")
+            validate_query_result(result)
         except INVALID_DATA_ERRORS:
             self._last_event = CacheEvent(
                 hit=False,
@@ -516,7 +517,7 @@ class DiskQueryCache(DiskCacheBase):
         scope_key: str | None = None,
     ) -> None:
         """Cache JSON-compatible query results with finite numeric values."""
-        require(isinstance(result, dict), "Expected a query result object")
+        validate_query_result(result)
         result_bytes = encode_json(result).encode("utf-8")
         key = self._make_key(
             query, corpus_version, retrieval_mode, preset_id, model_ids, scope_key
@@ -752,6 +753,10 @@ class IndexPersistence:
             )
             require(len(records) == metadata.chunk_count, "Chunk count mismatch")
             embeddings = np.load(str(self._embeddings_path(index_name)), allow_pickle=False)
+            if not isinstance(embeddings, np.ndarray):
+                # np.load can return a live ZIP archive. This format expects .npy only.
+                embeddings.close()
+                raise ValueError("Expected a numeric NumPy array, not an archive")
             validate_dense_array(embeddings, len(records), data["embedding_dimensions"])
             chunks = [(record["doc_id"], Chunk(**record["chunk"])) for record in records]
             return embeddings, chunks, metadata
