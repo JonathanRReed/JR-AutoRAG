@@ -10,8 +10,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
-import pickle
 import sqlite3
 import time
 from dataclasses import dataclass
@@ -19,6 +17,21 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+
+from .persistence_validation import (
+    INVALID_DATA_ERRORS,
+    decode_json,
+    encode_json,
+    finite_number,
+    require,
+    validate_chunk_records,
+    validate_dense_array,
+    validate_graph,
+    validate_metadata,
+    validate_sparse,
+    validate_trees,
+    validate_vector,
+)
 
 if TYPE_CHECKING:
     from rank_bm25 import BM25Okapi
@@ -122,38 +135,24 @@ class DiskEmbeddingCache(DiskCacheBase):
 
         # Check TTL
         created_at = row[1]
+        if not finite_number(created_at):
+            return None
         if time.time() - created_at > self._config.ttl_days * 86400:
             conn.execute("DELETE FROM embeddings WHERE key = ?", (key,))
             conn.commit()
             return None
 
-        # Update hit count
+        # Legacy and malformed bytes are cache misses, never migration inputs.
+        try:
+            embedding = validate_vector(decode_json(row[0]))
+        except INVALID_DATA_ERRORS:
+            return None
+
         conn.execute(
             "UPDATE embeddings SET hit_count = hit_count + 1 WHERE key = ?", (key,)
         )
         conn.commit()
-
-        # Deserialize and validate embedding
-        embedding_bytes = row[0]
-        try:
-            if isinstance(embedding_bytes, bytes):
-                embedding_bytes = embedding_bytes.decode("utf-8")
-            data = json.loads(embedding_bytes)
-            if not isinstance(data, list) or not data:
-                return None
-            result: list[float] = []
-            for item in data:
-                if (
-                    isinstance(item, (int, float))
-                    and not isinstance(item, bool)
-                    and math.isfinite(item)
-                ):
-                    result.append(float(item))
-                else:
-                    return None
-            return result
-        except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError, OverflowError):
-            return None
+        return embedding
 
     def set(
         self,
@@ -162,6 +161,7 @@ class DiskEmbeddingCache(DiskCacheBase):
         model: str | None = None,
     ) -> None:
         """Cache embedding for text."""
+        embedding_bytes = encode_json(validate_vector(embedding)).encode("utf-8")
         model = model or self._config.model_name
         key, text_hash = self._make_key(text, model)
         conn = self._get_conn()
@@ -185,7 +185,6 @@ class DiskEmbeddingCache(DiskCacheBase):
             )
 
         # Serialize and store
-        embedding_bytes = json.dumps(embedding).encode("utf-8")
         conn.execute(
             """
             INSERT OR REPLACE INTO embeddings
@@ -431,6 +430,19 @@ class DiskQueryCache(DiskCacheBase):
 
         result_bytes, created_at, stored_version, stored_mode, stored_preset = row
 
+        # Invalid row timestamps cannot be used as live cache entries.
+        if not finite_number(created_at):
+            self._last_event = CacheEvent(
+                hit=False,
+                key=key,
+                reason="invalid_data",
+                corpus_version=corpus_version,
+                retrieval_mode=retrieval_mode,
+                preset_id=preset_id,
+                scope_key=scope_key or "",
+            )
+            return None
+
         # Check TTL
         if time.time() - created_at > self._config.ttl_hours * 3600:
             conn.execute("DELETE FROM query_cache WHERE key = ?", (key,))
@@ -447,7 +459,11 @@ class DiskQueryCache(DiskCacheBase):
             return None
 
         # Verify version match (defense in depth)
-        if stored_version != corpus_version:
+        if (
+            stored_version != corpus_version
+            or stored_mode != retrieval_mode
+            or stored_preset != preset_id
+        ):
             self._last_event = CacheEvent(
                 hit=False,
                 key=key,
@@ -459,7 +475,21 @@ class DiskQueryCache(DiskCacheBase):
             )
             return None
 
-        # Update hit count
+        try:
+            result = decode_json(result_bytes)
+            require(isinstance(result, dict), "Expected a query result object")
+        except INVALID_DATA_ERRORS:
+            self._last_event = CacheEvent(
+                hit=False,
+                key=key,
+                reason="invalid_data",
+                corpus_version=corpus_version,
+                retrieval_mode=retrieval_mode,
+                preset_id=preset_id,
+                scope_key=scope_key or "",
+            )
+            return None
+
         conn.execute(
             "UPDATE query_cache SET hit_count = hit_count + 1 WHERE key = ?", (key,)
         )
@@ -473,8 +503,7 @@ class DiskQueryCache(DiskCacheBase):
             preset_id=preset_id,
             scope_key=scope_key or "",
         )
-
-        return pickle.loads(result_bytes)
+        return result
 
     def set(
         self,
@@ -486,7 +515,9 @@ class DiskQueryCache(DiskCacheBase):
         model_ids: dict[str, str] | None = None,
         scope_key: str | None = None,
     ) -> None:
-        """Cache query result."""
+        """Cache JSON-compatible query results with finite numeric values."""
+        require(isinstance(result, dict), "Expected a query result object")
+        result_bytes = encode_json(result).encode("utf-8")
         key = self._make_key(
             query, corpus_version, retrieval_mode, preset_id, model_ids, scope_key
         )
@@ -512,7 +543,6 @@ class DiskQueryCache(DiskCacheBase):
                 (to_remove,),
             )
 
-        result_bytes = pickle.dumps(result)
         conn.execute(
             """
             INSERT OR REPLACE INTO query_cache
@@ -628,6 +658,7 @@ class IndexMetadata:
 
     @classmethod
     def from_dict(cls, data: dict) -> IndexMetadata:
+        validate_metadata(data)
         return cls(**data)
 
 
@@ -645,7 +676,7 @@ class IndexPersistence:
         return self._base_path / f"{index_name}_embeddings.npy"
 
     def _chunks_path(self, index_name: str) -> Path:
-        return self._base_path / f"{index_name}_chunks.pkl"
+        return self._base_path / f"{index_name}_chunks.json"
 
     def _bm25_path(self, index_name: str) -> Path:
         return self._base_path / f"{index_name}_bm25.json"
@@ -668,50 +699,64 @@ class IndexPersistence:
         self,
         index_name: str,
         embeddings: np.ndarray,
-        chunks: list[tuple[str, Any]],  # (doc_id, chunk)
+        chunks: list[tuple[str, Any]],
         metadata: IndexMetadata,
     ) -> Path:
-        """Save dense embeddings and chunks to disk."""
-        # Save embeddings as numpy array
+        """Save validated real embeddings and explicit JSON chunk records."""
+        from .chunking import Chunk
+
+        validate_metadata(metadata.to_dict())
+        require(isinstance(embeddings, np.ndarray) and embeddings.ndim == 2, "Invalid embeddings")
+        records = []
+        for doc_id, chunk in chunks:
+            require(isinstance(chunk, Chunk), "Expected a Chunk object")
+            records.append({
+                "doc_id": doc_id,
+                "chunk": {
+                    "text": chunk.text,
+                    "index": chunk.index,
+                    "start_char": chunk.start_char,
+                    "end_char": chunk.end_char,
+                    "metadata": chunk.metadata,
+                },
+            })
+        data = {
+            "format_version": 1,
+            "embedding_dimensions": embeddings.shape[1],
+            "chunks": records,
+        }
+        validate_chunk_records(data)
+        require(len(records) == metadata.chunk_count, "Chunk count mismatch")
+        validate_dense_array(embeddings, len(records), data["embedding_dimensions"])
+        chunks_json = encode_json(data)
+        metadata_json = encode_json(metadata.to_dict())
+
         embeddings_path = self._embeddings_path(index_name)
-        np.save(str(embeddings_path), embeddings)
-
-        # Save chunks
-        chunks_path = self._chunks_path(index_name)
-        with open(chunks_path, "wb") as f:
-            pickle.dump(chunks, f)
-
-        # Save metadata
-        metadata_path = self._metadata_path(index_name)
-        with open(metadata_path, "w") as f:
-            json.dump(metadata.to_dict(), f, indent=2)
-
+        np.save(str(embeddings_path), embeddings, allow_pickle=False)
+        self._chunks_path(index_name).write_text(chunks_json, encoding="utf-8")
+        self._metadata_path(index_name).write_text(metadata_json, encoding="utf-8")
         return embeddings_path
 
     def load_dense_index(
         self,
         index_name: str,
     ) -> tuple[np.ndarray | None, list | None, IndexMetadata | None]:
-        """Load dense embeddings and chunks from disk."""
-        embeddings_path = self._embeddings_path(index_name)
-        chunks_path = self._chunks_path(index_name)
-        metadata_path = self._metadata_path(index_name)
+        """Load data-only dense artifacts, or return a miss for a rebuild."""
+        from .chunking import Chunk
 
-        if not all(p.exists() for p in [embeddings_path, chunks_path, metadata_path]):
+        try:
+            data = decode_json(self._chunks_path(index_name).read_bytes())
+            records = validate_chunk_records(data)
+            metadata = IndexMetadata.from_dict(
+                decode_json(self._metadata_path(index_name).read_bytes())
+            )
+            require(len(records) == metadata.chunk_count, "Chunk count mismatch")
+            embeddings = np.load(str(self._embeddings_path(index_name)), allow_pickle=False)
+            validate_dense_array(embeddings, len(records), data["embedding_dimensions"])
+            chunks = [(record["doc_id"], Chunk(**record["chunk"])) for record in records]
+            return embeddings, chunks, metadata
+        except INVALID_DATA_ERRORS:
             return None, None, None
-
-        # Load embeddings
-        embeddings = np.load(str(embeddings_path))
-
-        # Load chunks
-        with open(chunks_path, "rb") as f:
-            chunks = pickle.load(f)
-
-        # Load metadata
-        with open(metadata_path) as f:
-            metadata = IndexMetadata.from_dict(json.load(f))
-
-        return embeddings, chunks, metadata
 
     def save_sparse_index(
         self,
@@ -720,70 +765,46 @@ class IndexPersistence:
         tokenized_corpus: list[list[str]],
         metadata: IndexMetadata,
     ) -> Path:
-        """Save BM25 index to disk using safe JSON serialization."""
-        # Save BM25 parameters safely as JSON
-        bm25_path = self._bm25_path(index_name)
-        bm25_params = {
+        """Save validated BM25 parameters and tokenized corpus as JSON."""
+        params = {
             "k1": getattr(bm25, "k1", 1.5),
             "b": getattr(bm25, "b", 0.75),
             "epsilon": getattr(bm25, "epsilon", 0.25),
         }
-        with open(bm25_path, "w") as f:
-            json.dump(bm25_params, f, indent=2)
-
-        # Save tokenized corpus safely as JSON
-        tokenized_path = self._tokenized_path(index_name)
-        with open(tokenized_path, "w") as f:
-            json.dump(tokenized_corpus, f)
-
-        # Save metadata
-        metadata_path = self._metadata_path(f"{index_name}_sparse")
-        with open(metadata_path, "w") as f:
-            json.dump(metadata.to_dict(), f, indent=2)
-
-        return bm25_path
+        validate_metadata(metadata.to_dict())
+        validate_sparse(params, tokenized_corpus, metadata.chunk_count)
+        params_json = encode_json(params)
+        corpus_json = encode_json(tokenized_corpus)
+        metadata_json = encode_json(metadata.to_dict())
+        path = self._bm25_path(index_name)
+        path.write_text(params_json, encoding="utf-8")
+        self._tokenized_path(index_name).write_text(corpus_json, encoding="utf-8")
+        self._metadata_path(f"{index_name}_sparse").write_text(metadata_json, encoding="utf-8")
+        return path
 
     def load_sparse_index(
         self,
         index_name: str,
     ) -> tuple[Any | None, list | None, IndexMetadata | None]:
-        """Load BM25 index from disk safely without pickle."""
-        bm25_path = self._bm25_path(index_name)
-        tokenized_path = self._tokenized_path(index_name)
-        metadata_path = self._metadata_path(f"{index_name}_sparse")
+        """Load safe sparse artifacts; legacy or invalid artifacts need rebuilding."""
+        try:
+            params = decode_json(self._bm25_path(index_name).read_bytes())
+            corpus = decode_json(self._tokenized_path(index_name).read_bytes())
+            metadata = IndexMetadata.from_dict(
+                decode_json(self._metadata_path(f"{index_name}_sparse").read_bytes())
+            )
+            validate_sparse(params, corpus, metadata.chunk_count)
+            from rank_bm25 import BM25Okapi
 
-        if not all(p.exists() for p in [bm25_path, tokenized_path, metadata_path]):
+            bm25 = BM25Okapi(
+                corpus,
+                k1=params.get("k1", 1.5),
+                b=params.get("b", 0.75),
+                epsilon=params.get("epsilon", 0.25),
+            )
+            return bm25, corpus, metadata
+        except INVALID_DATA_ERRORS:
             return None, None, None
-
-        # Load tokenized corpus from JSON and validate schema
-        with open(tokenized_path, "r") as f:
-            tokenized_corpus = json.load(f)
-
-        if not isinstance(tokenized_corpus, list) or not all(
-            isinstance(doc, list) and all(isinstance(tok, str) for tok in doc)
-            for doc in tokenized_corpus
-        ):
-            raise ValueError(f"Invalid tokenized_corpus schema in {tokenized_path}")
-
-        # Load BM25 params and validate schema
-        with open(bm25_path, "r") as f:
-            bm25_params = json.load(f)
-
-        if not isinstance(bm25_params, dict):
-            raise ValueError(f"Invalid bm25_params schema in {bm25_path}")
-
-        from rank_bm25 import BM25Okapi
-
-        k1 = bm25_params.get("k1", 1.5)
-        b = bm25_params.get("b", 0.75)
-        epsilon = bm25_params.get("epsilon", 0.25)
-        bm25 = BM25Okapi(tokenized_corpus, k1=k1, b=b, epsilon=epsilon)
-
-        # Load metadata
-        with open(metadata_path) as f:
-            metadata = IndexMetadata.from_dict(json.load(f))
-
-        return bm25, tokenized_corpus, metadata
 
     def is_valid(
         self,
@@ -797,8 +818,7 @@ class IndexPersistence:
             return False
 
         try:
-            with open(metadata_path) as f:
-                metadata = IndexMetadata.from_dict(json.load(f))
+            metadata = IndexMetadata.from_dict(decode_json(metadata_path.read_bytes()))
 
             return (
                 metadata.corpus_version == expected_corpus_version
@@ -814,6 +834,7 @@ class IndexPersistence:
             self._chunks_path(index_name),
             self._bm25_path(index_name),
             self._tokenized_path(index_name),
+            self._base_path / f"{index_name}_chunks.pkl",
             self._base_path / f"{index_name}_bm25.pkl",
             self._base_path / f"{index_name}_tokenized.pkl",
             self._metadata_path(index_name),
@@ -823,71 +844,65 @@ class IndexPersistence:
             if path.exists():
                 path.unlink()
 
+    def _save_structured_index(
+        self,
+        index_name: str,
+        kind: str,
+        data: dict[str, Any],
+        metadata: IndexMetadata,
+    ) -> Path:
+        validate_metadata(metadata.to_dict())
+        # Validate JSON values before domain schemas, including unused nested fields.
+        data_json = encode_json(data)
+        if kind == "graph":
+            validate_graph(data)
+        else:
+            validate_trees(data)
+        metadata_json = encode_json(metadata.to_dict())
+        path = self._base_path / f"{index_name}_{kind}.json"
+        path.write_text(data_json, encoding="utf-8")
+        self._metadata_path(f"{index_name}_{kind}").write_text(metadata_json, encoding="utf-8")
+        return path
+
+    def _load_structured_index(
+        self, index_name: str, kind: str
+    ) -> tuple[dict[str, Any] | None, IndexMetadata | None]:
+        try:
+            data = decode_json((self._base_path / f"{index_name}_{kind}.json").read_bytes())
+            metadata = IndexMetadata.from_dict(
+                decode_json(self._metadata_path(f"{index_name}_{kind}").read_bytes())
+            )
+            if kind == "graph":
+                validate_graph(data)
+            else:
+                validate_trees(data)
+            return data, metadata
+        except INVALID_DATA_ERRORS:
+            return None, None
+
     def save_graph(
         self, index_name: str, graph_data: dict[str, Any], metadata: IndexMetadata
     ) -> Path:
-        """Save GraphRAG data to disk."""
-        path = self._base_path / f"{index_name}_graph.pkl"
-        with open(path, "wb") as f:
-            pickle.dump(graph_data, f)
-
-        # Save metadata for graph
-        metadata_path = self._metadata_path(f"{index_name}_graph")
-        with open(metadata_path, "w") as f:
-            json.dump(metadata.to_dict(), f, indent=2)
-
-        return path
+        """Save GraphRAG JSON data without executable serialization."""
+        return self._save_structured_index(index_name, "graph", graph_data, metadata)
 
     def load_graph(
         self, index_name: str
     ) -> tuple[dict[str, Any] | None, IndexMetadata | None]:
-        """Load GraphRAG data from disk."""
-        path = self._base_path / f"{index_name}_graph.pkl"
-        metadata_path = self._metadata_path(f"{index_name}_graph")
-
-        if not path.exists() or not metadata_path.exists():
-            return None, None
-
-        with open(path, "rb") as f:
-            data = pickle.load(f)
-
-        with open(metadata_path) as f:
-            metadata = IndexMetadata.from_dict(json.load(f))
-
-        return data, metadata
+        """Return a graph miss for legacy, malformed or unreadable artifacts."""
+        return self._load_structured_index(index_name, "graph")
 
     def save_trees(
         self, index_name: str, trees: dict[str, Any], metadata: IndexMetadata
     ) -> Path:
-        """Save RAPTOR hierarchical trees to disk."""
-        path = self._base_path / f"{index_name}_trees.pkl"
-        with open(path, "wb") as f:
-            pickle.dump(trees, f)
-
-        # Save metadata for trees
-        metadata_path = self._metadata_path(f"{index_name}_trees")
-        with open(metadata_path, "w") as f:
-            json.dump(metadata.to_dict(), f, indent=2)
-
-        return path
+        """Save validated RAPTOR tree JSON data."""
+        return self._save_structured_index(index_name, "trees", trees, metadata)
 
     def load_trees(
         self, index_name: str
     ) -> tuple[dict[str, Any] | None, IndexMetadata | None]:
-        """Load RAPTOR hierarchical trees from disk."""
-        path = self._base_path / f"{index_name}_trees.pkl"
-        metadata_path = self._metadata_path(f"{index_name}_trees")
-
-        if not path.exists() or not metadata_path.exists():
-            return None, None
-
-        with open(path, "rb") as f:
-            trees = pickle.load(f)
-
-        with open(metadata_path) as f:
-            metadata = IndexMetadata.from_dict(json.load(f))
-
-        return trees, metadata
+        """Return a tree miss for legacy, malformed or cyclic artifacts."""
+        return self._load_structured_index(index_name, "trees")
 
     def list_indexes(self) -> list[str]:
         """List all saved indexes."""
