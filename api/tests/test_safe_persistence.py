@@ -346,3 +346,43 @@ def test_runtime_persistence_has_no_pickle_import_or_calls():
                 isinstance(node.func.value, ast.Name)
                 and node.func.value.id == "pickle"
             )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"answer": []},
+        {"chunks": {}},
+        {"chunks": [{"id": []}]},
+        {"chunks": [{"score": True}]},
+        {"sources": [0]},
+        {"metrics": []},
+        {"steps": [0]},
+        {"steps": [{"duration_ms": "1"}]},
+        {"trace_id": False},
+        {"confidence": []},
+        {"needs_clarification": "yes"},
+    ],
+)
+def test_query_known_fields_have_valid_shapes(query_cache, value):
+    overwrite_query(query_cache, json.dumps(value).encode("utf-8"))
+    assert query_cache.get("question", corpus_version="v1") is None
+    assert query_cache.get_last_event().reason == "invalid_data"
+
+
+@pytest.mark.parametrize("kind", ["dense", "sparse", "graph", "trees"])
+def test_each_index_rejects_malformed_metadata(tmp_path, metadata, chunks, graph, trees, kind):
+    store = IndexPersistence(tmp_path)
+    if kind == "dense":
+        store.save_dense_index("index", np.ones((2, 2)), chunks, metadata)
+        path = tmp_path / "index_metadata.json"
+    elif kind == "sparse":
+        corpus = [["alpha"], ["beta"]]
+        store.save_sparse_index("index", BM25Okapi(corpus), corpus, metadata)
+        path = tmp_path / "index_sparse_metadata.json"
+    else:
+        getattr(store, f"save_{kind}")("index", graph if kind == "graph" else trees, metadata)
+        path = tmp_path / f"index_{kind}_metadata.json"
+    path.write_text('{"corpus_version": [], "config_hash": "cfg", "chunk_count": 2, "created_at": 1.0}')
+    loaded = getattr(store, f"load_{kind}_index" if kind in ("dense", "sparse") else f"load_{kind}")("index")
+    assert loaded == ((None, None, None) if kind in ("dense", "sparse") else (None, None))
