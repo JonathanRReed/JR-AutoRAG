@@ -346,7 +346,15 @@ class BQHybridRetrievalEngine(HybridRetrievalEngine):
         if not self._chunks:
             self.build()
 
-        if not self._bq_ready:
+        with self._index_lock:
+            binary_buildable = (
+                bool(self._chunks) and self._embeddings is not None
+                and validate_dimension(int(self._embeddings.shape[1]))
+            )
+        # Missing or unaligned embeddings cannot become binary-ready until the
+        # base index changes. A futile per-query mutation invalidates otherwise
+        # correct float/BM25 answer caches. Transient store failures still retry.
+        if not self._bq_ready and binary_buildable:
             with self._mutating_index():
                 self._try_binary_update(self._build_bq_index)
 

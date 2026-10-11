@@ -149,6 +149,11 @@ Three subsequent review findings were reproduced and fixed before merge:
   recovery now rebuilds all binary evidence unless the previous store was fully
   ready, initialized and dimension-compatible. Four two-document regressions
   cover discarded handles, caught quantization failures and empty replacements.
+  A later review reproduced futile per-query binary rebuilds without embeddings
+  or with a non-byte-aligned dimension, changing corpus versions and preventing
+  answer-cache writes. Lazy retries now require actual buildable base embeddings;
+  transient store failures remain retryable. Two real no-provider answer/cache
+  regressions verify stable versions, exact evidence and repeated-answer hits.
 - **Long evidence:** fixed and semantic chunkers can emit paragraphs longer than
   65,535 characters. The actual in-process vector store has no remote VARCHAR
   limit, so its unnecessary truncation was removed. Complete text, vector and
@@ -162,9 +167,10 @@ Three subsequent review findings were reproduced and fixed before merge:
   still deliberately uses zero overlap; semantic overlap has sentence semantics.
 
 The follow-up adds 33 tests (31 reproduced reds, a valid-default regression, and
-a base-failure preservation check), followed by four recovery regressions, for
-**632 API tests**, plus the existing
-**12 frontend tests** and **nine independent reviewer cases**. The 16-case lexical
+a base-failure preservation check), followed by four recovery and two answer-cache
+regressions, for **634 API tests**, plus the existing **12 frontend tests**.
+Seventeen independent reviewer cases cover the original invariants and the
+follow-up's recovery/cache behavior. The 16-case lexical
 benchmark and 28 direct span round trips were rerun with unchanged quality
 metrics; the raw comparison above records the original reviewed candidate.
 

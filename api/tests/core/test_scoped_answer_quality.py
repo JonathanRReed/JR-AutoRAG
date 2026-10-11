@@ -5,7 +5,10 @@ measure generated-answer faithfulness or substitute for local-model evaluation.
 """
 
 import pytest
+import numpy as np
 
+from app.core.bq_hybrid_retrieval import BQHybridRetrievalEngine
+from app.core.bq_retrieval import BQRetrievalConfig, RetrievalModeV2
 from app.core.cache import CacheManager
 from app.core.chunking import ChunkingStrategy
 from app.core.documents import DocumentStore
@@ -139,3 +142,35 @@ async def test_source_update_during_answer_cache_lookup_drops_stale_hit(tmp_path
     assert "October 11" in result["answer"]
     assert "October 4" not in result["answer"]
     assert not result.get("from_cache", False)
+
+
+@pytest.mark.parametrize("embedding_dim", [None, 7])
+@pytest.mark.asyncio
+async def test_permanently_unavailable_binary_mode_keeps_answer_cache(tmp_path, monkeypatch, embedding_dim):
+    pipeline, docs = answer_pipeline(tmp_path, monkeypatch, [
+        ("Approved launch", "Orion launch date is October 11."),
+    ])
+    engine = BQHybridRetrievalEngine(pipeline._retrieval._docs, pipeline._retrieval._config,
+        BQRetrievalConfig(default_mode=RetrievalModeV2.BINARY), persist_path=None)
+    engine._cache_manager = CacheManager()
+    if embedding_dim is not None:
+        class UnalignedEmbedder:
+            def encode(self, texts, **kwargs):
+                return np.ones((len(texts), embedding_dim), dtype=np.float32)
+        engine._embedder = UnalignedEmbedder()
+    engine.build()
+    assert not engine._bq_ready
+    pipeline._retrieval = engine
+    pipeline._gatherer = Gatherer(engine)
+    pipeline.rebuild(pipeline._config)
+    version = engine.get_corpus_version()
+    query = "What is the Orion launch date?"
+
+    first = await pipeline.answer(query, document_ids=[docs[0].id])
+    repeated = await pipeline.answer(query, document_ids=[docs[0].id])
+
+    assert "October 11" in first["answer"] and first["sources"]
+    assert repeated.get("from_cache") is True
+    assert "October 11" in repeated["answer"]
+    assert engine.get_corpus_version() == version
+    assert "cache_write_skipped" not in first["metrics"]
