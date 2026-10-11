@@ -15,6 +15,7 @@ from app.core.hybrid_retrieval import HybridConfig, HybridRetrievalEngine
 from app.core.orchestrator import Orchestrator
 from app.core.persistence import DiskQueryCache, QueryCacheConfig
 from app.core.planner import Planner
+from app.core.prompt_guard import wrap_ingested_content
 from app.core.providers import ProviderFactory
 from app.core.retrieval_evaluator import EvaluationResult, RetrievalEvaluator, RetrievalVerdict
 from app.core.smart_planner import PlanStep, RetrievalPlan, compute_marginal_gain
@@ -105,6 +106,41 @@ class RefiningEvaluator(RetrievalEvaluator):
     async def evaluate(self, query, chunks, provider=None):
         return EvaluationResult(RetrievalVerdict.LOW_COVERAGE, 0.6, "Synthetic refinement",
                                 suggested_query="launch Orion")
+
+
+@pytest.mark.parametrize("embedded_markers,changed_body", [(False, False), (True, False), (True, True)])
+@pytest.mark.asyncio
+async def test_novelty_compares_gathered_content_without_source_wrappers(
+    pipeline, monkeypatch, embedded_markers, changed_body,
+):
+    orchestrator, engine = pipeline
+    first_body = "Orion launch is approved."
+    if embedded_markers:
+        first_body += "\n<<<DOCUMENT_START:embedded>>>\nDetail A.\n<<<DOCUMENT_END:embedded>>>"
+    second_body = first_body.replace("Detail A.", "Detail B.") if changed_body else first_body
+    documents = engine._docs.list()
+    for document, body in zip(documents[:2], [first_body, second_body], strict=True):
+        document.text = body
+        engine._docs.upsert(document)
+    engine.build()
+    monkeypatch.setattr(engine, "_dense_search", lambda *args: [])
+    monkeypatch.setattr(engine, "_literal_search", lambda *args: ([], 0))
+    monkeypatch.setattr(engine, "_sparse_search", lambda query, *args: (
+        [(0, 10.0)] if query == "Orion launch" else [(1, 20.0)]
+    ))
+    first = await orchestrator._gatherer.gather("Orion launch", top_k=2)
+    second = await orchestrator._gatherer.gather("launch Orion", top_k=2)
+    assert first.chunks[0].id != second.chunks[0].id
+    assert first.chunks[0].snippet == wrap_ingested_content(first_body, first.chunks[0].id)
+    assert second.chunks[0].snippet == wrap_ingested_content(second_body, second.chunks[0].id)
+    orchestrator._retrieval_evaluator = RefiningEvaluator()
+    result = await orchestrator.answer("Orion launch")
+    details = next(step["details"] for step in result["steps"] if step["name"] == "gatherer")
+    assert details["iterations"][1]["marginal_gain"] == (1.0 if changed_body else 0.0)
+    assert len(details["iterations"]) == (3 if changed_body else 2)
+    # Metadata keeps the complete source body, including marker-like text.
+    assert first.chunks[0].novelty_text == first_body
+    assert second.chunks[0].novelty_text == second_body
 
 
 @pytest.mark.parametrize("reranked", [False, True])

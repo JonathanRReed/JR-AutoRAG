@@ -51,7 +51,15 @@ does not guarantee that RAPTOR, Graph, or web corrections reach generation.
 the number of nonempty returned chunks. A chunk is redundant if its ID or
 full case/whitespace-normalized text has already appeared, including earlier
 in the same batch. IDs prevent snippet trimming from making a retrieved chunk
-look new. Empty batches return zero. Duplicate returns remain in the
+look new. Gatherer also retains the original retrieved body in `novelty_text`,
+before adding source-ID prompt guards or trimming sentences. Novelty compares
+this metadata, so identical bodies from different sources are redundant.
+Prompt construction continues to use `snippet`. No delimiters are parsed or
+stripped: delimiter-like text inside the source body remains part of novelty
+comparison and guarded content. Manually constructed evidence without this
+metadata falls back to its provided snippet unchanged.
+
+Empty batches return zero. Duplicate returns remain in the
 denominator, so repeated evidence lowers novelty. This is exact evidence
 novelty, not semantic novelty or answer quality.
 
@@ -85,11 +93,17 @@ context, contract retries, and query/plan coverage gating.
 
 The initial regression run on the previous implementation produced 20
 failures and 7 passes. The finished implementation passes the complete API
-suite: 705 tests, including 35 focused score-contract tests. Restoring the old
+suite: 708 tests, including 38 focused score-contract tests. Restoring the old
 orchestrator separately reproduces eight failures across mixed-channel,
 reranked, multi-resolution, and contract-retry cases. API Ruff checks
 and Python compilation also pass. No models, paid providers, user documents,
 or large corpus benchmarks were used.
+
+Review exposed a wrapper-specific gap in the first PR commit: identical bodies
+with different source IDs still reported gain `1.0`. The actual Gatherer and
+orchestrator regressions now verify zero gain for those duplicates, unchanged
+prompt wrappers, complete preservation of delimiter-like source text, and
+gain `1.0` when only content inside those embedded markers changes.
 
 Verification commands, after installing the locked dependencies:
 

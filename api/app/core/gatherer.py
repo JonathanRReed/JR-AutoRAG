@@ -19,6 +19,9 @@ class EvidenceChunk:
     # One-based position in one engine response, after reranking and MMR.
     # score remains the query-local diagnostic supplied by that engine.
     retrieval_rank: int | None = None
+    # Original retrieved body, before prompt guards or query-specific trimming.
+    # Only novelty checks read this metadata; generated context uses snippet.
+    novelty_text: str | None = None
 
 
 def aggregate_evidence(chunks: list[EvidenceChunk]) -> list[EvidenceChunk]:
@@ -88,6 +91,7 @@ class Gatherer:
                     score=result.score,
                     doc_id=result.document.id,
                     retrieval_rank=rank,
+                    novelty_text=snippet,
                 )
             )
         coverage = min(1.0, len(chunks) / top_k) if top_k else 0.0

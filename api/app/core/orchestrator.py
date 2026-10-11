@@ -1548,8 +1548,16 @@ class Orchestrator:
             # Check stopping criteria
             if iteration > 0 and len(accumulated_chunks) > 0:
                 # Compute marginal gain
-                prev_chunk_dicts = [{"id": c.id, "text": c.snippet} for c in accumulated_chunks[:previous_count]]
-                new_chunk_dicts = [{"id": c.id, "text": c.snippet} for c in iteration_chunks]
+                # Gatherer retains the original body for novelty. Source-ID
+                # wrappers and relevance trimming only affect prompt snippets.
+                prev_chunk_dicts = [
+                    {"id": c.id, "text": c.novelty_text if c.novelty_text is not None else c.snippet}
+                    for c in accumulated_chunks[:previous_count]
+                ]
+                new_chunk_dicts = [
+                    {"id": c.id, "text": c.novelty_text if c.novelty_text is not None else c.snippet}
+                    for c in iteration_chunks
+                ]
                 marginal_gain = compute_marginal_gain(prev_chunk_dicts, new_chunk_dicts)
 
                 iteration_details["marginal_gain"] = marginal_gain
