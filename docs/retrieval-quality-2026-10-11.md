@@ -144,7 +144,11 @@ Three subsequent review findings were reproduced and fixed before merge:
   now discard only the possibly partial binary handle and preserve float/BM25
   retrieval and its availability fallback. Failed base indexing still propagates
   through the all-index fail-closed handler; generation boundaries stay active
-  throughout optional updates.
+  throughout optional updates. Independent review also reproduced recovery that
+  incorrectly marked a subset-only store ready after a prior failure. Incremental
+  recovery now rebuilds all binary evidence unless the previous store was fully
+  ready, initialized and dimension-compatible. Four two-document regressions
+  cover discarded handles, caught quantization failures and empty replacements.
 - **Long evidence:** fixed and semantic chunkers can emit paragraphs longer than
   65,535 characters. The actual in-process vector store has no remote VARCHAR
   limit, so its unnecessary truncation was removed. Complete text, vector and
@@ -158,7 +162,8 @@ Three subsequent review findings were reproduced and fixed before merge:
   still deliberately uses zero overlap; semantic overlap has sentence semantics.
 
 The follow-up adds 33 tests (31 reproduced reds, a valid-default regression, and
-a base-failure preservation check), for **628 API tests**, plus the existing
+a base-failure preservation check), followed by four recovery regressions, for
+**632 API tests**, plus the existing
 **12 frontend tests** and **nine independent reviewer cases**. The 16-case lexical
 benchmark and 28 direct span round trips were rerun with unchanged quality
 metrics; the raw comparison above records the original reviewed candidate.

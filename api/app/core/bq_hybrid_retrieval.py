@@ -300,7 +300,18 @@ class BQHybridRetrievalEngine(HybridRetrievalEngine):
             if not self._bq_enabled:
                 return
             doc_ids = {doc.id for doc in docs if doc.id}
-            self._try_binary_update(lambda: self._reindex_bq_docs(doc_ids))
+            # Subset updates require a complete existing binary store. Capture
+            # readiness before the optional-stage wrapper resets it; a prior
+            # failure may have discarded the handle or left partial contents.
+            complete_store = (
+                self._bq_ready and self._bq_initialized and self._bq_store is not None
+                and self._embeddings is not None
+                and self._bq_embedding_dim == int(self._embeddings.shape[1])
+            )
+            if complete_store:
+                self._try_binary_update(lambda: self._reindex_bq_docs(doc_ids))
+            else:
+                self._try_binary_update(self._build_bq_index)
 
     def _reset_index_data(self) -> None:
         super()._reset_index_data()

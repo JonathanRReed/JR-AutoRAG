@@ -42,9 +42,10 @@ STORE_FAILURES = [
 @pytest.mark.asyncio
 async def test_optional_binary_failure_keeps_float_index_and_fallback(tmp_path, monkeypatch, operation, method):
     engine, doc = make_binary_engine(tmp_path)
-    engine._bq_store = None
-    engine._bq_initialized = False
-    engine._bq_ready = False
+    if method != "delete_by_doc_id":
+        engine._bq_store = None
+        engine._bq_initialized = False
+        engine._bq_ready = False
     failures = []
 
     def fail_store_operation(*args, **kwargs):
@@ -81,6 +82,46 @@ async def test_optional_binary_failure_keeps_float_index_and_fallback(tmp_path, 
         fallback = await engine.query("orion launch")
         assert fallback and fallback[0].retrieval_method != "binary"
         assert fallback[0].chunk_text == doc.text
+
+
+@pytest.mark.parametrize("failure", ["bulk_insert", "quantization"])
+@pytest.mark.parametrize("empty_replacement", [False, True])
+@pytest.mark.asyncio
+async def test_incremental_recovery_rebuilds_all_binary_evidence(tmp_path, monkeypatch, failure, empty_replacement):
+    engine, first = make_binary_engine(tmp_path)
+    second = engine._docs.add(title="Beta", text="Beta deployment approved Tuesday.")
+    engine.build()
+
+    def unavailable(*args, **kwargs):
+        raise RuntimeError("synthetic optional binary failure")
+
+    with monkeypatch.context() as patch:
+        if failure == "bulk_insert":
+            patch.setattr(MilvusVectorStore, "bulk_insert", unavailable)
+        else:
+            patch.setattr("app.core.bq_hybrid_retrieval.batch_float32_to_binary", unavailable)
+        first.text = "Orion launch date is October 12."
+        engine._docs.upsert(first)
+        engine.index_documents([first])
+    assert not engine._bq_ready
+    # A caught quantization error retains an initialized but incomplete handle;
+    # a store-operation failure discards it. Neither can accept subset updates.
+    assert (engine._bq_store is None) == (failure == "bulk_insert")
+
+    second.text = "" if empty_replacement else "Beta deployment approved Thursday."
+    engine._docs.upsert(second)
+    engine.index_documents([second])
+
+    assert engine._bq_ready
+    first_results = await engine.query("orion launch", document_ids=[first.id])
+    assert first_results and first_results[0].retrieval_method == "binary"
+    assert first_results[0].chunk_text == first.text
+    second_results = await engine.query("beta deployment", document_ids=[second.id])
+    if empty_replacement:
+        assert second_results == []
+    else:
+        assert second_results and second_results[0].retrieval_method == "binary"
+        assert second_results[0].chunk_text == second.text
 
 
 @pytest.mark.parametrize("strategy", [ChunkingStrategy.FIXED, ChunkingStrategy.SEMANTIC])
