@@ -226,6 +226,11 @@ class DocumentStore:
         with self._lock:
             return list(self._docs.values())
 
+    def get_revision(self) -> str:
+        """Return the durable mutation marker for local cache invalidation."""
+        with self._lock:
+            return repr(self._get_last_mutation())
+
     def get(self, doc_id: str) -> Document | None:
         self._refresh_if_needed()
         with self._lock:

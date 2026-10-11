@@ -91,6 +91,7 @@ def test_legacy_pickle_fallback_rebuilds_without_unpickling(tmp_path):
     and HybridRetrievalEngine safely rebuilds BM25 index from chunks.
     """
     from app.core.hybrid_retrieval import HybridConfig, HybridRetrievalEngine
+    from app.core.documents import Document
 
     persistence = IndexPersistence(base_path=tmp_path)
     index_name = "test_legacy"
@@ -108,8 +109,12 @@ def test_legacy_pickle_fallback_rebuilds_without_unpickling(tmp_path):
 
     # Test HybridRetrievalEngine rebuild behavior when loading index
     mock_doc_store = MagicMock()
+    mock_doc_store.list.return_value = [
+        Document("doc1", "Python", "Python search index", {}),
+        Document("doc2", "Sparse", "BM25 sparse retrieval", {}),
+    ]
     engine = HybridRetrievalEngine(
-        documents=mock_doc_store, config=HybridConfig(), persist_path=str(tmp_path)
+        documents=mock_doc_store, config=HybridConfig(embedding_model="", use_reranking=False), persist_path=str(tmp_path)
     )
     c1 = Chunk(text="Python search index", index=0, start_char=0, end_char=19)
     c2 = Chunk(text="BM25 sparse retrieval", index=1, start_char=0, end_char=21)

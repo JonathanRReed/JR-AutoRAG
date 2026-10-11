@@ -1,0 +1,527 @@
+{
+  "schema_version": 1,
+  "description": "Authored synthetic regression scenarios, not a representative external benchmark. Dense embeddings, neural reranking, and generation are disabled. Equivalent duplicate passages share one evidence group.",
+  "cases": [
+    {
+      "id": "keyword",
+      "query": "quasar calibrator",
+      "documents": [
+        {
+          "id": "calibrator",
+          "title": "Calibration",
+          "text": "The quasar calibrator uses a sapphire lens."
+        },
+        {
+          "id": "other",
+          "title": "Botany",
+          "text": "Moss grows on shaded rocks."
+        }
+      ],
+      "expected_evidence_groups": [
+        [
+          "calibrator"
+        ]
+      ],
+      "answer_points": [
+        "sapphire lens"
+      ],
+      "top_k": 1
+    },
+    {
+      "id": "identifier",
+      "query": "ERR-418",
+      "documents": [
+        {
+          "id": "error",
+          "title": "Protocol notes",
+          "text": "ERR-418 means the kettle is unavailable."
+        },
+        {
+          "id": "other",
+          "title": "Protocol index",
+          "text": "ERR-501 means the feature is unavailable."
+        }
+      ],
+      "expected_evidence_groups": [
+        [
+          "error"
+        ]
+      ],
+      "answer_points": [
+        "kettle is unavailable"
+      ],
+      "top_k": 1
+    },
+    {
+      "id": "numeric",
+      "query": "Orion payload 42",
+      "documents": [
+        {
+          "id": "payload",
+          "title": "Payload table",
+          "text": "Orion payload 42 weighs 18 kilograms."
+        },
+        {
+          "id": "other",
+          "title": "Vehicle table",
+          "text": "Orion payload 76 weighs 90 kilograms."
+        }
+      ],
+      "expected_evidence_groups": [
+        [
+          "payload"
+        ]
+      ],
+      "answer_points": [
+        "18 kilograms"
+      ],
+      "top_k": 1
+    },
+    {
+      "id": "phrase",
+      "query": "red cedar",
+      "documents": [
+        {
+          "id": "tree",
+          "title": "Trees",
+          "text": "The red cedar grows in damp soil."
+        },
+        {
+          "id": "other",
+          "title": "Palette",
+          "text": "The cedar panel was painted red yesterday."
+        }
+      ],
+      "expected_evidence_groups": [
+        [
+          "tree"
+        ]
+      ],
+      "answer_points": [
+        "grows in damp soil"
+      ],
+      "top_k": 1
+    },
+    {
+      "id": "scope_launch",
+      "query": "Orion launch date",
+      "documents": [
+        {
+          "id": "selected",
+          "title": "Approved launch",
+          "text": "Orion launch date is October 11."
+        }
+      ],
+      "expected_evidence_groups": [
+        [
+          "selected"
+        ]
+      ],
+      "answer_points": [
+        "Orion launch date is October 11."
+      ],
+      "top_k": 1,
+      "scope": [
+        "selected"
+      ],
+      "distractors": {
+        "count": 25,
+        "text": "Orion launch date launch date launch date is October 4."
+      },
+      "config": {
+        "rerank_top_k": 5
+      }
+    },
+    {
+      "id": "scope_invoice",
+      "query": "Aster invoice total",
+      "documents": [
+        {
+          "id": "selected",
+          "title": "Approved invoice",
+          "text": "Aster invoice total is 172 credits."
+        }
+      ],
+      "expected_evidence_groups": [
+        [
+          "selected"
+        ]
+      ],
+      "answer_points": [
+        "Aster invoice total is 172 credits."
+      ],
+      "top_k": 1,
+      "scope": [
+        "selected"
+      ],
+      "distractors": {
+        "count": 25,
+        "text": "Aster invoice total invoice total invoice total is 999 credits."
+      },
+      "config": {
+        "rerank_top_k": 5
+      }
+    },
+    {
+      "id": "scope_policy",
+      "query": "Zephyr retention limit",
+      "documents": [
+        {
+          "id": "selected",
+          "title": "Approved policy",
+          "text": "Zephyr retention limit is 14 days."
+        }
+      ],
+      "expected_evidence_groups": [
+        [
+          "selected"
+        ]
+      ],
+      "answer_points": [
+        "Zephyr retention limit is 14 days."
+      ],
+      "top_k": 1,
+      "scope": [
+        "selected"
+      ],
+      "distractors": {
+        "count": 25,
+        "text": "Zephyr retention limit retention limit retention limit is 90 days."
+      },
+      "config": {
+        "rerank_top_k": 5
+      }
+    },
+    {
+      "id": "diversity_launch",
+      "query": "Orion launch",
+      "documents": [
+        {
+          "id": "first",
+          "title": "Summary",
+          "text": "Orion launch date is October 11."
+        },
+        {
+          "id": "copy",
+          "title": "Duplicate summary",
+          "text": "Orion launch date is October 11."
+        },
+        {
+          "id": "second",
+          "title": "Additional terms",
+          "text": "Orion launch crew training begins October 5."
+        }
+      ],
+      "expected_evidence_groups": [
+        [
+          "first",
+          "copy"
+        ],
+        [
+          "second"
+        ]
+      ],
+      "answer_points": [
+        "Orion launch date is October 11.",
+        "Orion launch crew training begins October 5."
+      ],
+      "top_k": 2,
+      "config": {
+        "diversity": 0.6
+      }
+    },
+    {
+      "id": "diversity_contract",
+      "query": "Aster contract",
+      "documents": [
+        {
+          "id": "first",
+          "title": "Summary",
+          "text": "Aster contract payment is 172 credits."
+        },
+        {
+          "id": "copy",
+          "title": "Duplicate summary",
+          "text": "Aster contract payment is 172 credits."
+        },
+        {
+          "id": "second",
+          "title": "Additional terms",
+          "text": "Aster contract delivery occurs on October 20."
+        }
+      ],
+      "expected_evidence_groups": [
+        [
+          "first",
+          "copy"
+        ],
+        [
+          "second"
+        ]
+      ],
+      "answer_points": [
+        "Aster contract payment is 172 credits.",
+        "Aster contract delivery occurs on October 20."
+      ],
+      "top_k": 2,
+      "config": {
+        "diversity": 0.6
+      }
+    },
+    {
+      "id": "metadata_before_cutoff",
+      "query": "zephyr",
+      "documents": [
+        {
+          "id": "body",
+          "title": "General notes",
+          "text": "zephyr zephyr zephyr zephyr zephyr zephyr zephyr zephyr zephyr zephyr zephyr zephyr zephyr zephyr zephyr zephyr zephyr zephyr zephyr zephyr "
+        },
+        {
+          "id": "titled",
+          "title": "Zephyr",
+          "text": "zephyr departure is October 11."
+        },
+        {
+          "id": "filler0",
+          "title": "Filler 0",
+          "text": "unrelated botanical material 0"
+        },
+        {
+          "id": "filler1",
+          "title": "Filler 1",
+          "text": "unrelated botanical material 1"
+        },
+        {
+          "id": "filler2",
+          "title": "Filler 2",
+          "text": "unrelated botanical material 2"
+        },
+        {
+          "id": "filler3",
+          "title": "Filler 3",
+          "text": "unrelated botanical material 3"
+        },
+        {
+          "id": "filler4",
+          "title": "Filler 4",
+          "text": "unrelated botanical material 4"
+        },
+        {
+          "id": "filler5",
+          "title": "Filler 5",
+          "text": "unrelated botanical material 5"
+        },
+        {
+          "id": "filler6",
+          "title": "Filler 6",
+          "text": "unrelated botanical material 6"
+        },
+        {
+          "id": "filler7",
+          "title": "Filler 7",
+          "text": "unrelated botanical material 7"
+        }
+      ],
+      "expected_evidence_groups": [
+        [
+          "titled"
+        ]
+      ],
+      "answer_points": [
+        "October 11"
+      ],
+      "top_k": 1,
+      "routing": {
+        "dense_weight": 0,
+        "sparse_weight": 1,
+        "literal_weight": 0,
+        "title_boost": 20
+      },
+      "config": {
+        "rerank_top_k": 1
+      }
+    },
+    {
+      "id": "title_only",
+      "query": "zephyr",
+      "documents": [
+        {
+          "id": "titled",
+          "title": "Zephyr",
+          "text": "The permitted departure date is October 11."
+        },
+        {
+          "id": "other",
+          "title": "Other",
+          "text": "Botanical material grows in damp soil."
+        }
+      ],
+      "expected_evidence_groups": [
+        [
+          "titled"
+        ]
+      ],
+      "answer_points": [
+        "October 11"
+      ],
+      "top_k": 1
+    },
+    {
+      "id": "substring_abstention",
+      "query": "art",
+      "documents": [
+        {
+          "id": "maps",
+          "title": "Maps",
+          "text": "Cartography describes maps."
+        }
+      ],
+      "expected_evidence_groups": [],
+      "answer_points": [],
+      "top_k": 1
+    },
+    {
+      "id": "unanswerable",
+      "query": "zorbax",
+      "documents": [
+        {
+          "id": "maps",
+          "title": "Maps",
+          "text": "Cartography describes maps."
+        }
+      ],
+      "expected_evidence_groups": [],
+      "answer_points": [],
+      "top_k": 1
+    },
+    {
+      "id": "scope_missing",
+      "query": "Orion launch",
+      "documents": [
+        {
+          "id": "launch",
+          "title": "Launch",
+          "text": "Orion launch date is October 11."
+        }
+      ],
+      "expected_evidence_groups": [],
+      "answer_points": [],
+      "top_k": 1,
+      "scope": [
+        "missing"
+      ]
+    },
+    {
+      "id": "requested_k_exceeds_pool",
+      "query": "Orion launch",
+      "documents": [
+        {
+          "id": "notice0",
+          "title": "Notice 0",
+          "text": "Orion launch notice 0 assigns crew group 0."
+        },
+        {
+          "id": "notice1",
+          "title": "Notice 1",
+          "text": "Orion launch notice 1 assigns crew group 1."
+        },
+        {
+          "id": "notice2",
+          "title": "Notice 2",
+          "text": "Orion launch notice 2 assigns crew group 2."
+        },
+        {
+          "id": "notice3",
+          "title": "Notice 3",
+          "text": "Orion launch notice 3 assigns crew group 3."
+        },
+        {
+          "id": "notice4",
+          "title": "Notice 4",
+          "text": "Orion launch notice 4 assigns crew group 4."
+        },
+        {
+          "id": "notice5",
+          "title": "Notice 5",
+          "text": "Orion launch notice 5 assigns crew group 5."
+        },
+        {
+          "id": "notice6",
+          "title": "Notice 6",
+          "text": "Orion launch notice 6 assigns crew group 6."
+        }
+      ],
+      "expected_evidence_groups": [
+        [
+          "notice0"
+        ],
+        [
+          "notice1"
+        ],
+        [
+          "notice2"
+        ],
+        [
+          "notice3"
+        ],
+        [
+          "notice4"
+        ],
+        [
+          "notice5"
+        ],
+        [
+          "notice6"
+        ]
+      ],
+      "answer_points": [
+        "crew group 0",
+        "crew group 1",
+        "crew group 2",
+        "crew group 3",
+        "crew group 4",
+        "crew group 5",
+        "crew group 6"
+      ],
+      "top_k": 5,
+      "config": {
+        "rerank_top_k": 2
+      }
+    },
+    {
+      "id": "multi_source",
+      "query": "cobalt copper",
+      "documents": [
+        {
+          "id": "cobalt",
+          "title": "Cobalt",
+          "text": "The cobalt assay measures 18 units."
+        },
+        {
+          "id": "copper",
+          "title": "Copper",
+          "text": "The copper assay measures 27 units."
+        },
+        {
+          "id": "other",
+          "title": "Nickel",
+          "text": "The nickel assay measures 35 units."
+        }
+      ],
+      "expected_evidence_groups": [
+        [
+          "cobalt"
+        ],
+        [
+          "copper"
+        ]
+      ],
+      "answer_points": [
+        "18 units",
+        "27 units"
+      ],
+      "top_k": 2
+    }
+  ]
+}

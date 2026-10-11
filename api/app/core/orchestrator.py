@@ -869,6 +869,9 @@ class Orchestrator:
             query_mode=effective_query_mode,
         )
         cache_hash = self._cache_config_hash(document_ids, query_cache_scope)
+        # Disk keys need the same retrieval/provider configuration identity as
+        # memory keys, including across process restarts.
+        disk_cache_scope = f"{query_cache_scope}:{cache_hash}"
 
         # G3: Get corpus version and retrieval mode for versioned cache keys
         cache_corpus_version = ""
@@ -906,9 +909,11 @@ class Orchestrator:
             retrieval_mode=int(cache_retrieval_mode),
             preset_id=current_preset_id,
             model_ids=model_ids,
-            scope_key=query_cache_scope,
+            scope_key=disk_cache_scope,
         )
         cache_event = disk_cache.get_last_event()
+        if cached_result is not None and hasattr(self._retrieval, "get_corpus_version") and self._retrieval.get_corpus_version() != cache_corpus_version:
+            cached_result = None
 
         cache_step_details: dict[str, Any] = {
             "query_cache": "enabled",
@@ -2495,6 +2500,12 @@ The retrieved evidence contains some conflicting information. When you encounter
         )
         result["trace_bundle_available"] = True
 
+        # A result generated from an earlier index must not be stored under
+        # the newer version observed at the end of generation.
+        if corpus_version != cache_corpus_version or retrieval_mode_flags != cache_retrieval_mode:
+            result["metrics"]["cache_write_skipped"] = "corpus_changed"
+            return result
+
         # G3: Use versioned cache keys (in-memory)
         cacheable = {**result, "steps": [s for s in steps_out if s["name"] != "cache"]}
         cache_manager.queries.set(
@@ -2514,7 +2525,7 @@ The retrieved evidence contains some conflicting information. When you encounter
             retrieval_mode=int(retrieval_mode_flags),
             preset_id=current_preset_id,
             model_ids=model_ids,
-            scope_key=query_cache_scope,
+            scope_key=disk_cache_scope,
         )
 
         return result

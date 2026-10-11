@@ -275,7 +275,10 @@ class MilvusVectorStore:
                 doc_id=chunk.doc_id,
                 chunk_id=chunk.chunk_id,
                 source=chunk.source,
-                text=chunk.text[:65535],
+                # This in-process store has no remote VARCHAR limit. Retain
+                # the complete source slice rather than truncating text while
+                # leaving its span/vector metadata attached to the full chunk.
+                text=chunk.text,
                 metadata=chunk.metadata,
                 bq_vector=bq_vector,
             )
