@@ -1964,7 +1964,8 @@ class HybridRetrievalEngine:
                     continue
                 text = chunk.text.lower()
                 score = 0.0
-                phrase_hits = len(phrase_pattern.findall(text))
+                # A literal substring is required before its word boundaries can match.
+                phrase_hits = len(phrase_pattern.findall(text)) if cleaned in text else 0
                 if phrase_hits:
                     score += 5.0 + phrase_hits
                 if tokens:
