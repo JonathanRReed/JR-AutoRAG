@@ -1728,6 +1728,16 @@ class HybridRetrievalEngine:
                 self._index_building = True
             try:
                 yield
+                # Persistence can reject a stale snapshot, but readers also
+                # need its in-memory state discarded. Check at the outermost
+                # mutation boundary, after optional binary stages finish, even
+                # when persistence or embeddings are disabled.
+                with self._index_lock:
+                    if (
+                        self._index_mutation_depth == 1
+                        and self._indexed_source_hashes != self._source_hashes(self._docs.list())
+                    ):
+                        self._reset_index_data()
             except BaseException:
                 # A failed writer may have replaced chunks before rebuilding
                 # sparse/dense state. Do not make that partial index queryable.
