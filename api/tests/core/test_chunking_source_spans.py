@@ -83,3 +83,36 @@ def test_public_retrieval_config_rejects_nonpositive_chunk_size(size):
 
     with pytest.raises(ValidationError):
         RetrievalDefaults(chunk_size=size)
+
+
+@pytest.mark.parametrize("size, overlap", [(10, 10), (10, 11), (10, -1), (400, 400)])
+def test_recursive_invalid_overlap_is_rejected(size, overlap):
+    from app.core.chunking import RecursiveChunker
+
+    with pytest.raises(ValueError, match="overlap"):
+        RecursiveChunker(target_size=size, overlap=overlap)
+
+
+@pytest.mark.parametrize("size, overlap", [(10, 10), (10, 11), (10, -1), (400, 400)])
+def test_public_recursive_config_rejects_invalid_overlap(size, overlap):
+    from pydantic import ValidationError
+    from app.schemas.config import RetrievalDefaults
+
+    with pytest.raises(ValidationError, match="chunk_overlap"):
+        RetrievalDefaults(chunking_strategy="recursive", chunk_size=size, chunk_overlap=overlap)
+
+
+def test_recursive_default_and_explicit_small_nonoverlapping_sizes_are_valid():
+    from app.core.chunking import RecursiveChunker
+
+    assert RecursiveChunker().chunk("0123456789" * 100)
+    chunks = RecursiveChunker(target_size=10, overlap=0).chunk("0123456789" * 10)
+    assert len(chunks) == 10
+    assert "".join(chunk.text for chunk in chunks) == "0123456789" * 10
+
+
+def test_recursive_small_size_with_oversized_default_overlap_has_clear_error():
+    from app.core.chunking import RecursiveChunker
+
+    with pytest.raises(ValueError, match="overlap.*smaller.*target_size"):
+        RecursiveChunker(target_size=10)

@@ -134,6 +134,35 @@ from this cloud worker, so actual image build/runtime smoke must still pass in C
 The audit required the normal HTTPS proxy; only SOCKS `ALL_PROXY` was removed
 for the successful aggregate gate.
 
+### Remote-review follow-up
+
+Three subsequent review findings were reproduced and fixed before merge:
+
+- **Optional binary failures:** 20 injected connection/clear/insert/index/delete
+  failures across build, load, incremental update, configuration and query paths
+  previously discarded the healthy base index. Optional binary-stage exceptions
+  now discard only the possibly partial binary handle and preserve float/BM25
+  retrieval and its availability fallback. Failed base indexing still propagates
+  through the all-index fail-closed handler; generation boundaries stay active
+  throughout optional updates.
+- **Long evidence:** fixed and semantic chunkers can emit paragraphs longer than
+  65,535 characters. The actual in-process vector store has no remote VARCHAR
+  limit, so its unnecessary truncation was removed. Complete text, vector and
+  original spans remain paired. Long-chunk binary retrieval and subsequent source
+  mutation abstention are tested; source guards were not relaxed.
+- **Nonprogressing overlap:** recursive constructors and public configuration
+  reject negative overlap or overlap at least as large as chunk size. Small
+  recursive sizes require a valid explicit overlap, such as zero; defaults remain
+  valid. The hard-split stride is now the validated size minus overlap, rather
+  than silently clamping an invalid setting to one character. The `late` strategy
+  still deliberately uses zero overlap; semantic overlap has sentence semantics.
+
+The follow-up adds 33 tests (31 reproduced reds, a valid-default regression, and
+a base-failure preservation check), for **628 API tests**, plus the existing
+**12 frontend tests** and **nine independent reviewer cases**. The 16-case lexical
+benchmark and 28 direct span round trips were rerun with unchanged quality
+metrics; the raw comparison above records the original reviewed candidate.
+
 Reproduce from the repository root:
 
 ```bash

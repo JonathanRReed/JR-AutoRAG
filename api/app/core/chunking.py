@@ -190,6 +190,8 @@ class RecursiveChunker:
     ) -> None:
         if target_size <= 0:
             raise ValueError("target_size must be positive")
+        if overlap < 0 or overlap >= target_size:
+            raise ValueError("overlap must be nonnegative and smaller than target_size")
         self._target_size = target_size
         self._overlap = overlap
         self._separators = separators or ["\n\n", "\n", ". ", " ", ""]
@@ -203,7 +205,7 @@ class RecursiveChunker:
         if end - start <= self._target_size:
             return [(start, end)]
         if not separators or not separators[0]:
-            step = max(1, self._target_size - self._overlap)
+            step = self._target_size - self._overlap
             spans = []
             for i in range(start, end, step):
                 right = min(i + self._target_size, end)

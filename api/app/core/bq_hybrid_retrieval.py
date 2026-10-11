@@ -80,7 +80,26 @@ class BQHybridRetrievalEngine(HybridRetrievalEngine):
             self._bq_ready = False
 
         if rebuild and self._bq_enabled and self._chunks and self._embeddings is not None:
-            self._build_bq_index()
+            self._try_binary_update(self._build_bq_index)
+
+    def _try_binary_update(self, update: Callable[[], None]) -> None:
+        """Degrade only the optional binary stage; preserve a healthy base index.
+
+        Callers keep their outer generation boundary active so readers cannot
+        see a partial binary update. Base build/index/load failures still
+        propagate through the all-index fail-closed mutation handler.
+        """
+        self._bq_ready = False
+        self._last_bq_error = None
+        try:
+            update()
+        except Exception as error:
+            # Discard a possibly partially updated binary handle, not the
+            # coherent float/BM25 index produced before this optional stage.
+            self._bq_store = None
+            self._bq_initialized = False
+            self._bq_ready = False
+            self._last_bq_error = f"Binary index update failed ({type(error).__name__})"
 
     def get_last_bq_debug(self) -> dict[str, Any]:
         """Return the last binary retrieval debug payload (if any)."""
@@ -254,7 +273,7 @@ class BQHybridRetrievalEngine(HybridRetrievalEngine):
         with self._mutating_index():
             super().build(on_progress=on_progress)
             if self._bq_enabled:
-                self._build_bq_index()
+                self._try_binary_update(self._build_bq_index)
 
     def clear(self) -> bool:
         cleared = super().clear()
@@ -272,7 +291,7 @@ class BQHybridRetrievalEngine(HybridRetrievalEngine):
         with self._mutating_index():
             loaded = super().load_index(index_name=index_name, on_progress=on_progress)
             if loaded and self._bq_enabled:
-                self._build_bq_index()
+                self._try_binary_update(self._build_bq_index)
             return loaded
 
     def index_documents(self, docs: list[Document]) -> None:
@@ -281,7 +300,7 @@ class BQHybridRetrievalEngine(HybridRetrievalEngine):
             if not self._bq_enabled:
                 return
             doc_ids = {doc.id for doc in docs if doc.id}
-            self._reindex_bq_docs(doc_ids)
+            self._try_binary_update(lambda: self._reindex_bq_docs(doc_ids))
 
     def _reset_index_data(self) -> None:
         super()._reset_index_data()
@@ -318,7 +337,7 @@ class BQHybridRetrievalEngine(HybridRetrievalEngine):
 
         if not self._bq_ready:
             with self._mutating_index():
-                self._build_bq_index()
+                self._try_binary_update(self._build_bq_index)
 
         if not self._bq_ready:
             _last_bq_debug.set(RetrievalDebug(

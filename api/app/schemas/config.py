@@ -379,7 +379,7 @@ class RetrievalDefaults(BaseModel):
     colbert_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     colbert_top_k: int = 12
     chunk_size: int = Field(default=400, ge=1)
-    chunk_overlap: int = 50
+    chunk_overlap: int = Field(default=50, ge=0)
     planner_mode: str = "smart"
     flare_generation: bool = True
     enforce_evidence_contract: bool = True
@@ -415,6 +415,12 @@ class RetrievalDefaults(BaseModel):
     langextract_timeout_sec: int = 20
     langextract_max_chars: int = 12000
     langextract_max_synthetic_facts: int = 200
+
+    @model_validator(mode="after")
+    def _validate_recursive_overlap(self) -> "RetrievalDefaults":
+        if self.chunking_strategy == "recursive" and self.chunk_overlap >= self.chunk_size:
+            raise ValueError("chunk_overlap must be smaller than chunk_size for recursive chunking")
+        return self
 
     @field_validator("raptor", mode="before")
     @classmethod
