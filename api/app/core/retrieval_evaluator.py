@@ -138,15 +138,12 @@ INCORRECT means the context is irrelevant to the query."""
             # Noise penalty (30% weight)
             noise = min(1.0, self._count_noise_signals(text) / 2)
 
-            # Retrieval score boost (if available)
-            retrieval_score = getattr(chunk, 'score', 0.5)
-
-            # Combined score
+            # Query-local engine scores (BM25, RRF, logits) cannot determine
+            # a verdict or early stop. Assess the retrieved text itself.
             chunk_score = (
                 0.4 * overlap +
                 0.3 * relevance +
-                0.3 * (1 - noise) +
-                0.2 * retrieval_score  # Bonus
+                0.3 * (1 - noise)
             )
             scores.append(min(1.0, chunk_score))
 

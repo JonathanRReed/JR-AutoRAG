@@ -132,7 +132,13 @@ class RemoteEmbeddingClient:
 
 @dataclass
 class RetrievalResult:
-    """A single retrieval result with score and source info."""
+    """A ranked result with a query-local diagnostic score and source info.
+
+    score may be a single channel's raw value, weighted RRF, or a reranker
+    output (with recency adjustments). Compare it only within its ranking
+    stage, never across queries or as confidence. Returned order also includes
+    MMR selection; Gatherer records that order for iterative aggregation.
+    """
 
     document: Document
     score: float
