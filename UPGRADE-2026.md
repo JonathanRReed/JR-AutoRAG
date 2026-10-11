@@ -1,10 +1,12 @@
 # JR-AutoRAG Upgrade Plan — 2026
 
 > Supersedes the original `JR-AutoRAG-Upgrade-Doc-Local-First.md` (deleted).
-> Grounded in a 2025–2026 state-of-the-art RAG survey and a full read-only
-> architecture audit of the current repository.
+> Historical upgrade record, corrected against the runtime in October 2026.
+> The [measured retrieval audit](docs/retrieval-quality-2026-10-11.md) is the
+> current evidence and prioritized roadmap. Feature names are not evidence of
+> state-of-the-art quality or security guarantees.
 
-## 0. Completed Work (This Upgrade Session)
+## 0. Completed Work (Prior Upgrade Record)
 
 ### Phase 1: Dead Code Removal (11,532 lines deleted)
 
@@ -24,28 +26,34 @@ Frontend cleanup removed 8 dead components: `ArtifactViewer` (unreachable),
 `CacheEventBadge`, `GroundingBadge`, `PipelineTimeline`, `EnterpriseControls`,
 `APITester`, and unused `ui/field` + `ui/input-group` primitives.
 
-### Phase 2: SOTA Retrieval Upgrades (2025-2026)
+### Phase 2: SOTA Retrieval Upgrades (historical goals, 2025-2026)
 
 **Late Chunking** (arXiv 2409.04701):
 
 - New `ChunkingStrategy.LATE` enum value + `LateChunker` class
-- Produces non-overlapping windows for post-embedding pooling
+- Produces non-overlapping source windows, now with exact source offsets
 - Wired into `ingest.py` `_chunk()` routing
+- Retrieval still embeds each window independently. Full-document token
+  encoding followed by contextual pooling from the paper is **not wired**.
 
 **Per-Query Hybrid Weights** (`AutoHybridWeights`):
 
 - Analyzes query features (length, question words, quotes, numbers, NL indicators)
 - Computes per-query dense/sparse fusion weights instead of global defaults
 - Wired into `HybridRetrievalEngine.query()` when no explicit overrides provided
+- These are heuristics, not learned routing or a measured universal improvement
 
 **MMR Diversity Rerank** (upgraded):
 
-- Now uses embedding cosine similarity (SOTA) when available
+- Uses embedding cosine similarity when available
 - Falls back to token Jaccard for zero-dependency operation
+- October fixes retain a larger candidate pool and normalize relevance within
+  the MMR objective so diversity is not overwhelmed by score scale
 
 **Matryoshka Embedding Support**:
 
-- `HybridConfig.matryoshka_dim` field for truncated embedding + full-dim rescore
+- `HybridConfig.matryoshka_dim` is a configuration field only
+- Truncated-vector search and full-dimensional rescoring are **not wired**
 
 **Contextual Enrichment as Default** (Anthropic Contextual Retrieval):
 
@@ -53,6 +61,9 @@ Frontend cleanup removed 8 dead components: `ArtifactViewer` (unreachable),
   heuristic chunk summary, and context window to every chunk at ingest time
 - Falls back to simple header prepend on failure
 - Wired as default in `IngestPipeline.ingest_text()`
+- This heuristic enrichment is not equivalent to the evaluated model-generated
+  contextual retrieval described by Anthropic. Offsets refer to the resulting
+  stored/indexed text, not necessarily the original uploaded file.
 
 ### Phase 3: Eval Gates CI Integration
 
@@ -110,9 +121,11 @@ Frontend cleanup removed 8 dead components: `ArtifactViewer` (unreachable),
 - API URL visible on `lg+` screens (was hidden below `2xl`)
 - Added meta description
 
-### Verification
+### Historical Verification
 
-All checks pass:
+The prior session recorded the following checks. They are historical evidence,
+not a current release receipt. Current commands, counts, and benchmark limits
+are in the [October report](docs/retrieval-quality-2026-10-11.md).
 
 - `uv run ruff check app tests` — clean
 - `uv run pytest -q` — 363 tests pass (334 original + 29 new)
@@ -128,12 +141,14 @@ After this upgrade session, the codebase has:
 
 - Hybrid dense + BM25 + RRF + cross-encoder rerank with **per-query weights**
 - Binary-quantized retrieval variant (`bq_hybrid_retrieval.py`, `binary_vector_store.py`)
-- **Late chunking** strategy (arXiv 2409.04701)
-- **Contextual enrichment** as default (Anthropic Contextual Retrieval)
+- A `late` window-splitting strategy; contextual token pooling remains future work
+- Heuristic contextual enrichment as default; no measured Anthropic-equivalent claim
 - **MMR diversity** with embedding cosine similarity
 - Pluggable OCR router with `off/auto/vision/dedicated/hybrid` policies
 - Hierarchy/RAPTOR, GraphRAG, memory, HyDE, FLARE, Self-RAG
 - Citation verification, hallucination firewall, evidence contracts
+- Citation ID checks do not prove that a source entails each answer claim;
+  current firewall/quality metrics are heuristic and need independent evaluation
 - RAGAS-style eval, golden sets, **eval gates endpoint for CI**
 - **Canary tokens** + **poisoned chunk scanner** (OWASP LLM01/02)
 - Auth, rate limiting, prompt guard, PII redaction, secrets vault, audit, ACL
@@ -144,12 +159,17 @@ After this upgrade session, the codebase has:
 
 ## 2. Remaining work (future phases)
 
-### Phase B — Model/Backend Layer
+### Phase B — Measured Retrieval and Model Selection
 
-- Add `BGE_M3` and `NOMIC` to `EmbeddingModelPreset` with FlagEmbedding integration
-- Add `bge-reranker-v2-m3` as default reranker for `balanced`/`thorough` presets
-- Implement `ColPaliReranker` / `ColQwenReranker` behind feature flag
-- Add `QdrantStore`, `LanceDBStore`, `ChromaStore` implementing `VectorStore` ABC
+- Evaluate fixed/semantic/recursive chunking, dense/sparse fusion, reranking,
+  redundancy and no-answer queries on representative public/local fixtures
+- Compare local embedding/reranking models against present presets, including
+  query instruction formatting, peak memory, cold/warm latency and answer support
+- Implement true contextual late pooling only behind a tested compatible encoder
+- Wire Matryoshka dimensions only for compatible models, with recall/latency gates
+- Generic MiniLM token MaxSim is not a trained ColBERT model; evaluate a real
+  late-interaction implementation before claiming comparable quality
+- Add a new vector backend only if measured corpus scale requires one
 
 ### Phase C — Agentic & Advanced Security
 
@@ -158,6 +178,9 @@ After this upgrade session, the codebase has:
 - Add Presidio-backed PII redaction (optional backend)
 - Add embedding-based anomaly detection for prompt injection defense
 - Add metamorphic drift detection to eval harness
+- Measure claim-level citation entailment and unsupported-claim abstention with
+  human/independent grading; retain prompt-injection and poisoned-corpus negatives
+- Bound query expansion/planning by evidence gain, latency and local model cost
 
 ### Phase D — Frontend Polish
 

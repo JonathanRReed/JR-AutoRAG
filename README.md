@@ -42,6 +42,13 @@ Without a configured provider, the app returns a retrieved-context summary rathe
 
 Retrieval combines dense vectors, sparse matching, reranking, and evidence checks. Presets range from Turbo for low latency to Ultra Accurate for more context and stricter checks, with Fast, Balanced, and Thorough between them. Backend-supported controls include query scope, grounded or open querying, RAPTOR, graph retrieval, HyDE, and Self-RAG critique. See [UPGRADE-2026.md](UPGRADE-2026.md).
 
+The [October 2026 retrieval report](docs/retrieval-quality-2026-10-11.md) records
+scoped candidate selection, exact source offsets, mutation/cache safety, an
+offline before/after regression benchmark, and current implementation limits.
+Existing persisted retrieval indexes are rebuilt once after this update; source
+documents are retained. The `late` setting currently splits windows and does
+not implement full-document contextual token pooling.
+
 ## Disposable demo
 
 ```bash
@@ -121,6 +128,16 @@ bash scripts/secret-scan.sh
 bun run supply-chain
 git diff --check
 ```
+
+Run the synthetic retrieval benchmark without models or providers:
+
+```bash
+uv run --project api python scripts/retrieval-quality-benchmark.py --performance
+```
+
+It reports evidence recall, duplicate-aware ranking, abstention, exact source
+spans, and sparse-stage CPU cost. These are authored correctness regressions,
+not a neural-model benchmark or generated-answer faithfulness score.
 
 The container smoke builds both images, imports the API, checks `/healthz` and `/readyz`, and verifies the web shell and assets. The default API image uses core dependencies and `UV_TORCH_BACKEND=cpu`; choose a GPU-specific image only for a deployment that needs it.
 

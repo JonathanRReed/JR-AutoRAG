@@ -378,7 +378,7 @@ class RetrievalDefaults(BaseModel):
     use_colbert: bool = False
     colbert_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     colbert_top_k: int = 12
-    chunk_size: int = 400
+    chunk_size: int = Field(default=400, ge=1)
     chunk_overlap: int = 50
     planner_mode: str = "smart"
     flare_generation: bool = True

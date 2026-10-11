@@ -1,6 +1,6 @@
 """Hybrid retrieval engine with dense embeddings, BM25, and reranking.
 
-This module provides a state-of-the-art retrieval implementation that combines:
+This module provides configurable hybrid retrieval combining:
 - Dense vector search using sentence-transformers
 - BM25 sparse retrieval for keyword matching
 - Reciprocal Rank Fusion (RRF) for combining results
@@ -18,6 +18,7 @@ import os
 import re
 import threading
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -143,6 +144,10 @@ class RetrievalResult:
     end_char: int = 0  # End offset in original document text
 
 
+class _IndexChangedDuringQuery(RuntimeError):
+    """Abort ordinal ranking when its source index has changed."""
+
+
 class EmbeddingModelPreset:
     """2025 MTEB-validated embedding model presets.
 
@@ -186,12 +191,12 @@ class EmbeddingModelPreset:
 
 
 class AutoHybridWeights:
-    """Per-query hybrid weight computation (SOTA 2025-2026).
+    """Heuristic per-query hybrid weight computation.
 
     Analyzes query features to adjust dense/sparse fusion weights.
     Keyword-heavy queries get more sparse weight; conceptual/natural
-    language queries get more dense weight. This beats global weights
-    because the optimal fusion ratio varies by query type.
+    language queries get more dense weight. Workload-specific evaluation is
+    required to establish whether this improves on fixed fusion weights.
     """
 
     # Question words indicate semantic/conceptual intent
@@ -325,7 +330,7 @@ class HybridRetrievalEngine:
     """Advanced retrieval engine with hybrid search and reranking.
 
     Combines dense vector search (semantic) with BM25 (keyword) retrieval,
-    then optionally applies cross-encoder or ColBERT-style reranking for maximum precision.
+    then optionally applies cross-encoder or ColBERT-style reranking.
 
     Supports disk persistence for indexes to avoid rebuild on restart.
     """
@@ -361,6 +366,7 @@ class HybridRetrievalEngine:
         self._last_colbert_stats: dict[str, Any] = {"applied": False}
         # Metadata-aware scoring
         self._doc_title_tokens: dict[str, set[str]] = {}
+        self._doc_chunk_indices: dict[str, list[int]] = {}
         self._chunk_heading_tokens: dict[int, set[str]] = {}
         self._doc_timestamps: dict[str, datetime] = {}
 
@@ -372,7 +378,12 @@ class HybridRetrievalEngine:
         self._doc_content_hashes: dict[
             str, str
         ] = {}  # doc_id -> content_hash for incremental
+        self._indexed_source_hashes: dict[str, str] = {}
         self._index_lock = threading.RLock()
+        self._index_write_lock = threading.RLock()
+        self._index_generation = 0
+        self._index_building = False
+        self._index_mutation_depth = 0
 
         # Phase 4/6/5: Hierarchical & Graph structures
         self._trees: dict[str, Any] = {}  # doc_id -> DocumentTree
@@ -490,6 +501,10 @@ class HybridRetrievalEngine:
         return any(getattr(self._config, f) != getattr(config, f) for f in fields)
 
     def reconfigure(self, config: HybridConfig, rebuild: bool | None = None) -> bool:
+        with self._mutating_index():
+            return self._reconfigure(config, rebuild)
+
+    def _reconfigure(self, config: HybridConfig, rebuild: bool | None = None) -> bool:
         """Apply a new retrieval config and rebuild indexes if needed.
 
         Returns True if a rebuild was triggered.
@@ -606,6 +621,9 @@ class HybridRetrievalEngine:
         self._doc_title_tokens = {
             doc.id: set(self._tokenize_terms(doc.title)) for doc in docs if doc.title
         }
+        self._doc_chunk_indices = {}
+        for idx, (doc_id, _) in enumerate(self._chunks):
+            self._doc_chunk_indices.setdefault(doc_id, []).append(idx)
         self._chunk_heading_tokens = {}
         if not self._trees:
             return
@@ -642,7 +660,7 @@ class HybridRetrievalEngine:
         """Normalize per-query routing params and merge with defaults."""
         params = dict(routing_params or {})
         # If no explicit weight overrides are provided, compute per-query
-        # weights using AutoHybridWeights (SOTA: per-query beats global).
+        # weights using the feature-based AutoHybridWeights heuristic.
         has_explicit_weights = "dense_weight" in params or "sparse_weight" in params
         if not has_explicit_weights:
             dense_w, sparse_w = AutoHybridWeights.compute_weights(
@@ -778,12 +796,20 @@ class HybridRetrievalEngine:
     ) -> list[tuple[int, float]]:
         """Apply MMR (Maximal Marginal Relevance) diversity rerank.
 
-        Uses embedding cosine similarity when available (SOTA), falls back
+        Uses embedding cosine similarity when available, falls back
         to token Jaccard similarity for zero-dependency operation.
         """
         if diversity <= 0 or len(candidates) <= 1:
             return candidates[:top_k]
         pool = candidates[: max(top_k * 4, top_k)]
+        # RRF scores, BM25 scores, and cross-encoder logits have different
+        # scales. Normalize only the MMR objective, preserving returned scores.
+        low = min(score for _, score in pool)
+        high = max(score for _, score in pool)
+        relevance = {
+            idx: (score - low) / (high - low) if high > low else 1.0
+            for idx, score in pool
+        }
         selected: list[tuple[int, float]] = []
         token_cache: dict[int, set[str]] = {}
 
@@ -816,7 +842,7 @@ class HybridRetrievalEngine:
         def max_sim_to_selected(idx: int) -> float:
             if not selected:
                 return 0.0
-            # Try embedding similarity first (SOTA)
+            # Try embedding similarity first
             for sel_idx, _ in selected:
                 emb_sim = embedding_sim(idx, sel_idx)
                 if emb_sim >= 0:
@@ -850,7 +876,7 @@ class HybridRetrievalEngine:
                 best_score = None
                 for idx, score in pool:
                     max_sim = max_sim_to_selected(idx)
-                    mmr_score = ((1 - diversity) * score) - (diversity * max_sim)
+                    mmr_score = ((1 - diversity) * relevance[idx]) - (diversity * max_sim)
                     if best_score is None or mmr_score > best_score:
                         best_score = mmr_score
                         best = (idx, score)
@@ -878,7 +904,12 @@ class HybridRetrievalEngine:
         Used in cache keys to ensure stale results are never returned
         after corpus changes.
         """
-        return str(self._corpus_version_counter)
+        with self._index_lock:
+            if self._index_building:
+                return f"updating:{self._index_generation}"
+            # The store revision also changes before asynchronous indexing
+            # starts, and survives restarts unlike the in-memory counter.
+            return f"{self._docs.get_revision()}:{self._corpus_version_counter}"
 
     def increment_corpus_version(self) -> int:
         """Increment corpus version counter on any corpus change.
@@ -935,6 +966,10 @@ class HybridRetrievalEngine:
         self._doc_content_hashes[doc_id] = content_hash
 
     def clear_cache(self, include_disk: bool = True) -> bool:
+        with self._mutating_index():
+            return self._clear_cache(include_disk)
+
+    def _clear_cache(self, include_disk: bool = True) -> bool:
         """Clear all cached indexes and reset to fresh state.
 
         Args:
@@ -955,21 +990,21 @@ class HybridRetrievalEngine:
 
         # Clear in-memory indexes
         with self._index_lock:
-            self._chunks = []
-            self._embeddings = None
-            self._bm25 = None
-            self._tokenized_corpus = []
-            self._trees = {}
-            self._graph = {}
-            self._doc_content_hashes = {}
-
-        # Increment corpus version to invalidate query caches
-        self.increment_corpus_version()
+            self._reset_index_data()
 
         print("HybridRetrievalEngine: Cache cleared")
         return True
 
     def build(
+        self,
+        on_progress: Callable[[str, int, int, str | None], None] | None = None,
+    ) -> None:
+        # Serialize mutations and mark both boundaries. Queries may run while
+        # an index is being built, but must never reuse its old ordinal scores.
+        with self._mutating_index():
+            self._build_index(on_progress)
+
+    def _build_index(
         self,
         on_progress: Callable[[str, int, int, str | None], None] | None = None,
     ) -> None:
@@ -981,7 +1016,10 @@ class HybridRetrievalEngine:
                         current: Current item being processed (0-indexed)
                         total: Total items to process
         """
-        docs = self._docs.list()
+        docs = [Document(doc.id, doc.title, doc.text, dict(doc.metadata)) for doc in self._docs.list()]
+        with self._index_lock:
+            self._reset_index_data()
+            self._indexed_source_hashes = self._source_hashes(docs)
         print(f"HybridRetrievalEngine: Building index for {len(docs)} documents...")
 
         def emit(stage: str, current: int, total: int) -> None:
@@ -1183,12 +1221,20 @@ class HybridRetrievalEngine:
             emit("saving_index", 1, 1)
 
     def index_documents(self, docs: list[Document]) -> None:
+        if not docs:
+            return
+        with self._mutating_index():
+            self._index_documents(docs)
+
+    def _index_documents(self, docs: list[Document]) -> None:
         """Incrementally index new/updated documents without full rebuild."""
         if not docs:
             return
+        docs = [Document(doc.id, doc.title, doc.text, dict(doc.metadata)) for doc in docs]
 
         doc_ids = {doc.id for doc in docs if doc.id}
         with self._index_lock:
+            self._indexed_source_hashes.update(self._source_hashes(docs))
             if doc_ids and self._chunks:
                 keep_indices = [
                     i
@@ -1248,6 +1294,13 @@ class HybridRetrievalEngine:
                 new_texts.append(chunk.text)
 
         if not new_texts:
+            with self._index_lock:
+                self._build_field_tokens(self._docs.list())
+                self._graph_ready = False
+                self._graph_rag = None
+                self._graph_failed = False
+            if self._persist_path and self._chunks:
+                self.save_index()
             return
 
         # Dense embeddings (append-only)
@@ -1340,7 +1393,6 @@ class HybridRetrievalEngine:
         with self._index_lock:
             self._chunks.extend(new_chunks)
             self._build_field_tokens(self._docs.list())
-        self.increment_corpus_version()
 
         if self._persist_path and self._chunks:
             self.save_index()
@@ -1355,14 +1407,18 @@ class HybridRetrievalEngine:
                     self._index_persistence = IndexPersistence(self._persist_path)
         return self._index_persistence
 
-    def _compute_versions(self) -> tuple[str, str]:
+    def _source_hashes(self, docs: list[Document]) -> dict[str, str]:
+        return {doc.id: self.compute_content_hash(doc.text) for doc in docs}
+
+    def _compute_versions(self, source_hashes: dict[str, str] | None = None) -> tuple[str, str]:
         """Compute corpus version and config hash for cache invalidation."""
         import hashlib
         import json
 
-        # Corpus version from document IDs
-        doc_ids = sorted(d.id for d in self._docs.list())
-        corpus_str = ",".join(doc_ids)
+        # IDs alone do not detect replacing a document's text. Include the
+        # indexed source fingerprint so a restart cannot load stale passages.
+        sources = sorted((self._source_hashes(self._docs.list()) if source_hashes is None else source_hashes).items())
+        corpus_str = json.dumps(sources, separators=(",", ":"))
         corpus_version = hashlib.sha256(corpus_str.encode()).hexdigest()[:16]
 
         # Config hash from retrieval config
@@ -1371,6 +1427,8 @@ class HybridRetrievalEngine:
             "chunk_size": self._config.chunk_size,
             "chunk_overlap": self._config.chunk_overlap,
             "chunking_strategy": str(self._config.chunking_strategy),
+            # Rebuild legacy persisted chunks with reconstructed/invalid spans.
+            "chunking_version": "source_spans_v2",
         }
         config_str = json.dumps(config_dict, sort_keys=True)
         config_hash = hashlib.sha256(config_str.encode()).hexdigest()[:16]
@@ -1378,6 +1436,10 @@ class HybridRetrievalEngine:
         return corpus_version, config_hash
 
     def save_index(self, index_name: str = "default") -> bool:
+        with self._index_write_lock:
+            return self._save_index(index_name)
+
+    def _save_index(self, index_name: str = "default") -> bool:
         """Save current index to disk for fast reload."""
         persistence = self._get_persistence()
         if not persistence:
@@ -1388,6 +1450,7 @@ class HybridRetrievalEngine:
             embeddings = self._embeddings
             bm25 = self._bm25
             tokenized_corpus = list(self._tokenized_corpus)
+            indexed_sources = dict(self._indexed_source_hashes)
             trees = (
                 {id: t.to_dict() for id, t in self._trees.items()}
                 if self._trees
@@ -1407,14 +1470,17 @@ class HybridRetrievalEngine:
 
         from .persistence import IndexMetadata
 
-        corpus_version, config_hash = self._compute_versions()
+        corpus_version, config_hash = self._compute_versions(indexed_sources)
+        if corpus_version != self._compute_versions()[0]:
+            print("HybridRetrievalEngine: Source changed during indexing; not saving stale snapshot")
+            return False
         self._corpus_version = corpus_version
         self._config_hash = config_hash
 
         metadata = IndexMetadata(
             corpus_version=corpus_version,
             config_hash=config_hash,
-            chunk_count=len(self._chunks),
+            chunk_count=len(chunks),
             created_at=time.time(),
             model_name=self._config.embedding_model,
         )
@@ -1476,12 +1542,22 @@ class HybridRetrievalEngine:
         index_name: str = "default",
         on_progress: Callable[[str, int, int, str | None], None] | None = None,
     ) -> bool:
+        with self._mutating_index():
+            return self._load_index(index_name, on_progress)
+
+    def _load_index(
+        self,
+        index_name: str = "default",
+        on_progress: Callable[[str, int, int, str | None], None] | None = None,
+    ) -> bool:
         """Load index from disk if valid for current corpus/config."""
         persistence = self._get_persistence()
         if not persistence:
             return False
 
-        corpus_version, config_hash = self._compute_versions()
+        docs = [Document(doc.id, doc.title, doc.text, dict(doc.metadata)) for doc in self._docs.list()]
+        source_hashes = self._source_hashes(docs)
+        corpus_version, config_hash = self._compute_versions(source_hashes)
 
         # Check if saved index is valid
         if not persistence.is_valid(index_name, corpus_version, config_hash):
@@ -1493,12 +1569,21 @@ class HybridRetrievalEngine:
             embeddings, chunks, metadata = persistence.load_dense_index(index_name)
             if embeddings is None or chunks is None:
                 return False
+            sources = {doc.id: doc.text for doc in docs}
+            if len(embeddings) != len(chunks) or any(
+                doc_id not in sources or not 0 <= chunk.start_char <= chunk.end_char <= len(sources[doc_id])
+                or sources[doc_id][chunk.start_char:chunk.end_char] != chunk.text
+                for doc_id, chunk in chunks
+            ):
+                print("HybridRetrievalEngine: Saved chunks do not match source spans; will rebuild")
+                return False
 
             with self._index_lock:
                 self._embeddings = embeddings
                 self._chunks = chunks
                 self._corpus_version = corpus_version
                 self._config_hash = config_hash
+                self._indexed_source_hashes = source_hashes
             print(f"HybridRetrievalEngine: Loaded dense index ({len(chunks)} chunks)")
         except Exception as e:
             print(f"HybridRetrievalEngine: Failed to load dense index: {e}")
@@ -1587,7 +1672,10 @@ class HybridRetrievalEngine:
                 print(f"HybridRetrievalEngine: Failed to load trees: {e}")
                 self._rebuild_trees_parallel()
 
-        docs = self._docs.list()
+        if self._compute_versions()[0] != corpus_version:
+            with self._index_lock:
+                self._reset_index_data()
+            return False
         with self._index_lock:
             self._doc_timestamps = {}
             for doc in docs:
@@ -1630,21 +1718,73 @@ class HybridRetrievalEngine:
         if on_progress:
             on_progress("building_hierarchy", len(docs), len(docs))
 
-    def _dense_search(self, query: str, top_k: int) -> list[tuple[int, float]]:
+    @contextmanager
+    def _mutating_index(self):
+        """Mark nested index mutations without blocking readers on model work."""
+        with self._index_write_lock:
+            with self._index_lock:
+                self._index_generation += 1
+                self._index_mutation_depth += 1
+                self._index_building = True
+            try:
+                yield
+            except BaseException:
+                # A failed writer may have replaced chunks before rebuilding
+                # sparse/dense state. Do not make that partial index queryable.
+                with self._index_lock:
+                    self._reset_index_data()
+                raise
+            finally:
+                with self._index_lock:
+                    self._index_generation += 1
+                    self._index_mutation_depth -= 1
+                    self._index_building = self._index_mutation_depth > 0
+                    if not self._index_building:
+                        self.increment_corpus_version()
+
+    def _reset_index_data(self) -> None:
+        """Reset every ordinal-dependent structure while holding _index_lock."""
+        self._chunks = []
+        self._embeddings = None
+        self._bm25 = None
+        self._tokenized_corpus = []
+        self._trees = {}
+        self._graph = {}
+        self._graph_rag = None
+        self._graph_ready = False
+        self._graph_failed = False
+        self._doc_content_hashes = {}
+        self._indexed_source_hashes = {}
+        self._doc_title_tokens = {}
+        self._doc_chunk_indices = {}
+        self._chunk_heading_tokens = {}
+        self._doc_timestamps = {}
+
+    def _check_index_generation(self, expected: int | None) -> None:
+        with self._index_lock:
+            if expected is not None and (self._index_building or self._index_generation != expected):
+                raise _IndexChangedDuringQuery("Retrieval index changed during query")
+
+    def _dense_search(
+        self, query: str, top_k: int, allowed_indices: set[int] | None = None,
+        expected_generation: int | None = None,
+    ) -> list[tuple[int, float]]:
         """Dense vector similarity search."""
         with self._index_lock:
+            self._check_index_generation(expected_generation)
             embedder = self._embedder
             embeddings = self._embeddings
+            cache_key = self._embedding_cache_key(query)
         if embedder is None or embeddings is None:
             self._last_cache = {"embedding_cache": "skipped"}
             return []
-        cached = self._cache_manager.embeddings.get(query)
+        cached = self._cache_manager.embeddings.get(cache_key)
         if cached is not None:
             query_embedding = np.array(cached)
             self._last_cache = {"embedding_cache": "hit"}
         else:
             query_embedding = embedder.encode([query], convert_to_numpy=True)[0]
-            self._cache_manager.embeddings.set(query, query_embedding.tolist())
+            self._cache_manager.embeddings.set(cache_key, query_embedding.tolist())
             self._last_cache = {"embedding_cache": "miss"}
 
         # Cosine similarity
@@ -1652,8 +1792,17 @@ class HybridRetrievalEngine:
             np.linalg.norm(embeddings, axis=1) * np.linalg.norm(query_embedding)
         )
 
-        top_indices = np.argsort(similarities)[::-1][:top_k]
+        indices = np.arange(len(similarities)) if allowed_indices is None else np.array(sorted(allowed_indices), dtype=int)
+        top_indices = indices[np.argsort(-similarities[indices], kind="stable")[:top_k]]
         return [(int(idx), float(similarities[idx])) for idx in top_indices]
+
+    def _embedding_cache_key(self, query: str) -> str:
+        """Keep shared float/binary query vectors within one model identity."""
+        import json
+
+        identity = [self._config.embedding_model, self._config.deployment_profile,
+                    self._config.backend_map.get("embedding", "")]
+        return json.dumps([identity, query], separators=(",", ":"))
 
     def _sparse_search(
         self,
@@ -1662,9 +1811,12 @@ class HybridRetrievalEngine:
         title_boost: float = 0.0,
         heading_boost: float = 0.0,
         proximity_weight: float = 0.0,
+        allowed_indices: set[int] | None = None,
+        expected_generation: int | None = None,
     ) -> list[tuple[int, float]]:
         """BM25 keyword search."""
         with self._index_lock:
+            self._check_index_generation(expected_generation)
             if self._bm25 is None:
                 return self._fallback_sparse_search(
                     query,
@@ -1672,17 +1824,37 @@ class HybridRetrievalEngine:
                     title_boost=title_boost,
                     heading_boost=heading_boost,
                     proximity_weight=proximity_weight,
+                    allowed_indices=allowed_indices,
+                    expected_generation=expected_generation,
                 )
 
             query_tokens = self._tokenize(query)
             scores = self._bm25.get_scores(query_tokens)
             query_terms = {t for t in self._tokenize_terms(query) if len(t) > 2}
-            top_indices = np.argsort(scores)[::-1][:top_k]
+            # Field and proximity scores must participate in candidate
+            # selection, rather than being added after a global top-k cutoff.
+            # BM25 already scores the whole corpus. Only expand its positive
+            # candidates for fields/proximity that can actually change a rank;
+            # avoid Python scoring and passage tokenization for every zero-hit
+            # chunk, while retaining title-only and below-cutoff matches.
+            indices = set(np.flatnonzero(np.asarray(scores) > 0).tolist())
+            if title_boost > 0:
+                for doc_id, terms in self._doc_title_tokens.items():
+                    if not query_terms.isdisjoint(terms):
+                        indices.update(self._doc_chunk_indices.get(doc_id, []))
+            if heading_boost > 0:
+                indices.update(idx for idx, terms in self._chunk_heading_tokens.items()
+                               if not query_terms.isdisjoint(terms))
+            if proximity_weight > 0 and len(query_terms) > 1:
+                term_records = getattr(self._bm25, "doc_freqs", self._tokenized_corpus)
+                candidates = range(len(scores)) if allowed_indices is None else allowed_indices
+                indices.update(idx for idx in candidates if idx not in indices
+                               and all(term in term_records[idx] for term in query_terms))
+            if allowed_indices is not None:
+                indices.intersection_update(allowed_indices)
             adjusted: list[tuple[int, float]] = []
-            for idx in top_indices:
+            for idx in sorted(indices):
                 base_score = float(scores[idx])
-                if base_score <= 0:
-                    continue
                 base_score += self._field_boost(
                     int(idx),
                     query_terms,
@@ -1692,14 +1864,14 @@ class HybridRetrievalEngine:
                 if proximity_weight > 0 and query_terms:
                     chunk_idx = int(idx)
                     if chunk_idx < len(self._chunks):
-                        chunk_terms = self._tokenize_terms(
-                            self._chunks[chunk_idx][1].text
-                        )
+                        chunk_terms = self._tokenized_corpus[chunk_idx]
                         base_score += proximity_weight * self._term_proximity(
                             query_terms, chunk_terms
                         )
-                adjusted.append((int(idx), base_score))
-            return adjusted
+                if base_score > 0:
+                    adjusted.append((int(idx), base_score))
+            adjusted.sort(key=lambda item: (-item[1], item[0]))
+            return adjusted[:top_k]
 
     def _fallback_sparse_search(
         self,
@@ -1708,9 +1880,12 @@ class HybridRetrievalEngine:
         title_boost: float = 0.0,
         heading_boost: float = 0.0,
         proximity_weight: float = 0.0,
+        allowed_indices: set[int] | None = None,
+        expected_generation: int | None = None,
     ) -> list[tuple[int, float]]:
         """Fallback sparse search using token overlap when BM25 isn't available."""
         with self._index_lock:
+            self._check_index_generation(expected_generation)
             if not self._tokenized_corpus:
                 return []
             query_terms = {t for t in self._tokenize_terms(query) if len(t) > 2}
@@ -1719,19 +1894,20 @@ class HybridRetrievalEngine:
                 return []
             scores = []
             for idx, tokens in enumerate(self._tokenized_corpus):
+                if allowed_indices is not None and idx not in allowed_indices:
+                    continue
                 overlap = query_tokens.intersection(tokens)
-                if overlap:
-                    base_score = float(len(overlap))
-                    base_score += self._field_boost(
+                base_score = float(len(overlap))
+                base_score += self._field_boost(
                         idx,
                         query_terms,
                         title_boost=title_boost,
                         heading_boost=heading_boost,
                     )
+                if base_score > 0:
                     if proximity_weight > 0 and query_terms and idx < len(self._chunks):
-                        chunk_terms = self._tokenize_terms(self._chunks[idx][1].text)
                         base_score += proximity_weight * self._term_proximity(
-                            query_terms, chunk_terms
+                            query_terms, tokens
                         )
                     scores.append((idx, base_score))
             if not scores:
@@ -1759,24 +1935,31 @@ class HybridRetrievalEngine:
             return list(self._chunks)
 
     def _literal_search(
-        self, query: str, top_k: int
+        self, query: str, top_k: int, allowed_indices: set[int] | None = None,
+        expected_generation: int | None = None,
     ) -> tuple[list[tuple[int, float]], int]:
         """Literal grep-style scoring for exact phrase/token matches."""
         with self._index_lock:
+            self._check_index_generation(expected_generation)
             if not self._chunks:
                 return [], 0
             cleaned = query.strip().lower()
             if not cleaned:
                 return [], 0
             tokens = [t for t in self._tokenize(cleaned) if len(t) > 2]
+            phrase_pattern = re.compile(r"(?<!\w)" + re.escape(cleaned) + r"(?!\w)")
             scores: list[tuple[int, float]] = []
             for idx, (_, chunk) in enumerate(self._chunks):
+                if allowed_indices is not None and idx not in allowed_indices:
+                    continue
                 text = chunk.text.lower()
                 score = 0.0
-                if cleaned and cleaned in text:
-                    score += 5.0 + text.count(cleaned)
+                phrase_hits = len(phrase_pattern.findall(text))
+                if phrase_hits:
+                    score += 5.0 + phrase_hits
                 if tokens:
-                    score += sum(1.0 for token in tokens if token in text)
+                    chunk_tokens = set(self._tokenized_corpus[idx])
+                    score += sum(1.0 for token in tokens if token in chunk_tokens)
                 if score > 0:
                     scores.append((idx, score))
             if not scores:
@@ -1808,7 +1991,8 @@ class HybridRetrievalEngine:
         return sorted_results
 
     def _rerank(
-        self, query: str, candidates: list[tuple[int, float]], top_k: int
+        self, query: str, candidates: list[tuple[int, float]], top_k: int,
+        expected_generation: int | None = None,
     ) -> list[tuple[int, float]]:
         """Rerank candidates using cross-encoder."""
         if self._reranker is None or not candidates:
@@ -1816,11 +2000,14 @@ class HybridRetrievalEngine:
 
         # Prepare query-document pairs
         pairs = []
+        pair_indices = []
         with self._index_lock:
+            self._check_index_generation(expected_generation)
             for idx, _ in candidates:
-                if idx < len(self._chunks):
+                if 0 <= idx < len(self._chunks):
                     _, chunk = self._chunks[idx]
                     pairs.append((query, chunk.text))
+                    pair_indices.append(idx)
 
         if not pairs:
             return candidates[:top_k]
@@ -1831,7 +2018,7 @@ class HybridRetrievalEngine:
 
             # Combine with indices
             reranked = [
-                (candidates[i][0], float(scores[i])) for i in range(len(scores))
+                (pair_indices[i], float(scores[i])) for i in range(len(scores))
             ]
             reranked.sort(key=lambda x: x[1], reverse=True)
 
@@ -1845,6 +2032,7 @@ class HybridRetrievalEngine:
         query: str,
         candidates: list[tuple[int, float]],
         top_k: int,
+        expected_generation: int | None = None,
     ) -> list[tuple[int, float]]:
         """Apply lightweight ColBERT-style late interaction reranking."""
         if not candidates or not self._config.use_colbert:
@@ -1860,6 +2048,7 @@ class HybridRetrievalEngine:
         scored: list[tuple[int, float]] = []
         limit = min(len(candidates), self._config.colbert_top_k)
         with self._index_lock:
+            self._check_index_generation(expected_generation)
             chunk_texts = [
                 (idx, self._chunks[idx][1].text)
                 for idx, _ in candidates[:limit]
@@ -1993,6 +2182,27 @@ class HybridRetrievalEngine:
         routing_params: dict[str, Any] | None = None,
         on_progress: Callable[[str, float], None] | None = None,
     ) -> list[RetrievalResult]:
+        """Retrieve against one index generation, retrying one concurrent update."""
+        for attempt in range(2):
+            try:
+                results = await self._query_once(text, top_k, document_ids, routing_params, on_progress)
+                if attempt:
+                    self._last_cache["index_changed"] = "retrieval_retried"
+                return results
+            except _IndexChangedDuringQuery:
+                if attempt:
+                    self._last_cache["index_changed"] = "retrieval_aborted"
+                    return []
+        return []
+
+    async def _query_once(
+        self,
+        text: str,
+        top_k: int = 5,
+        document_ids: list[str] | None = None,
+        routing_params: dict[str, Any] | None = None,
+        on_progress: Callable[[str, float], None] | None = None,
+    ) -> list[RetrievalResult]:
         """Execute hybrid retrieval query.
 
         1. Dense search for semantic matches
@@ -2005,6 +2215,8 @@ class HybridRetrievalEngine:
             if on_progress:
                 on_progress(msg, val)
 
+        if top_k <= 0:
+            return []
         if not self._chunks:
             emit("Building retrieval index...", 0.0)
             self.build()
@@ -2019,12 +2231,27 @@ class HybridRetrievalEngine:
         params_with_query.setdefault("query", text)
         overrides = self._normalize_routing_params(params_with_query)
         # Get candidates from both methods in parallel
-        rerank_k = self._config.rerank_top_k
+        # Keep evidence alternatives until all ranking stages have run. MMR
+        # cannot select diverse evidence from a pool already cut to top_k.
+        rerank_k = max(top_k, self._config.rerank_top_k)
+        if overrides["diversity"] > 0:
+            rerank_k = max(rerank_k, top_k * 4)
+        allowed_ids = set(document_ids) if document_ids else None
+        with self._index_lock:
+            generation = self._index_generation
+            source_revision = self._docs.get_revision()
+            self._check_index_generation(generation)
+            allowed_indices = (
+                {idx for idx, (doc_id, _) in enumerate(self._chunks) if doc_id in allowed_ids}
+                if allowed_ids is not None else None
+            )
+        if allowed_indices is not None and not allowed_indices:
+            return []
         loop = asyncio.get_event_loop()
 
         async def run_dense():
             emit("Semantic search (dense)...", 0.1)
-            return await loop.run_in_executor(None, self._dense_search, text, rerank_k)
+            return await loop.run_in_executor(None, self._dense_search, text, rerank_k, allowed_indices, generation)
 
         async def run_sparse():
             emit("Keyword search (sparse)...", 0.3)
@@ -2036,12 +2263,14 @@ class HybridRetrievalEngine:
                 overrides["title_boost"],
                 overrides["heading_boost"],
                 overrides.get("proximity_weight", 0.0),
+                allowed_indices,
+                generation,
             )
 
         async def run_literal():
             emit("Literal search...", 0.4)
             return await loop.run_in_executor(
-                None, self._literal_search, text, rerank_k
+                None, self._literal_search, text, rerank_k, allowed_indices, generation
             )
 
         dense_task = asyncio.create_task(run_dense())
@@ -2053,6 +2282,9 @@ class HybridRetrievalEngine:
             sparse_results,
             (literal_results, literal_hits),
         ) = await asyncio.gather(dense_task, sparse_task, literal_task)
+        self._check_index_generation(generation)
+        if self._docs.get_revision() != source_revision:
+            raise _IndexChangedDuringQuery("Source documents changed during retrieval")
 
         if literal_hits:
             self._last_cache["literal_hits"] = literal_hits
@@ -2078,15 +2310,16 @@ class HybridRetrievalEngine:
             fused = self._reciprocal_rank_fusion(result_lists, weights=weights)
         else:
             fused = result_lists[0]
+        fused = fused[:rerank_k]
 
         # Rerank if enabled (Slowest step, run in executor)
         if self._config.use_reranking and self._reranker:
             emit("Reranking candidates...", 0.6)
             final_results = await loop.run_in_executor(
-                None, self._rerank, text, fused, top_k
+                None, self._rerank, text, fused, rerank_k, generation
             )
         else:
-            final_results = fused[:top_k]
+            final_results = fused
 
         self._last_colbert_stats = {
             "applied": False,
@@ -2096,7 +2329,7 @@ class HybridRetrievalEngine:
         if self._config.use_colbert:
             emit("Applying ColBERT rerank...", 0.8)
             final_results = await loop.run_in_executor(
-                None, self._apply_colbert_rerank, text, final_results, top_k
+                None, self._apply_colbert_rerank, text, final_results, rerank_k, generation
             )
 
         emit("Finalizing results...", 0.9)
@@ -2117,9 +2350,11 @@ class HybridRetrievalEngine:
         # Build result objects
         id_to_doc = {doc.id: doc for doc in self._docs.list()}
         results: list[RetrievalResult] = []
-        allowed_ids = set(document_ids) if document_ids else None
 
         with self._index_lock:
+            self._check_index_generation(generation)
+            if self._docs.get_revision() != source_revision:
+                raise _IndexChangedDuringQuery("Source documents changed during retrieval")
             # Hierarchy/Graph Expansion (Phase 4/6)
             expanded_indices = {idx for idx, _ in final_results}
 
@@ -2151,6 +2386,9 @@ class HybridRetrievalEngine:
                     doc = id_to_doc.get(doc_id)
                     if not doc:
                         continue
+                    if self._indexed_source_hashes.get(doc_id) != self.compute_content_hash(doc.text) or not 0 <= chunk.start_char <= chunk.end_char <= len(doc.text) or doc.text[chunk.start_char:chunk.end_char] != chunk.text:
+                        self._last_cache["source_changed"] = "retrieval_aborted"
+                        return []
 
                     # 2. Hierarchy expansion (RAPTOR): Get parent summary
                     extra_context = []
@@ -2185,6 +2423,8 @@ class HybridRetrievalEngine:
                         )
                     )
 
+        if self._docs.get_revision() != source_revision:
+            raise _IndexChangedDuringQuery("Source documents changed during retrieval")
         return results
 
     def get_last_cache_info(self) -> dict[str, Any]:

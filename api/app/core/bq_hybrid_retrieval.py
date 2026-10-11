@@ -22,7 +22,7 @@ from .binary_vector_store import MilvusChunk, MilvusSearchResult, MilvusVectorSt
 from .bq_retrieval import BQRetrievalConfig, RetrievalDebug, RetrievalModeV2, RetrievalTimings
 from .chunking import Chunk
 from .documents import Document
-from .hybrid_retrieval import HybridConfig, HybridRetrievalEngine, RetrievalResult
+from .hybrid_retrieval import HybridConfig, HybridRetrievalEngine, RetrievalResult, _IndexChangedDuringQuery
 
 _last_bq_debug: contextvars.ContextVar[RetrievalDebug | None] = contextvars.ContextVar(
     "last_bq_debug", default=None
@@ -60,6 +60,10 @@ class BQHybridRetrievalEngine(HybridRetrievalEngine):
         enabled: bool | None = None,
         rebuild: bool = True,
     ) -> None:
+        with self._mutating_index():
+            self._set_bq_config(config, enabled, rebuild)
+
+    def _set_bq_config(self, config: BQRetrievalConfig, enabled: bool | None, rebuild: bool) -> None:
         """Update binary retrieval configuration and optionally rebuild the index."""
         previous = self._bq_config
         self._bq_config = config
@@ -247,9 +251,10 @@ class BQHybridRetrievalEngine(HybridRetrievalEngine):
         self,
         on_progress: Callable[[str, int, int, str | None], None] | None = None,
     ) -> None:
-        super().build(on_progress=on_progress)
-        if self._bq_enabled:
-            self._build_bq_index()
+        with self._mutating_index():
+            super().build(on_progress=on_progress)
+            if self._bq_enabled:
+                self._build_bq_index()
 
     def clear(self) -> bool:
         cleared = super().clear()
@@ -264,17 +269,23 @@ class BQHybridRetrievalEngine(HybridRetrievalEngine):
         index_name: str = "default",
         on_progress: Callable[[str, int, int, str | None], None] | None = None,
     ) -> bool:
-        loaded = super().load_index(index_name=index_name, on_progress=on_progress)
-        if loaded and self._bq_enabled:
-            self._build_bq_index()
-        return loaded
+        with self._mutating_index():
+            loaded = super().load_index(index_name=index_name, on_progress=on_progress)
+            if loaded and self._bq_enabled:
+                self._build_bq_index()
+            return loaded
 
     def index_documents(self, docs: list[Document]) -> None:
-        super().index_documents(docs)
-        if not self._bq_enabled:
-            return
-        doc_ids = {doc.id for doc in docs if doc.id}
-        self._reindex_bq_docs(doc_ids)
+        with self._mutating_index():
+            super().index_documents(docs)
+            if not self._bq_enabled:
+                return
+            doc_ids = {doc.id for doc in docs if doc.id}
+            self._reindex_bq_docs(doc_ids)
+
+    def _reset_index_data(self) -> None:
+        super()._reset_index_data()
+        self._bq_ready = False
 
     async def query(
         self,
@@ -284,9 +295,13 @@ class BQHybridRetrievalEngine(HybridRetrievalEngine):
         routing_params: dict[str, Any] | None = None,
         on_progress: Callable[[str, float], None] | None = None,
     ) -> list[RetrievalResult]:
-        if not text.strip():
+        if not text.strip() or top_k <= 0:
             _last_bq_debug.set(None)
             return []
+        with self._index_lock:
+            if self._index_building:
+                self._last_cache["index_changed"] = "retrieval_aborted"
+                return []
 
         if not self._should_use_binary(routing_params):
             _last_bq_debug.set(None)
@@ -302,7 +317,8 @@ class BQHybridRetrievalEngine(HybridRetrievalEngine):
             self.build()
 
         if not self._bq_ready:
-            self._build_bq_index()
+            with self._mutating_index():
+                self._build_bq_index()
 
         if not self._bq_ready:
             _last_bq_debug.set(RetrievalDebug(
@@ -325,6 +341,11 @@ class BQHybridRetrievalEngine(HybridRetrievalEngine):
             )
 
         loop = asyncio.get_event_loop()
+        with self._index_lock:
+            generation = self._index_generation
+            source_revision = self._docs.get_revision()
+            if self._index_building:
+                return []
         results, debug = await loop.run_in_executor(
             None,
             self._query_binary_sync,
@@ -333,6 +354,13 @@ class BQHybridRetrievalEngine(HybridRetrievalEngine):
             document_ids,
             routing_params,
         )
+        try:
+            self._check_index_generation(generation)
+            if self._docs.get_revision() != source_revision:
+                raise _IndexChangedDuringQuery("Source documents changed during binary retrieval")
+        except _IndexChangedDuringQuery:
+            self._last_cache["index_changed"] = "retrieval_aborted"
+            return []
         _last_bq_debug.set(debug)
         return results
 
@@ -345,15 +373,18 @@ class BQHybridRetrievalEngine(HybridRetrievalEngine):
         return self._bq_config.default_mode == RetrievalModeV2.BINARY
 
     def _embed_query_cached(self, query: str) -> list[float] | None:
-        if self._embedder is None:
+        with self._index_lock:
+            embedder = self._embedder
+            cache_key = self._embedding_cache_key(query)
+        if embedder is None:
             self._last_cache = {"embedding_cache": "skipped"}
             return None
-        cached = self._cache_manager.embeddings.get(query)
+        cached = self._cache_manager.embeddings.get(cache_key)
         if cached is not None:
             self._last_cache = {"embedding_cache": "hit"}
             return list(cached)
-        embedding = self._embedder.encode([query], convert_to_numpy=True)[0]
-        self._cache_manager.embeddings.set(query, embedding.tolist())
+        embedding = embedder.encode([query], convert_to_numpy=True)[0]
+        self._cache_manager.embeddings.set(cache_key, embedding.tolist())
         self._last_cache = {"embedding_cache": "miss"}
         return embedding.tolist()
 
@@ -409,6 +440,23 @@ class BQHybridRetrievalEngine(HybridRetrievalEngine):
             )
             return self._fallback_float32(query, top_k, document_ids, routing_params), debug
         timings.t_milvus_search_ms = (time.perf_counter() - search_start) * 1000
+
+        allowed = set(document_ids) if document_ids else None
+        sources = {doc.id: doc for doc in self._docs.list()}
+        valid_results = []
+        for result in results:
+            if allowed is not None and result.doc_id not in allowed:
+                continue
+            doc = sources.get(result.doc_id)
+            if doc is None:
+                continue
+            start = int(result.metadata.get("start_char", 0))
+            end = int(result.metadata.get("end_char", 0))
+            if self._indexed_source_hashes.get(doc.id) != self.compute_content_hash(doc.text) or not 0 <= start <= end <= len(doc.text) or doc.text[start:end] != result.text:
+                self._last_cache["source_changed"] = "retrieval_aborted"
+                return [], self._fallback_debug(top_k, timings, "Source changed before reindexing")
+            valid_results.append(result)
+        results = valid_results
 
         if self._bq_config.fallback_enabled:
             if len(results) < self._bq_config.fallback_min_results:
@@ -492,6 +540,11 @@ class BQHybridRetrievalEngine(HybridRetrievalEngine):
             doc = docs.get(result.doc_id)
             if not doc:
                 continue
+            start = int(result.metadata.get("start_char", 0))
+            end = int(result.metadata.get("end_char", 0))
+            if self._indexed_source_hashes.get(doc.id) != self.compute_content_hash(doc.text) or not 0 <= start <= end <= len(doc.text) or doc.text[start:end] != result.text:
+                self._last_cache["source_changed"] = "retrieval_aborted"
+                return []
 
             chunk_index = int(result.metadata.get("chunk_index", -1))
             extra_context: list[str] = []

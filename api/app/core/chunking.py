@@ -22,7 +22,7 @@ class ChunkingStrategy(str, Enum):
     FIXED = "fixed"           # Paragraph-based (original behavior)
     SEMANTIC = "semantic"     # Sentence-transformer boundary detection
     RECURSIVE = "recursive"   # Recursive character splitting
-    LATE = "late"             # Late chunking: embed full doc, pool per chunk window
+    LATE = "late"             # Non-overlapping windows; token-level late pooling is not yet wired
 
 
 @dataclass
@@ -35,48 +35,70 @@ class Chunk:
     metadata: dict[str, str] | None = None
 
 
+def _trim_span(text: str, start: int, end: int) -> tuple[int, int]:
+    """Trim boundary whitespace without changing coordinates in the source."""
+    while start < end and text[start].isspace():
+        start += 1
+    while end > start and text[end - 1].isspace():
+        end -= 1
+    return start, end
+
+
+def _segment_spans(text: str, separator: str) -> list[tuple[int, int]]:
+    """Locate segments directly; searching reconstructed text loses repeats/CRLF."""
+    spans = []
+    start = 0
+    for match in re.finditer(separator, text):
+        left, right = _trim_span(text, start, match.start())
+        if left < right:
+            spans.append((left, right))
+        start = match.end()
+    left, right = _trim_span(text, start, len(text))
+    if left < right:
+        spans.append((left, right))
+    return spans
+
+
+def _chunks_from_spans(
+    text: str, spans: list[tuple[int, int]], metadata: dict[str, str] | None = None
+) -> list[Chunk]:
+    chunks = []
+    for start, end in spans:
+        start, end = _trim_span(text, start, end)
+        if start < end:
+            # Trimming an overlap window that ends in whitespace can leave
+            # only text already covered by its predecessor. Keep useful
+            # overlap, but do not index a wholly contained duplicate.
+            if chunks and chunks[-1].start_char <= start and end <= chunks[-1].end_char:
+                continue
+            chunks.append(Chunk(
+                text=text[start:end], index=len(chunks), start_char=start,
+                end_char=end, metadata=dict(metadata) if metadata else None,
+            ))
+    return chunks or [Chunk(text="", index=0, start_char=0, end_char=0)]
+
+
 class FixedChunker:
-    """Original paragraph-based chunking (backward compatible)."""
+    """Paragraph-based chunking with exact source spans (backward compatible)."""
 
     def __init__(self, target_size: int = 800, overlap: int = 0) -> None:
+        if target_size <= 0:
+            raise ValueError("target_size must be positive")
         self._target_size = target_size
         self._overlap = overlap
 
     def chunk(self, text: str) -> list[Chunk]:
-        clean = text.replace("\r", "")
-        paragraphs = [p.strip() for p in clean.split("\n\n") if p.strip()]
-
-        chunks: list[Chunk] = []
-        current_texts: list[str] = []
-        current_len = 0
-        char_pos = 0
-
-        for para in paragraphs:
-            if current_len + len(para) > self._target_size and current_texts:
-                chunk_text = "\n".join(current_texts)
-                chunks.append(Chunk(
-                    text=chunk_text,
-                    index=len(chunks),
-                    start_char=char_pos - len(chunk_text),
-                    end_char=char_pos,
-                ))
-                current_texts = []
-                current_len = 0
-
-            current_texts.append(para)
-            current_len += len(para)
-            char_pos += len(para) + 2  # +2 for \n\n
-
-        if current_texts:
-            chunk_text = "\n".join(current_texts)
-            chunks.append(Chunk(
-                text=chunk_text,
-                index=len(chunks),
-                start_char=char_pos - len(chunk_text),
-                end_char=char_pos,
-            ))
-
-        return chunks if chunks else [Chunk(text=text.strip(), index=0, start_char=0, end_char=len(text))]
+        paragraphs = _segment_spans(text, r"\r?\n[ \t]*\r?\n")
+        spans = []
+        current: tuple[int, int] | None = None
+        for start, end in paragraphs:
+            if current is not None and end - current[0] > self._target_size:
+                spans.append(current)
+                current = None
+            current = (current[0] if current else start, end)
+        if current is not None:
+            spans.append(current)
+        return _chunks_from_spans(text, spans)
 
 
 class SemanticChunker:
@@ -94,6 +116,8 @@ class SemanticChunker:
         overlap_sentences: int = 1,
         similarity_threshold: float = 0.5,
     ) -> None:
+        if target_size <= 0:
+            raise ValueError("target_size must be positive")
         self._embedder = embedder
         self._target_size = target_size
         self._min_size = min_size
@@ -132,55 +156,23 @@ class SemanticChunker:
         return boundaries
 
     def chunk(self, text: str) -> list[Chunk]:
-        sentences = self._split_sentences(text)
-        if not sentences:
-            return [Chunk(text=text.strip(), index=0, start_char=0, end_char=len(text))]
-
-        # Find semantic boundaries
-        boundaries = self._find_semantic_boundaries(sentences)
-
-        # Create chunks respecting boundaries and size constraints
-        chunks: list[Chunk] = []
-        current_sentences: list[str] = []
-        current_len = 0
-        char_pos = 0
-
-        for i, sentence in enumerate(sentences):
-            is_boundary = i in boundaries
-            would_exceed = current_len + len(sentence) > self._target_size
-
-            # Create chunk if at boundary or size exceeded (and minimum met)
-            if (is_boundary or would_exceed) and current_len >= self._min_size:
-                chunk_text = " ".join(current_sentences)
-                chunks.append(Chunk(
-                    text=chunk_text,
-                    index=len(chunks),
-                    start_char=char_pos - len(chunk_text),
-                    end_char=char_pos,
-                ))
-                # Keep overlap sentences
-                if self._overlap_sentences > 0:
-                    current_sentences = current_sentences[-self._overlap_sentences:]
-                    current_len = sum(len(s) for s in current_sentences)
-                else:
-                    current_sentences = []
-                    current_len = 0
-
-            current_sentences.append(sentence)
-            current_len += len(sentence)
-            char_pos += len(sentence) + 1
-
-        # Final chunk
-        if current_sentences:
-            chunk_text = " ".join(current_sentences)
-            chunks.append(Chunk(
-                text=chunk_text,
-                index=len(chunks),
-                start_char=char_pos - len(chunk_text),
-                end_char=char_pos,
-            ))
-
-        return chunks if chunks else [Chunk(text=text.strip(), index=0, start_char=0, end_char=len(text))]
+        sentence_spans = _segment_spans(text, r"(?<=[.!?])\s+(?=[A-Z])")
+        if not sentence_spans:
+            return _chunks_from_spans(text, [])
+        sentences = [text[start:end] for start, end in sentence_spans]
+        boundaries = set(self._find_semantic_boundaries(sentences))
+        spans = []
+        current: list[tuple[int, int]] = []
+        for i, sentence_span in enumerate(sentence_spans):
+            current_size = current[-1][1] - current[0][0] if current else 0
+            would_exceed = bool(current and sentence_span[1] - current[0][0] > self._target_size)
+            if current and (i in boundaries or would_exceed) and current_size >= self._min_size:
+                spans.append((current[0][0], current[-1][1]))
+                current = current[-self._overlap_sentences:] if self._overlap_sentences > 0 else []
+            current.append(sentence_span)
+        if current:
+            spans.append((current[0][0], current[-1][1]))
+        return _chunks_from_spans(text, spans)
 
 
 class RecursiveChunker:
@@ -196,144 +188,86 @@ class RecursiveChunker:
         overlap: int = 50,
         separators: list[str] | None = None,
     ) -> None:
+        if target_size <= 0:
+            raise ValueError("target_size must be positive")
         self._target_size = target_size
         self._overlap = overlap
         self._separators = separators or ["\n\n", "\n", ". ", " ", ""]
 
-    def _split_recursive(self, text: str, separators: list[str]) -> list[str]:
-        """Recursively split text using hierarchy of separators."""
-        if not text.strip():
+    def _split_spans(
+        self, text: str, start: int, end: int, separators: list[str]
+    ) -> list[tuple[int, int]]:
+        start, end = _trim_span(text, start, end)
+        if start >= end:
             return []
+        if end - start <= self._target_size:
+            return [(start, end)]
+        if not separators or not separators[0]:
+            step = max(1, self._target_size - self._overlap)
+            spans = []
+            for i in range(start, end, step):
+                right = min(i + self._target_size, end)
+                spans.append((i, right))
+                if right == end:
+                    break
+            return spans
 
-        if len(text) <= self._target_size:
-            return [text]
+        separator, remaining = separators[0], separators[1:]
+        matches = list(re.finditer(re.escape(separator), text[start:end]))
+        if not matches:
+            return self._split_spans(text, start, end, remaining)
+        parts = []
+        cursor = start
+        for match in matches:
+            boundary = start + match.end()
+            parts.append((cursor, boundary))
+            cursor = boundary
+        if cursor < end:
+            parts.append((cursor, end))
 
-        if not separators:
-            # No more separators - force split at target size
-            return [text[i:i+self._target_size] for i in range(0, len(text), self._target_size - self._overlap)]
-
-        sep = separators[0]
-        remaining_seps = separators[1:]
-
-        if sep not in text:
-            return self._split_recursive(text, remaining_seps)
-
-        splits = text.split(sep)
-        result: list[str] = []
-        current = ""
-
-        for split in splits:
-            if len(current) + len(split) + len(sep) <= self._target_size:
-                current += (sep if current else "") + split
+        spans = []
+        current: tuple[int, int] | None = None
+        for left, right in parts:
+            left, right = _trim_span(text, left, right)
+            if left >= right:
+                continue
+            if current is not None and right - current[0] > self._target_size:
+                spans.append(current)
+                current = None
+            if right - left > self._target_size:
+                spans.extend(self._split_spans(text, left, right, remaining))
             else:
-                if current:
-                    result.append(current)
-                if len(split) > self._target_size:
-                    result.extend(self._split_recursive(split, remaining_seps))
-                else:
-                    current = split
+                current = (current[0] if current else left, right)
+        if current is not None:
+            spans.append(current)
+        return spans
 
-        if current:
-            result.append(current)
-
-        return result
+    def _split_recursive(self, text: str, separators: list[str]) -> list[str]:
+        """Compatibility helper; the main path retains source coordinates."""
+        return [text[start:end] for start, end in self._split_spans(text, 0, len(text), separators)]
 
     def chunk(self, text: str) -> list[Chunk]:
-        raw_chunks = self._split_recursive(text.replace("\r", ""), self._separators)
-
-        chunks: list[Chunk] = []
-        char_pos = 0
-
-        for _i, raw in enumerate(raw_chunks):
-            clean = raw.strip()
-            if clean:
-                chunks.append(Chunk(
-                    text=clean,
-                    index=len(chunks),
-                    start_char=char_pos,
-                    end_char=char_pos + len(clean),
-                ))
-            char_pos += len(raw)
-
-        return chunks if chunks else [Chunk(text=text.strip(), index=0, start_char=0, end_char=len(text))]
+        spans = self._split_spans(text, 0, len(text), self._separators)
+        return _chunks_from_spans(text, spans)
 
 
-class LateChunker:
-    """Late chunking: split into windows for post-embedding pooling.
+class LateChunker(RecursiveChunker):
+    """Non-overlapping source windows for a future late-pooling embedder.
 
-    Implements the splitting phase of late chunking (arXiv 2409.04701).
-    The full document is split into token-window chunks. At embedding time,
-    the retrieval engine should embed the full document with a long-context
-    model (e.g. BGE-M3, Jina v3) and pool token-level representations over
-    these chunk windows, preserving cross-chunk context.
-
-    This chunker produces clean, non-overlapping windows that align with
-    token boundaries. If no long-context model is available at embedding
-    time, the retrieval engine falls back to per-chunk embedding.
+    This implements the splitting stage only. The current retrieval engine
+    embeds windows independently; it does not perform contextual token pooling
+    from the full document required by arXiv 2409.04701.
     """
 
     def __init__(
-        self,
-        target_size: int = 500,
-        overlap: int = 0,  # Late chunking typically uses no overlap
+        self, target_size: int = 500, overlap: int = 0,
         separators: list[str] | None = None,
     ) -> None:
-        self._target_size = target_size
-        self._overlap = 0  # No overlap for late chunking; pooling handles context
-        self._separators = separators or ["\n\n", "\n", ". ", " ", ""]
+        super().__init__(target_size=target_size, overlap=0, separators=separators)
 
     def chunk(self, text: str) -> list[Chunk]:
-        clean = text.replace("\r", "")
-        # Use recursive splitting to get boundary-respecting windows
-        raw_chunks: list[str] = []
-        self._split_recursive(clean, self._separators, raw_chunks)
-
-        chunks: list[Chunk] = []
-        char_pos = 0
-        for raw in raw_chunks:
-            stripped = raw.strip()
-            if stripped:
-                chunks.append(Chunk(
-                    text=stripped,
-                    index=len(chunks),
-                    start_char=char_pos,
-                    end_char=char_pos + len(stripped),
-                    metadata={"late_chunking": "true"},
-                ))
-            char_pos += len(raw)
-
-        return chunks if chunks else [Chunk(text=text.strip(), index=0, start_char=0, end_char=len(text))]
-
-    def _split_recursive(self, text: str, separators: list[str], out: list[str]) -> None:
-        """Recursively split text, appending results to out."""
-        if not text.strip():
-            return
-        if len(text) <= self._target_size:
-            out.append(text)
-            return
-        if not separators:
-            # Force split at target size
-            for i in range(0, len(text), self._target_size):
-                out.append(text[i:i + self._target_size])
-            return
-        sep = separators[0]
-        remaining = separators[1:]
-        if sep not in text:
-            self._split_recursive(text, remaining, out)
-            return
-        splits = text.split(sep)
-        current = ""
-        for split in splits:
-            if len(current) + len(split) + len(sep) <= self._target_size:
-                current += (sep if current else "") + split
-            else:
-                if current:
-                    out.append(current)
-                if len(split) > self._target_size:
-                    self._split_recursive(split, remaining, out)
-                current = split
-        if current:
-            out.append(current)
+        spans = self._split_spans(text, 0, len(text), self._separators)
+        return _chunks_from_spans(text, spans, metadata={"late_chunking": "true"})
 
 
 def get_chunker(
@@ -366,7 +300,7 @@ def get_chunker(
     elif strategy == ChunkingStrategy.RECURSIVE:
         return RecursiveChunker(target_size=target_size, overlap=overlap)
     elif strategy == ChunkingStrategy.LATE:
-        # Late chunking uses no overlap; pooling handles cross-chunk context
+        # Late windows are non-overlapping; the embedder currently encodes each independently
         return LateChunker(target_size=target_size, overlap=0)
     else:
         return FixedChunker(target_size=target_size, overlap=overlap)
