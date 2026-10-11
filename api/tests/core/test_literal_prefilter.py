@@ -38,7 +38,7 @@ def test_absent_phrase_skips_regex_scan_but_keeps_token_matches(tmp_path, monkey
 
         return SimpleNamespace(findall=findall)
 
-    monkeypatch.setattr(hybrid, "re", SimpleNamespace(compile=compile_spy, findall=re.findall))
+    monkeypatch.setattr(hybrid, "re", SimpleNamespace(compile=compile_spy, findall=re.findall, escape=re.escape))
     ranked, total = engine._literal_search("orion launch", 10)
 
     assert ranked == [(2, 8.0), (1, 2.0), (3, 1.0)]
