@@ -38,7 +38,7 @@ from .evidence_contract import EvidenceContract
 
 # SOTA enhancements
 from .flare import FLAREConfig, FLAREGenerator
-from .gatherer import EvidenceChunk, Gatherer
+from .gatherer import EvidenceChunk, Gatherer, aggregate_evidence
 from .graph_rag import GraphRAG
 from .hallucination_firewall import HallucinationFirewall
 
@@ -842,16 +842,6 @@ class Orchestrator:
             except Exception:
                 logger.info("pipeline_step trace_id=%s name=%s", trace_id, step.name)
 
-        def dedupe_chunks(chunk_list: list) -> list:
-            """Deduplicate chunks by ID, keeping the highest score."""
-            seen: dict[str, Any] = {}
-            for chunk in chunk_list:
-                chunk_id = getattr(chunk, "id", str(id(chunk)))
-                current_best = seen.get(chunk_id)
-                if current_best is None or getattr(chunk, "score", 0) > getattr(current_best, "score", 0):
-                    seen[chunk_id] = chunk
-            return list(seen.values())
-
         cache_manager = get_cache_manager()
 
         # P0.1: Resolve query mode from parameter or config before cache lookup so
@@ -1545,6 +1535,8 @@ class Orchestrator:
                 missing_aspects=missing_aspects[:5],
             )
 
+            # Preserve the previous batch explicitly, including empty iterations.
+            previous_count = len(accumulated_chunks)
             # Add to accumulated chunks
             for chunk in iteration_chunks:
                 accumulated_chunks.append(chunk)
@@ -1556,11 +1548,12 @@ class Orchestrator:
             # Check stopping criteria
             if iteration > 0 and len(accumulated_chunks) > 0:
                 # Compute marginal gain
-                prev_chunk_dicts = [{"text": c.snippet, "score": c.score} for c in accumulated_chunks[:-len(iteration_chunks)]]
-                new_chunk_dicts = [{"text": c.snippet, "score": c.score} for c in iteration_chunks]
+                prev_chunk_dicts = [{"id": c.id, "text": c.snippet} for c in accumulated_chunks[:previous_count]]
+                new_chunk_dicts = [{"id": c.id, "text": c.snippet} for c in iteration_chunks]
                 marginal_gain = compute_marginal_gain(prev_chunk_dicts, new_chunk_dicts)
 
                 iteration_details["marginal_gain"] = marginal_gain
+                iteration_details["marginal_gain_contract"] = "novel_nonempty_fraction"
                 stop_threshold = getattr(plan, "stop_threshold", 0.1)
 
                 if marginal_gain < stop_threshold and coverage_sufficient:
@@ -1580,7 +1573,7 @@ class Orchestrator:
             iteration += 1
 
         all_chunks = accumulated_chunks
-        gatherer_details["total_iterations"] = iteration + 1
+        gatherer_details["total_iterations"] = len(gatherer_details["iterations"])
         gatherer_details["final_verdict"] = retrieval_verdict.value if retrieval_verdict else "unknown"
         gatherer_details["embedding_cache_hits"] = embedding_cache_hits
         gatherer_details["embedding_cache_misses"] = embedding_cache_misses
@@ -1613,19 +1606,12 @@ class Orchestrator:
             "sub_queries": gatherer_details["sub_queries"],
             "raptor_chunks_added": total_raptor_chunks,
             "graph_chunks_added": total_graph_chunks,
+            "aggregation_contract": "best_returned_rank_stable_ties",
         }
         precision_stats: dict[str, Any] = {}
         colbert_enabled = False
 
-        # Deduplicate chunks by ID, keeping highest score
-        seen: dict[str, Any] = {}
-        for chunk in all_chunks:
-            if chunk.id not in seen or chunk.score > seen[chunk.id].score:
-                seen[chunk.id] = chunk
-
-        chunks = list(seen.values())
-        # Sort by score descending
-        chunks.sort(key=lambda c: c.score, reverse=True)
+        chunks = aggregate_evidence(all_chunks)
 
         if not chunks:
             evidence = await self._gatherer.gather(
@@ -1634,15 +1620,14 @@ class Orchestrator:
                 document_ids=document_ids,
                 routing_params=routing_params,
             )
-            chunks = evidence.chunks
+            chunks = aggregate_evidence(evidence.chunks)
 
         # Multi-resolution expansion (parent/child context)
         extra_context: list = []
         if getattr(self._config.retrieval, "multi_resolution", False):
             extra_context = self._multi_resolution_expand(chunks, document_ids)
             if extra_context:
-                chunks.extend(extra_context)
-                chunks.sort(key=lambda c: c.score, reverse=True)
+                chunks = aggregate_evidence(chunks + extra_context)
 
         if document_ids:
             retrieval_details["document_filter"] = document_ids
@@ -2139,7 +2124,7 @@ The retrieved evidence contains some conflicting information. When you encounter
                 if not targeted_chunks:
                     break
                 chunks.extend(targeted_chunks)
-                chunks = dedupe_chunks(chunks)
+                chunks = aggregate_evidence(chunks)
                 contract_retries += 1
                 emit_progress(
                     contract_step_name,

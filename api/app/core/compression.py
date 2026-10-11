@@ -143,17 +143,15 @@ class ContextCompressor:
             sentences = self._split_sentences(chunk.snippet)
             for sentence in sentences:
                 score = self._score_sentence(sentence, query_terms)
-                # Boost sentences from higher-scored chunks
-                adjusted_score = score + (chunk.score * 0.3)
-
                 scored_passages.append(CitedPassage(
                     text=sentence,
                     chunk_id=chunk.id,
                     chunk_title=chunk.title,
-                    relevance_score=adjusted_score,
+                    relevance_score=score,
                 ))
 
-        # Sort by relevance
+        # Stable ties preserve the aggregated evidence order. Raw scores from
+        # different retrieval calls must not override sentence relevance.
         scored_passages.sort(key=lambda p: p.relevance_score, reverse=True)
 
         # Build compressed context respecting token limit

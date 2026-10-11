@@ -49,6 +49,10 @@ Existing persisted retrieval indexes are rebuilt once after this update; source
 documents are retained. The `late` setting currently splits windows and does
 not implement full-document contextual token pooling.
 
+The [iterative score contract](docs/iterative-score-contract.md) defines
+score-independent novelty stopping and aggregation by returned rank, while
+preserving query-local retrieval scores for diagnostics.
+
 ## Disposable demo
 
 ```bash

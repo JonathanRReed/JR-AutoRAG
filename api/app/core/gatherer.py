@@ -16,6 +16,28 @@ class EvidenceChunk:
     snippet: str
     score: float
     doc_id: str | None = None
+    # One-based position in one engine response, after reranking and MMR.
+    # score remains the query-local diagnostic supplied by that engine.
+    retrieval_rank: int | None = None
+
+
+def aggregate_evidence(chunks: list[EvidenceChunk]) -> list[EvidenceChunk]:
+    """Keep each ID's best returned rank; ties retain first-seen evidence.
+
+    Rank is an ordinal selection policy across retrieval calls, not calibrated
+    relevance. Unranked supplemental context follows ranked evidence in arrival
+    order. Repeated queries do not earn votes or inflate a chunk's priority.
+    """
+    def rank(chunk: EvidenceChunk) -> float:
+        return chunk.retrieval_rank if chunk.retrieval_rank is not None else float("inf")
+
+    seen: dict[str, EvidenceChunk] = {}
+    for chunk in chunks:
+        if not chunk.snippet.strip():
+            continue
+        if chunk.id not in seen or rank(chunk) < rank(seen[chunk.id]):
+            seen[chunk.id] = chunk
+    return sorted(seen.values(), key=rank)
 
 
 @dataclass
@@ -49,12 +71,14 @@ class Gatherer:
         if hasattr(self._retrieval, "get_last_cache_info"):
             cache_info = self._retrieval.get_last_cache_info()
         chunks = []
-        for result in results:
+        for rank, result in enumerate(results, 1):
             chunk_identifier = getattr(result, "chunk_id", None)
             if not chunk_identifier:
                 start_marker = getattr(result, "start_char", 0)
                 chunk_identifier = f"{result.document.id}-{start_marker}"
             snippet = getattr(result, "chunk_text", None) or result.document.text
+            if not snippet.strip():
+                continue
             wrapped_snippet = wrap_ingested_content(snippet, chunk_identifier)
             chunks.append(
                 EvidenceChunk(
@@ -63,6 +87,7 @@ class Gatherer:
                     snippet=wrapped_snippet,
                     score=result.score,
                     doc_id=result.document.id,
+                    retrieval_rank=rank,
                 )
             )
         coverage = min(1.0, len(chunks) / top_k) if top_k else 0.0

@@ -77,54 +77,34 @@ def compute_marginal_gain(
     existing_chunks: list[dict],
     new_chunks: list[dict],
 ) -> float:
-    """Compute marginal evidence gain from new retrieval iteration.
+    """Return novel nonempty chunks / nonempty returned chunks, in [0, 1].
 
-    Returns a score 0-1 indicating how much unique information the new
-    chunks add. Used for stop criteria in iterative retrieval.
-
-    Args:
-        existing_chunks: Previously retrieved chunks (each with 'text' and 'score')
-        new_chunks: Newly retrieved chunks from this iteration
-
-    Returns:
-        Marginal gain score (0 = all redundant, 1 = all new)
+    Raw retrieval scores are query-local diagnostics, never confidence. A
+    chunk is redundant if its ID or full case/whitespace-normalized text was
+    seen before, including earlier in this batch. IDs also survive snippet
+    trimming. Empty evidence adds no gain; this is an exact novelty heuristic,
+    not a measure of semantic information or answer quality.
     """
-    if not new_chunks:
-        return 0.0
+    def content(chunk: dict) -> str:
+        return " ".join((chunk.get("text", chunk.get("chunk_text", "")) or "").casefold().split())
 
-    if not existing_chunks:
-        return 1.0
-
-    # Get existing text content for deduplication
-    existing_texts = set()
-    for chunk in existing_chunks:
-        text = chunk.get("text", chunk.get("chunk_text", "")).lower()
-        # Use content hash for comparison (first 100 chars + length)
-        key = f"{text[:100]}_{len(text)}"
-        existing_texts.add(key)
-
-    # Count unique new chunks
+    seen_texts = {text for chunk in existing_chunks if (text := content(chunk))}
+    seen_ids = {chunk_id for chunk in existing_chunks
+                if content(chunk) and (chunk_id := chunk.get("id", chunk.get("chunk_id")))}
     unique_count = 0
-    score_improvement = 0.0
-
+    nonempty_count = 0
     for chunk in new_chunks:
-        text = chunk.get("text", chunk.get("chunk_text", "")).lower()
-        key = f"{text[:100]}_{len(text)}"
-
-        if key not in existing_texts:
+        text = content(chunk)
+        if not text:
+            continue
+        nonempty_count += 1
+        chunk_id = chunk.get("id", chunk.get("chunk_id"))
+        if text not in seen_texts and (not chunk_id or chunk_id not in seen_ids):
             unique_count += 1
-            # Weight by score
-            score_improvement += chunk.get("score", 0.5)
-
-    if unique_count == 0:
-        return 0.0
-
-    # Combine uniqueness ratio with score-weighted value
-    uniqueness = unique_count / len(new_chunks)
-    avg_new_score = score_improvement / unique_count
-
-    # Weighted combination: 70% uniqueness, 30% score
-    return 0.7 * uniqueness + 0.3 * avg_new_score
+        seen_texts.add(text)
+        if chunk_id:
+            seen_ids.add(chunk_id)
+    return unique_count / nonempty_count if nonempty_count else 0.0
 
 
 class SmartPlanner:
