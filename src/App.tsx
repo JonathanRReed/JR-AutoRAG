@@ -338,9 +338,18 @@ export function App() {
     currentSessionIdRef.current = currentSessionId;
   }, [currentSessionId]);
   const [currentTraceId, setCurrentTraceId] = useState<string | null>(null);
-  // Cancel must hit the same origin/key the stream was opened with, even if the
-  // user has since edited the draft or applied another connection.
-  const activeQueryTransport = useRef<{ baseUrl: string; apiKey: string; generation: number } | null>(null);
+  // Each Ask gets a query id. Cancel and cleanup compare that id, not only the
+  // connection generation, so a cancelled query cannot clear a newer one on the
+  // same URL/key. Origin/key stay bound to the stream for cancel POSTs.
+  type ActiveQueryTransport = {
+    queryId: number;
+    baseUrl: string;
+    apiKey: string;
+    generation: number;
+    controller: AbortController;
+  };
+  const queryIdSeq = useRef(0);
+  const activeQueryTransport = useRef<ActiveQueryTransport | null>(null);
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
   const [ingestTitle, setIngestTitle] = useState("Getting Started");
   const [ingestText, setIngestText] = useState("Paste onboarding doc content here...");
@@ -356,6 +365,17 @@ export function App() {
     elapsed_ms?: number;
     estimated_remaining_ms?: number;
   } | null>(null);
+  const discardActiveQuery = () => {
+    const active = activeQueryTransport.current;
+    if (!active) return null;
+    activeQueryTransport.current = null;
+    active.controller.abort();
+    setIsQuerying(false);
+    setActiveStage(null);
+    setProgress(null);
+    setCurrentTraceId(null);
+    return active;
+  };
   const [isEvaluating, setIsEvaluating] = useState(false);
   const [evaluationSummary, setEvaluationSummary] = useState("");
   const [selectedProfile, setSelectedProfile] = useState("Default");
@@ -916,6 +936,7 @@ export function App() {
     // for example admin-only config after switching to a read-only key.
     if (!retriesApplied) {
       connectionGeneration.current += 1;
+      discardActiveQuery();
       setConfig(null);
       setDocuments([]);
       setTraces([]);
@@ -1049,10 +1070,20 @@ export function App() {
     // 1. Determine the question to ask
     const currentQuestion = overrideQuestion || question;
     if (!currentQuestion.trim()) return;
+    const queryId = ++queryIdSeq.current;
     const queryGeneration = connectionGeneration.current;
-    const queryStillCurrent = () => queryGeneration === connectionGeneration.current;
-    const queryTransport = { baseUrl, apiKey, generation: queryGeneration };
+    const controller = new AbortController();
+    const queryTransport: ActiveQueryTransport = {
+      queryId,
+      baseUrl,
+      apiKey,
+      generation: queryGeneration,
+      controller,
+    };
     activeQueryTransport.current = queryTransport;
+    const ownsQuery = () => activeQueryTransport.current?.queryId === queryId;
+    const connectionStillCurrent = () => queryGeneration === connectionGeneration.current;
+    const mayApplyQueryUi = () => ownsQuery() && connectionStillCurrent();
 
     // NEW: Session persistence logic
     let localSessionId = currentSessionId;
@@ -1110,6 +1141,7 @@ export function App() {
         method: "POST",
         headers,
         body: JSON.stringify(payload),
+        signal: controller.signal,
       });
       if (!response.ok || !response.body) {
         throw new Error(await response.text());
@@ -1117,7 +1149,7 @@ export function App() {
 
       // Connection status stays with heartbeat/Connect ownership. A late stream
       // after a failed probe or a connection switch must not restore Connected.
-      if (!queryStillCurrent()) {
+      if (!mayApplyQueryUi()) {
         return;
       }
 
@@ -1132,6 +1164,14 @@ export function App() {
       let receivedResult = false;
 
       while (true) {
+        if (controller.signal.aborted || !ownsQuery()) {
+          try {
+            await reader.cancel();
+          } catch {
+            // Reader may already be closed by fetch abort.
+          }
+          break;
+        }
         const { value, done } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
@@ -1151,7 +1191,7 @@ export function App() {
             continue;
           }
           if (event.type === "step") {
-            if (queryStillCurrent() && localSessionId === currentSessionIdRef.current) {
+            if (mayApplyQueryUi() && localSessionId === currentSessionIdRef.current) {
               setQueryResult(prev => {
                 const base: QueryResponse = prev ?? {
                   answer: "",
@@ -1171,7 +1211,7 @@ export function App() {
           if (event.type === "token") {
             const text = event.data?.text ?? "";
             if (text) {
-              if (queryStillCurrent() && localSessionId === currentSessionIdRef.current) {
+              if (mayApplyQueryUi() && localSessionId === currentSessionIdRef.current) {
                 setQueryResult(prev => {
                   const base: QueryResponse = prev ?? {
                     answer: "",
@@ -1190,12 +1230,12 @@ export function App() {
             }
           }
           if (event.type === "stage") {
-            if (queryStillCurrent() && localSessionId === currentSessionIdRef.current) {
+            if (mayApplyQueryUi() && localSessionId === currentSessionIdRef.current) {
               setActiveStage(event.data?.name ?? null);
             }
           }
           if (event.type === "progress") {
-            if (queryStillCurrent() && localSessionId === currentSessionIdRef.current) {
+            if (mayApplyQueryUi() && localSessionId === currentSessionIdRef.current) {
               setProgress(event.data);
               if (event.data?.trace_id) {
                 setCurrentTraceId(event.data.trace_id);
@@ -1210,7 +1250,7 @@ export function App() {
               { role: "assistant", content: event.data.answer }
             ];
 
-            if (queryStillCurrent() && localSessionId === currentSessionIdRef.current) {
+            if (mayApplyQueryUi() && localSessionId === currentSessionIdRef.current) {
               setQueryResult(event.data);
               setStatus("Query succeeded");
               setActiveStage(null);
@@ -1220,7 +1260,7 @@ export function App() {
 
             // Session list keeps the answer under its session id; do not refresh
             // API data or toast when this stream's connection was replaced.
-            if (queryStillCurrent()) {
+            if (mayApplyQueryUi()) {
               setSavedSessions(prev => prev.map(s =>
                 s.id === localSessionId ? { ...s, history: updatedHistory, queryResult: event.data } : s
               ));
@@ -1235,16 +1275,23 @@ export function App() {
         }
       }
 
+      if (controller.signal.aborted || !ownsQuery()) {
+        return;
+      }
+
       if (!receivedResult) {
         throw new Error("Query ended before returning a result");
       }
     } catch (error) {
+      if (controller.signal.aborted || !ownsQuery()) {
+        return;
+      }
       console.error("Query execution error:", error);
       setStatus(`Query failed: ${toMessage(error)}`);
 
       // Attempt to save partial result if available
       setQueryResult((currentPartial) => {
-        if (queryStillCurrent() && currentPartial?.answer && localSessionId === currentSessionIdRef.current) {
+        if (mayApplyQueryUi() && currentPartial?.answer && localSessionId === currentSessionIdRef.current) {
           const partialAnswer = currentPartial.answer + "\n\n*[Generation interrupted due to error]*";
           const updatedHistory = [
             ...initialHistory,
@@ -1260,41 +1307,66 @@ export function App() {
 
       toast({ title: "Query interrupted", description: toMessage(error), variant: "error" });
     } finally {
-      if (activeQueryTransport.current?.generation === queryGeneration) {
+      if (activeQueryTransport.current?.queryId === queryId) {
         activeQueryTransport.current = null;
+        setIsQuerying(false);
+        setActiveStage(null);
+        setProgress(null);
+        setCurrentTraceId(null);
       }
-      setIsQuerying(false);
-      setActiveStage(null);
-      setProgress(null);
-      setCurrentTraceId(null);
     }
   };
 
   const handleCancelQuery = async () => {
-    if (!currentTraceId) return;
     const transport = activeQueryTransport.current;
-    const cancelUrl = transport
-      ? buildApiUrl(transport.baseUrl, `/query/cancel?trace_id=${currentTraceId}`)
-      : buildUrl(`/query/cancel?trace_id=${currentTraceId}`);
-    const cancelHeaders = transport
-      ? (() => {
-          const merged = new Headers();
-          const trimmedKey = transport.apiKey.trim();
-          if (trimmedKey) merged.set("X-API-Key", trimmedKey);
-          return merged;
-        })()
-      : buildHeaders();
-    try {
-      await fetch(cancelUrl, { method: "POST", headers: cancelHeaders });
+    if (!transport) return;
+    const cancelledQueryId = transport.queryId;
+    const traceId = currentTraceId;
+    const cancelUrl = buildApiUrl(transport.baseUrl, `/query/cancel${traceId ? `?trace_id=${traceId}` : ""}`);
+    const cancelHeaders = (() => {
+      const merged = new Headers();
+      const trimmedKey = transport.apiKey.trim();
+      if (trimmedKey) merged.set("X-API-Key", trimmedKey);
+      return merged;
+    })();
+
+    // Stop the local stream immediately and release ownership so a same-connection
+    // Ask can start. A delayed cancel response must not clear that newer query.
+    if (activeQueryTransport.current?.queryId === cancelledQueryId) {
+      discardActiveQuery();
+    } else {
+      transport.controller.abort();
+    }
+
+    if (!traceId) {
       setStatus("Query cancelled");
       toast({ title: "Query cancelled", variant: "info" });
-      setIsQuerying(false);
-      setActiveStage(null);
-      setProgress(null);
-      setCurrentTraceId(null);
-      activeQueryTransport.current = null;
+      return;
+    }
+
+    const noNewerQuery = () => queryIdSeq.current === cancelledQueryId;
+
+    try {
+      const response = await fetch(cancelUrl, { method: "POST", headers: cancelHeaders });
+      if (!response.ok) {
+        const detail = await response.text().catch(() => "");
+        const message = detail.trim() || `Cancel failed (${response.status})`;
+        if (noNewerQuery()) {
+          setStatus(`Cancel failed: ${message}`);
+          toast({ title: "Cancel failed", description: message, variant: "error" });
+        }
+        return;
+      }
+      if (noNewerQuery()) {
+        setStatus("Query cancelled");
+        toast({ title: "Query cancelled", variant: "info" });
+      }
     } catch (e) {
       console.error("Cancel failed", e);
+      if (noNewerQuery()) {
+        setStatus(`Cancel failed: ${toMessage(e)}`);
+        toast({ title: "Cancel failed", description: toMessage(e), variant: "error" });
+      }
     }
   };
 

@@ -51,7 +51,18 @@ type Server = {
   streamGate?: Promise<unknown>;
   streamIgnoreAbort?: boolean;
   streamEvents?: Array<Record<string, unknown>>;
+  // Pushable SSE body for cancel / ownership races. When set, /query/stream
+  // returns this live stream instead of a one-shot events payload.
+  liveStream?: boolean;
+  cancelGate?: Promise<unknown>;
+  cancelStatus?: number;
+  cancelIgnoreAbort?: boolean;
 };
+type LiveStreamHandle = {
+  push: (events: Array<Record<string, unknown>>) => void;
+  close: () => void;
+};
+let liveStreams: LiveStreamHandle[] = [];
 const ADMIN_PATHS = ["/config", "/monitoring/traces", "/providers/local"];
 
 const postureFor = (server: Server) =>
@@ -212,7 +223,43 @@ const fakeFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   if (server.key !== null && key === null) return json(401, { detail: "API key required. Provide X-API-Key header." });
   const readOnly = key !== null && key === server.readKey && !ADMIN_PATHS.includes(url.pathname);
   if (server.key !== null && key !== server.key && !readOnly) return json(403, { detail: "Invalid API key or insufficient permissions." });
+  if (url.pathname === "/query/cancel") {
+    await waitGate(server.cancelGate, server.cancelIgnoreAbort ? undefined : signal);
+    return json(server.cancelStatus ?? 200, { ok: true });
+  }
   if (url.pathname === "/query/stream") {
+    if (server.liveStream) {
+      const encoder = new TextEncoder();
+      let streamController!: ReadableStreamDefaultController<Uint8Array>;
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          streamController = controller;
+        },
+        cancel() {
+          try {
+            streamController.close();
+          } catch {
+            // already closed
+          }
+        },
+      });
+      const handle: LiveStreamHandle = {
+        push(events) {
+          for (const event of events) {
+            streamController.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+          }
+        },
+        close() {
+          try {
+            streamController.close();
+          } catch {
+            // already closed
+          }
+        },
+      };
+      liveStreams.push(handle);
+      return new Response(stream, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+    }
     const events = server.streamEvents ?? [
       { type: "stage", data: { name: "answering" } },
       {
@@ -317,6 +364,7 @@ beforeEach(() => {
   sessionStorage.clear();
   localStorage.clear();
   log = [];
+  liveStreams = [];
   serverA = { health: 200, key: GOOD_KEY, readKey: null, provider: "Provider A", docs: [], gates: {} };
   serverB = { health: 200, key: GOOD_KEY, readKey: null, provider: "Provider B", docs: [], gates: {} };
   setConnectionCheckTimeoutMsForTests(null);
@@ -373,6 +421,34 @@ const askQuestion = async (question: string) => {
   });
   await settle();
 };
+
+const clickCancel = async () => {
+  const button = [...container.querySelectorAll("button")].find(node => node.textContent?.trim() === "Cancel") as
+    | HTMLButtonElement
+    | undefined;
+  if (!button) throw new Error("Cancel button not found");
+  await act(async () => {
+    button.click();
+  });
+  await settle();
+};
+
+const resultEvent = (answer: string, traceId: string) => ({
+  type: "result",
+  data: {
+    answer,
+    chunks: [],
+    sources: [],
+    trace_id: traceId,
+    metrics: {},
+    steps: [],
+  },
+});
+
+const progressEvent = (traceId: string) => ({
+  type: "progress",
+  data: { stage: "answering", message: "working", trace_id: traceId },
+});
 
 describe("API connection lifecycle", () => {
   test("editing the URL does not contact the new origin until Connect", async () => {
@@ -1202,6 +1278,8 @@ describe("Status ownership and permission-scoped refresh", () => {
     expect(container.textContent).not.toContain("stale answer from origin A");
     // refreshAll from the stale stream must not push origin A admin config back.
     expect(providerShown()).not.toBe("Provider A");
+    expect(toasts().some(t => t.includes("Query interrupted"))).toBe(false);
+    expect(container.textContent).not.toMatch(/Query failed:/);
   });
 
   test("admin-to-read-only switch loads documents even when admin endpoints are forbidden", async () => {
@@ -1266,5 +1344,169 @@ describe("Status ownership and permission-scoped refresh", () => {
     await tickHeartbeat();
     expect(connectButton().textContent).toBe("Connected");
     expect(providerShown()).toBe("Provider A");
+  });
+});
+
+describe("Query ownership", () => {
+  test("an old stream finalization after a newer same-connection query starts does not overwrite it", async () => {
+    storeSessionKey(GOOD_KEY);
+    await mount();
+    expect(connectButton().textContent).toBe("Connected");
+
+    const first = deferred();
+    serverA.streamGate = first.promise;
+    serverA.streamIgnoreAbort = true;
+    await askQuestion("first ownership question");
+    expect(log.some(entry => entry.path === "/query/stream")).toBe(true);
+
+    await clickCancel();
+    expect(container.querySelector('button[aria-label="Ask grounded question"]')).toBeTruthy();
+
+    serverA.streamGate = undefined;
+    serverA.streamIgnoreAbort = false;
+    serverA.streamEvents = [
+      { type: "stage", data: { name: "answering" } },
+      resultEvent("second query answer", "trace-second"),
+    ];
+    await askQuestion("second ownership question");
+    await settle();
+    expect(container.textContent).toContain("second query answer");
+
+    serverA.streamEvents = [
+      { type: "stage", data: { name: "answering" } },
+      resultEvent("stale first query answer", "trace-first"),
+    ];
+    await release(first);
+    await settle();
+
+    expect(container.textContent).toContain("second query answer");
+    expect(container.textContent).not.toContain("stale first query answer");
+    expect(toasts().some(t => t.includes("Query interrupted"))).toBe(false);
+    expect(container.querySelector('button[aria-label="Query running"]')).toBeNull();
+  });
+
+  test("cancel then an immediate same-connection query keeps the new stream", async () => {
+    storeSessionKey(GOOD_KEY);
+    serverA.liveStream = true;
+    await mount();
+
+    await askQuestion("live cancel question");
+    expect(liveStreams.length).toBe(1);
+    liveStreams[0]!.push([progressEvent("trace-live-1"), { type: "stage", data: { name: "answering" } }]);
+    await settle();
+    expect(container.querySelector("button") && [...container.querySelectorAll("button")].some(b => b.textContent?.trim() === "Cancel")).toBe(true);
+
+    await clickCancel();
+    expect(log.some(entry => entry.path === "/query/cancel" && entry.origin === ORIGIN_A)).toBe(true);
+
+    serverA.liveStream = false;
+    serverA.streamEvents = [
+      { type: "stage", data: { name: "answering" } },
+      resultEvent("post-cancel answer", "trace-live-2"),
+    ];
+    await askQuestion("after cancel question");
+    await settle();
+
+    expect(container.textContent).toContain("post-cancel answer");
+    expect(toasts().some(t => t.includes("Query cancelled"))).toBe(true);
+    liveStreams[0]!.push([resultEvent("cancelled stream answer", "trace-live-1")]);
+    liveStreams[0]!.close();
+    await settle();
+    expect(container.textContent).not.toContain("cancelled stream answer");
+    expect(container.textContent).toContain("post-cancel answer");
+  });
+
+  test("a late cancel response does not clear a newer query", async () => {
+    storeSessionKey(GOOD_KEY);
+    serverA.liveStream = true;
+    const cancelHold = deferred();
+    serverA.cancelGate = cancelHold.promise;
+    serverA.cancelIgnoreAbort = true;
+    await mount();
+
+    await askQuestion("late cancel first");
+    liveStreams[0]!.push([progressEvent("trace-late-1")]);
+    await settle();
+
+    await clickCancel();
+    expect(log.some(entry => entry.path === "/query/cancel")).toBe(true);
+
+    serverA.liveStream = false;
+    serverA.streamEvents = [
+      { type: "stage", data: { name: "answering" } },
+      resultEvent("newer query after late cancel", "trace-late-2"),
+    ];
+    await askQuestion("late cancel second");
+    await settle();
+    expect(container.textContent).toContain("newer query after late cancel");
+    expect(container.querySelector('button[aria-label="Query running"]')).toBeNull();
+
+    // Begin a third in-flight query so a late cancel clear would be visible.
+    serverA.liveStream = true;
+    await askQuestion("late cancel third in flight");
+    expect(liveStreams.length).toBeGreaterThanOrEqual(2);
+    liveStreams[liveStreams.length - 1]!.push([progressEvent("trace-late-3"), { type: "stage", data: { name: "gatherer" } }]);
+    await settle();
+    expect(container.querySelector('button[aria-label="Query running"]')).toBeTruthy();
+    expect(container.textContent).toMatch(/gatherer|Running|Streaming/i);
+
+    await release(cancelHold);
+    await settle();
+
+    expect(container.querySelector('button[aria-label="Query running"]')).toBeTruthy();
+    expect(container.textContent).toMatch(/gatherer|Running|Streaming/i);
+  });
+
+  test("cancel HTTP failure does not announce cancellation or clear a newer query", async () => {
+    storeSessionKey(GOOD_KEY);
+    serverA.liveStream = true;
+    const cancelHold = deferred();
+    serverA.cancelGate = cancelHold.promise;
+    serverA.cancelIgnoreAbort = true;
+    serverA.cancelStatus = 500;
+    await mount();
+
+    await askQuestion("cancel failure first");
+    liveStreams[0]!.push([progressEvent("trace-fail-1")]);
+    await settle();
+    await clickCancel();
+
+    serverA.liveStream = false;
+    serverA.streamEvents = [
+      { type: "stage", data: { name: "answering" } },
+      resultEvent("survives cancel failure", "trace-fail-2"),
+    ];
+    await askQuestion("cancel failure second");
+    await settle();
+    expect(container.textContent).toContain("survives cancel failure");
+
+    await release(cancelHold);
+    await settle();
+
+    expect(toasts().some(t => t.includes("Query cancelled"))).toBe(false);
+    expect(container.textContent).toContain("survives cancel failure");
+    expect(toasts().some(t => t.includes("Cancel failed"))).toBe(false);
+  });
+
+  test("old stream rejection after URL/key switch does not toast Query interrupted", async () => {
+    storeSessionKey(GOOD_KEY);
+    await mount();
+    const stream = deferred();
+    serverA.streamGate = stream.promise;
+    serverA.streamIgnoreAbort = true;
+    await askQuestion("switch reject question");
+
+    await type("API base URL", ORIGIN_B);
+    await type("API key", GOOD_KEY);
+    await clickConnect();
+    expect(connectButton().textContent).toBe("Connected");
+
+    serverA.streamEvents = [resultEvent("should not appear", "trace-switch")];
+    await release(stream);
+    await settle();
+
+    expect(container.textContent).not.toContain("should not appear");
+    expect(toasts().some(t => t.includes("Query interrupted"))).toBe(false);
+    expect(providerShown()).toBe("Provider B");
   });
 });
