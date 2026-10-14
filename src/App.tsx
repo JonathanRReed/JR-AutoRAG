@@ -22,7 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/components/ui/toast";
 import { LoadingSpinner } from "@/components/ui/loading";
-import { buildApiUrl, resolveDefaultApiBaseUrl } from "@/lib/api-url";
+import { buildApiUrl, normalizeApiBaseUrl, resolveDefaultApiBaseUrl } from "@/lib/api-url";
 
 const AdvancedRAGSettings = lazy(() => import("@/components/features/AdvancedRAGSettings").then(m => ({ default: m.AdvancedRAGSettings })));
 const ChatInterface = lazy(() => import("@/components/features/ChatInterface").then(m => ({ default: m.ChatInterface })));
@@ -73,6 +73,42 @@ const toMessage = (error: unknown) => {
   return String(error);
 };
 
+const originOf = (value: string) => {
+  try {
+    return new URL(normalizeApiBaseUrl(value)).origin;
+  } catch {
+    return null;
+  }
+};
+
+type ConnectionCheck = { ok: true } | { ok: false; reason: string };
+
+// /healthz is public. /security/posture is a small GET that needs only the
+// "read" scope, so a 200 there means this key works, or that auth is off.
+const checkConnection = async (baseUrl: string, apiKey: string, signal: AbortSignal): Promise<ConnectionCheck> => {
+  try {
+    const health = await fetch(buildApiUrl(baseUrl, "/healthz"), { method: "GET", signal });
+    if (!health.ok) {
+      return { ok: false, reason: `returned HTTP ${health.status} for /healthz` };
+    }
+    const key = apiKey.trim();
+    const probe = await fetch(buildApiUrl(baseUrl, "/security/posture"), {
+      method: "GET",
+      headers: key ? { "X-API-Key": key } : undefined,
+      signal,
+    });
+    if (probe.status === 401 || probe.status === 403) {
+      return { ok: false, reason: `rejected the API key (HTTP ${probe.status})` };
+    }
+    if (!probe.ok) {
+      return { ok: false, reason: `returned HTTP ${probe.status} for /security/posture` };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, reason: "is unreachable" };
+  }
+};
+
 const readStoredJson = <T,>(key: string, fallback: T): T => {
   if (typeof window === "undefined") {
     return fallback;
@@ -113,13 +149,23 @@ const validTabs = tabs.map(tab => tab.id);
 
 export function App() {
   const { toast } = useToast();
+  // Applied connection: every request uses these. The inputs edit the draft
+  // values, which are applied only when the user clicks Connect.
   const [baseUrl, setBaseUrl] = useState(defaultBaseUrl);
   const [apiKey, setApiKey] = useState(() => {
     if (typeof window === "undefined") {
       return "";
     }
+    // Only reuse a session key that was saved for the origin we start on.
+    if (sessionStorage.getItem("jr-autorag-api-key-origin") !== originOf(defaultBaseUrl)) {
+      return "";
+    }
     return sessionStorage.getItem("jr-autorag-api-key") || "";
   });
+  const [draftBaseUrl, setDraftBaseUrl] = useState(baseUrl);
+  const [draftApiKey, setDraftApiKey] = useState(apiKey);
+  const [connectAttempt, setConnectAttempt] = useState(0);
+  const pendingConnect = useRef<AbortController | null>(null);
   const [status, setStatus] = useState("");
   const [isConnected, setIsConnected] = useState(false); // New state for reliable connection tracking
   const [isTestingConnection, setIsTestingConnection] = useState(false);
@@ -249,12 +295,15 @@ export function App() {
       return;
     }
     const trimmed = apiKey.trim();
-    if (trimmed) {
+    const origin = originOf(baseUrl);
+    if (trimmed && origin) {
       sessionStorage.setItem("jr-autorag-api-key", trimmed);
+      sessionStorage.setItem("jr-autorag-api-key-origin", origin);
     } else {
       sessionStorage.removeItem("jr-autorag-api-key");
+      sessionStorage.removeItem("jr-autorag-api-key-origin");
     }
-  }, [apiKey]);
+  }, [apiKey, baseUrl]);
 
   useEffect(() => {
     if (isDarkMode) {
@@ -275,33 +324,26 @@ export function App() {
 
   const buildUrl = (path: string) => buildApiUrl(baseUrl, path);
 
+  // Connection status is owned by checkConnection (heartbeat and Connect). Data
+  // requests never write it, so a late response from a replaced connection can't.
   const fetchJson = async <T,>(path: string, init?: RequestInit): Promise<T> => {
-    try {
-      const response = await fetch(buildUrl(path), {
-        ...init,
-        headers: buildHeaders(init?.headers),
-      });
-      if (!response.ok) {
-        throw new Error(await response.text());
-      }
-      setIsConnected(true); // Successfully reached API
-      return response.json();
-    } catch (error) {
-      if (error instanceof TypeError) {
-        setIsConnected(false); // Network error
-      }
-      throw error;
+    const response = await fetch(buildUrl(path), {
+      ...init,
+      headers: buildHeaders(init?.headers),
+    });
+    if (!response.ok) {
+      throw new Error(await response.text());
     }
+    return response.json();
   };
 
   // Heartbeat for connection status
   useEffect(() => {
+    const controller = new AbortController();
     const check = async () => {
-      try {
-        await fetch(buildUrl("/healthz"), { method: "GET", headers: buildHeaders() });
-        setIsConnected(true);
-      } catch (e) {
-        setIsConnected(false);
+      const result = await checkConnection(baseUrl, apiKey, controller.signal);
+      if (!controller.signal.aborted) {
+        setIsConnected(result.ok);
       }
     };
 
@@ -310,19 +352,26 @@ export function App() {
 
     // Periodically check every 20 seconds
     const id = setInterval(check, 20000);
-    return () => clearInterval(id);
-  }, [baseUrl, buildHeaders]);
+    return () => {
+      controller.abort();
+      clearInterval(id);
+    };
+  }, [baseUrl, apiKey]);
 
-  const refreshLocalProviders = async () => {
+  useEffect(() => () => pendingConnect.current?.abort(), []);
+
+  const refreshLocalProviders = async (signal?: AbortSignal) => {
     setLocalProvidersStatus("loading");
     try {
-      const providers = await fetchJson<LocalProviderInfo[]>("/providers/local");
+      const providers = await fetchJson<LocalProviderInfo[]>("/providers/local", { signal });
+      if (signal?.aborted) return;
       setLocalProviders(providers);
       setLocalProvidersStatus("ready");
       if (!providers.length) {
         setStatus("No local runtimes detected. Launch Ollama or LM Studio and rescan.");
       }
     } catch (error) {
+      if (signal?.aborted) return;
       setLocalProvidersStatus("error");
       setStatus(`Local provider scan failed: ${toMessage(error)}`);
     }
@@ -405,15 +454,16 @@ export function App() {
     }
   };
 
-  const refreshAll = async () => {
+  const refreshAll = async (signal?: AbortSignal) => {
     try {
       const [cfg, docs, traceList, cache, posture] = await Promise.all([
-        fetchJson<AppConfig>("/config"),
-        fetchJson<DocumentOut[]>("/documents"),
-        fetchJson<TraceOut[]>("/monitoring/traces"),
-        fetchJson<CacheStats>("/monitoring/cache"),
-        fetchJson<SecurityPostureResponse>("/security/posture"),
+        fetchJson<AppConfig>("/config", { signal }),
+        fetchJson<DocumentOut[]>("/documents", { signal }),
+        fetchJson<TraceOut[]>("/monitoring/traces", { signal }),
+        fetchJson<CacheStats>("/monitoring/cache", { signal }),
+        fetchJson<SecurityPostureResponse>("/security/posture", { signal }),
       ]);
+      if (signal?.aborted) return;
       setConfig(cfg);
       setSelectedProfile(cfg.profile);
       setNewProfileName(cfg.profile);
@@ -422,17 +472,19 @@ export function App() {
       setCacheStats(cache);
       setSecurityPosture(posture);
       setStatus("API data loaded");
-      setIsConnected(true);
     } catch (error) {
+      if (signal?.aborted) return;
       setStatus(`Failed to load data: ${toMessage(error)}`);
     }
   };
 
-  const refreshOnboarding = async () => {
+  const refreshOnboarding = async (signal?: AbortSignal) => {
     try {
-      const data = await fetchJson<OnboardingState>("/onboarding");
+      const data = await fetchJson<OnboardingState>("/onboarding", { signal });
+      if (signal?.aborted) return;
       setOnboarding(data);
     } catch (error) {
+      if (signal?.aborted) return;
       setStatus(`Onboarding failed to load: ${toMessage(error)}`);
     }
   };
@@ -561,11 +613,13 @@ export function App() {
   };
 
   useEffect(() => {
-    refreshAll();
-    refreshOnboarding();
-    refreshLocalProviders();
+    const controller = new AbortController();
+    refreshAll(controller.signal);
+    refreshOnboarding(controller.signal);
+    refreshLocalProviders(controller.signal);
+    return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [baseUrl]);
+  }, [baseUrl, apiKey, connectAttempt]);
 
   useEffect(() => {
     setLocalSelections(prev => {
@@ -598,21 +652,71 @@ export function App() {
     );
   }, [config?.retrieval?.embedding_model, config?.retrieval?.reranker_model]);
 
-  const handleTestConnection = async () => {
-    setIsTestingConnection(true);
-    setStatus("Testing connection...");
-    try {
-      await fetchJson("/healthz");
-      setStatus("API reachable");
-      setIsConnected(true);
-      toast({ title: "API reachable", description: baseUrl, variant: "success" });
-    } catch (error) {
-      setStatus(`Health check failed: ${toMessage(error)}`);
-      setIsConnected(false);
-      toast({ title: "API health check failed", description: toMessage(error), variant: "error" });
-    } finally {
-      setIsTestingConnection(false);
+  // Editing the draft while Connect is pending cancels that attempt, so a
+  // superseded attempt never applies and never overwrites the newer draft.
+  const cancelPendingConnect = () => {
+    if (!pendingConnect.current) return;
+    pendingConnect.current.abort();
+    pendingConnect.current = null;
+    setIsTestingConnection(false);
+  };
+
+  const handleDraftBaseUrlChange = (value: string) => {
+    cancelPendingConnect();
+    // A key is only valid for the origin it was entered for. When the draft
+    // moves to another origin, drop the draft key so it is never sent there
+    // implicitly; when it moves back to the applied origin, restore the applied key.
+    const nextOrigin = originOf(value);
+    if (nextOrigin !== originOf(draftBaseUrl)) {
+      setDraftApiKey(nextOrigin === originOf(baseUrl) ? apiKey : "");
     }
+    setDraftBaseUrl(value);
+  };
+
+  const handleTestConnection = async () => {
+    const nextBaseUrl = normalizeApiBaseUrl(draftBaseUrl);
+    const nextApiKey = draftApiKey.trim();
+    pendingConnect.current?.abort();
+    const controller = new AbortController();
+    pendingConnect.current = controller;
+    setIsTestingConnection(true);
+    setStatus(`Connecting to ${nextBaseUrl}...`);
+    const result = await checkConnection(nextBaseUrl, nextApiKey, controller.signal);
+    if (controller.signal.aborted) {
+      return;
+    }
+    pendingConnect.current = null;
+    setIsTestingConnection(false);
+    if (!result.ok) {
+      // The previous connection stays applied and the drafts stay editable.
+      const retriedApplied = nextBaseUrl === baseUrl && nextApiKey === apiKey;
+      if (retriedApplied) {
+        setIsConnected(false);
+      }
+      const message = retriedApplied
+        ? `${nextBaseUrl} ${result.reason}.`
+        : `${nextBaseUrl} ${result.reason}. Still using ${baseUrl}.`;
+      setStatus(`Connect failed: ${message}`);
+      toast({ title: "Connect failed", description: message, variant: "error" });
+      return;
+    }
+    setStatus(`Connected to ${nextBaseUrl}`);
+    setIsConnected(true);
+    toast({ title: "Connected", description: nextBaseUrl, variant: "success" });
+    if (nextBaseUrl !== baseUrl) {
+      setConfig(null);
+      setDocuments([]);
+      setTraces([]);
+      setCacheStats(null);
+      setSecurityPosture(null);
+      setOnboarding(null);
+      setLocalProviders([]);
+    }
+    setBaseUrl(nextBaseUrl);
+    setApiKey(nextApiKey);
+    setDraftBaseUrl(nextBaseUrl);
+    setDraftApiKey(nextApiKey);
+    setConnectAttempt(attempt => attempt + 1);
   };
 
   const handleSelectProfile = (name: string) => {
@@ -1243,7 +1347,7 @@ export function App() {
 
   const docsReady = documents.length > 0;
   const modelsReady = Boolean(config?.provider?.planner_model && config?.provider?.generator_model);
-  const apiReady = isConnected || Boolean(config);
+  const apiReady = isConnected;
   const securityLevel = securityPosture?.level ?? "needs_attention";
   const securityReady = securityLevel === "client_ready" || securityLevel === "local_only";
   const securityLabel = securityLevel.replace("_", " ");
@@ -1352,15 +1456,18 @@ export function App() {
                 className="w-40 2xl:w-48 text-xs"
                 type="url"
                 required
-                value={baseUrl}
-                onChange={e => setBaseUrl(e.target.value)}
+                value={draftBaseUrl}
+                onChange={e => handleDraftBaseUrlChange(e.target.value)}
                 placeholder="API URL"
                 aria-label="API base URL"
               />
               <Input
                 className="hidden 2xl:block w-40 text-xs"
-                value={apiKey}
-                onChange={e => setApiKey(e.target.value)}
+                value={draftApiKey}
+                onChange={e => {
+                  cancelPendingConnect();
+                  setDraftApiKey(e.target.value);
+                }}
                 type="password"
                 autoComplete="off"
                 placeholder="X-API-Key (session)"
@@ -1634,7 +1741,7 @@ export function App() {
                       persistConfig={persistConfig}
                       localProviders={localProviders}
                       localProvidersStatus={localProvidersStatus}
-                      refreshLocalProviders={refreshLocalProviders}
+                      refreshLocalProviders={() => refreshLocalProviders()}
                       localSelections={localSelections}
                       setLocalSelection={setLocalSelection}
                       applyLocalProvider={applyLocalProvider}
@@ -1660,7 +1767,7 @@ export function App() {
                       handleAddProfile={handleAddProfile}
                       newProfileName={newProfileName}
                       setNewProfileName={setNewProfileName}
-                      refreshAll={refreshAll}
+                      refreshAll={() => refreshAll()}
                     />
                   </Suspense>
 
@@ -1899,7 +2006,7 @@ export function App() {
                     documents={documents}
                     buildUrl={buildUrl}
                     buildHeaders={buildHeaders}
-                    onPresetPromoted={refreshAll}
+                    onPresetPromoted={() => refreshAll()}
                   />
                 </Suspense>
               </div>
