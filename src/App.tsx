@@ -313,6 +313,9 @@ export function App() {
   // Numbers each status probe of the applied connection (heartbeat tick or a
   // Connect retry). Only the latest one started may write isConnected.
   const latestStatusProbe = useRef(0);
+  // Bumps when the applied URL/key change. Data loads and query streams capture
+  // it so a superseded connection cannot apply status, corpus, or query state.
+  const connectionGeneration = useRef(0);
   const [status, setStatus] = useState("");
   const [isConnected, setIsConnected] = useState(false); // New state for reliable connection tracking
   const [isTestingConnection, setIsTestingConnection] = useState(false);
@@ -335,6 +338,9 @@ export function App() {
     currentSessionIdRef.current = currentSessionId;
   }, [currentSessionId]);
   const [currentTraceId, setCurrentTraceId] = useState<string | null>(null);
+  // Cancel must hit the same origin/key the stream was opened with, even if the
+  // user has since edited the draft or applied another connection.
+  const activeQueryTransport = useRef<{ baseUrl: string; apiKey: string; generation: number } | null>(null);
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
   const [ingestTitle, setIngestTitle] = useState("Getting Started");
   const [ingestText, setIngestText] = useState("Paste onboarding doc content here...");
@@ -602,27 +608,75 @@ export function App() {
     }
   };
 
-  const refreshAll = async (signal?: AbortSignal) => {
-    try {
-      const [cfg, docs, traceList, cache, posture] = await Promise.all([
-        fetchJson<AppConfig>("/config", { signal }),
-        fetchJson<DocumentOut[]>("/documents", { signal }),
-        fetchJson<TraceOut[]>("/monitoring/traces", { signal }),
-        fetchJson<CacheStats>("/monitoring/cache", { signal }),
-        fetchJson<SecurityPostureResponse>("/security/posture", { signal }),
-      ]);
-      if (signal?.aborted) return;
-      setConfig(cfg);
-      setSelectedProfile(cfg.profile);
-      setNewProfileName(cfg.profile);
-      setDocuments(docs);
-      setTraces(traceList);
-      setCacheStats(cache);
-      setSecurityPosture(posture);
+  const refreshAll = async (signal?: AbortSignal, generation?: number) => {
+    const gen = generation ?? connectionGeneration.current;
+    const isCurrent = () => !signal?.aborted && gen === connectionGeneration.current;
+
+    type Settled<T> = { ok: true; value: T } | { ok: false; error: unknown; aborted: boolean };
+
+    const loadOne = async <T,>(path: string): Promise<Settled<T>> => {
+      try {
+        const value = await fetchJson<T>(path, { signal });
+        return { ok: true, value };
+      } catch (error) {
+        const aborted = Boolean(signal?.aborted) || (error instanceof DOMException && error.name === "AbortError");
+        return { ok: false, error, aborted };
+      }
+    };
+
+    // Each independently authorized load applies as soon as it settles. A hung
+    // or 403 admin request must not block read-scoped documents.
+    const failures: string[] = [];
+    let applied = 0;
+    let sawAbort = false;
+
+    const apply = async <T,>(
+      path: string,
+      label: string,
+      onSuccess: (value: T) => void,
+    ) => {
+      const result = await loadOne<T>(path);
+      if (!isCurrent()) return;
+      if (!result.ok) {
+        if (result.aborted) {
+          sawAbort = true;
+          return;
+        }
+        failures.push(`${label} (${toMessage(result.error)})`);
+        return;
+      }
+      onSuccess(result.value);
+      applied += 1;
+    };
+
+    await Promise.all([
+      apply<DocumentOut[]>("/documents", "documents", value => {
+        setDocuments(value);
+      }),
+      apply<AppConfig>("/config", "config", value => {
+        setConfig(value);
+        setSelectedProfile(value.profile);
+        setNewProfileName(value.profile);
+      }),
+      apply<TraceOut[]>("/monitoring/traces", "traces", value => {
+        setTraces(value);
+      }),
+      apply<CacheStats>("/monitoring/cache", "cache", value => {
+        setCacheStats(value);
+      }),
+      apply<SecurityPostureResponse>("/security/posture", "security posture", value => {
+        setSecurityPosture(value);
+      }),
+    ]);
+
+    if (!isCurrent() || sawAbort) return;
+
+    if (failures.length === 0) {
       setStatus("API data loaded");
-    } catch (error) {
-      if (signal?.aborted) return;
-      setStatus(`Failed to load data: ${toMessage(error)}`);
+    } else if (applied > 0) {
+      setStatus(`Partial API data loaded; unavailable: ${failures.join(", ")}`);
+    } else {
+      setStatus(`Failed to load data: ${failures.join(", ")}`);
     }
   };
 
@@ -762,7 +816,8 @@ export function App() {
 
   useEffect(() => {
     const controller = new AbortController();
-    refreshAll(controller.signal);
+    const gen = connectionGeneration.current;
+    refreshAll(controller.signal, gen);
     refreshOnboarding(controller.signal);
     refreshLocalProviders(controller.signal);
     return () => controller.abort();
@@ -860,6 +915,7 @@ export function App() {
     // Data loaded with another URL or key must not be shown under this one,
     // for example admin-only config after switching to a read-only key.
     if (!retriesApplied) {
+      connectionGeneration.current += 1;
       setConfig(null);
       setDocuments([]);
       setTraces([]);
@@ -993,6 +1049,10 @@ export function App() {
     // 1. Determine the question to ask
     const currentQuestion = overrideQuestion || question;
     if (!currentQuestion.trim()) return;
+    const queryGeneration = connectionGeneration.current;
+    const queryStillCurrent = () => queryGeneration === connectionGeneration.current;
+    const queryTransport = { baseUrl, apiKey, generation: queryGeneration };
+    activeQueryTransport.current = queryTransport;
 
     // NEW: Session persistence logic
     let localSessionId = currentSessionId;
@@ -1055,7 +1115,11 @@ export function App() {
         throw new Error(await response.text());
       }
 
-      setIsConnected(true); // Stream started
+      // Connection status stays with heartbeat/Connect ownership. A late stream
+      // after a failed probe or a connection switch must not restore Connected.
+      if (!queryStillCurrent()) {
+        return;
+      }
 
       const body = response.body;
       if (!body) {
@@ -1087,7 +1151,7 @@ export function App() {
             continue;
           }
           if (event.type === "step") {
-            if (localSessionId === currentSessionIdRef.current) {
+            if (queryStillCurrent() && localSessionId === currentSessionIdRef.current) {
               setQueryResult(prev => {
                 const base: QueryResponse = prev ?? {
                   answer: "",
@@ -1107,7 +1171,7 @@ export function App() {
           if (event.type === "token") {
             const text = event.data?.text ?? "";
             if (text) {
-              if (localSessionId === currentSessionIdRef.current) {
+              if (queryStillCurrent() && localSessionId === currentSessionIdRef.current) {
                 setQueryResult(prev => {
                   const base: QueryResponse = prev ?? {
                     answer: "",
@@ -1126,12 +1190,12 @@ export function App() {
             }
           }
           if (event.type === "stage") {
-            if (localSessionId === currentSessionIdRef.current) {
+            if (queryStillCurrent() && localSessionId === currentSessionIdRef.current) {
               setActiveStage(event.data?.name ?? null);
             }
           }
           if (event.type === "progress") {
-            if (localSessionId === currentSessionIdRef.current) {
+            if (queryStillCurrent() && localSessionId === currentSessionIdRef.current) {
               setProgress(event.data);
               if (event.data?.trace_id) {
                 setCurrentTraceId(event.data.trace_id);
@@ -1141,30 +1205,28 @@ export function App() {
 
           if (event.type === "result") {
             receivedResult = true;
-            if (localSessionId === currentSessionIdRef.current) {
-              setQueryResult(event.data);
-              setStatus("Query succeeded");
-              setActiveStage(null);
-              setProgress(null);
-            }
-
-            // Update history locally
             const updatedHistory = [
               ...initialHistory,
               { role: "assistant", content: event.data.answer }
             ];
 
-            if (localSessionId === currentSessionIdRef.current) {
+            if (queryStillCurrent() && localSessionId === currentSessionIdRef.current) {
+              setQueryResult(event.data);
+              setStatus("Query succeeded");
+              setActiveStage(null);
+              setProgress(null);
               setChatHistory(updatedHistory);
             }
 
-            // ALWAYS update history in the saved session list (even if not active)
-            setSavedSessions(prev => prev.map(s =>
-              s.id === localSessionId ? { ...s, history: updatedHistory, queryResult: event.data } : s
-            ));
-
-            refreshAll();
-            toast({ title: "Query complete", description: "Results updated", variant: "success" });
+            // Session list keeps the answer under its session id; do not refresh
+            // API data or toast when this stream's connection was replaced.
+            if (queryStillCurrent()) {
+              setSavedSessions(prev => prev.map(s =>
+                s.id === localSessionId ? { ...s, history: updatedHistory, queryResult: event.data } : s
+              ));
+              refreshAll(undefined, queryGeneration);
+              toast({ title: "Query complete", description: "Results updated", variant: "success" });
+            }
           }
           if (event.type === "error") {
             const message = event.data?.message ?? "Query failed";
@@ -1182,7 +1244,7 @@ export function App() {
 
       // Attempt to save partial result if available
       setQueryResult((currentPartial) => {
-        if (currentPartial?.answer && localSessionId === currentSessionIdRef.current) {
+        if (queryStillCurrent() && currentPartial?.answer && localSessionId === currentSessionIdRef.current) {
           const partialAnswer = currentPartial.answer + "\n\n*[Generation interrupted due to error]*";
           const updatedHistory = [
             ...initialHistory,
@@ -1198,6 +1260,9 @@ export function App() {
 
       toast({ title: "Query interrupted", description: toMessage(error), variant: "error" });
     } finally {
+      if (activeQueryTransport.current?.generation === queryGeneration) {
+        activeQueryTransport.current = null;
+      }
       setIsQuerying(false);
       setActiveStage(null);
       setProgress(null);
@@ -1207,14 +1272,27 @@ export function App() {
 
   const handleCancelQuery = async () => {
     if (!currentTraceId) return;
+    const transport = activeQueryTransport.current;
+    const cancelUrl = transport
+      ? buildApiUrl(transport.baseUrl, `/query/cancel?trace_id=${currentTraceId}`)
+      : buildUrl(`/query/cancel?trace_id=${currentTraceId}`);
+    const cancelHeaders = transport
+      ? (() => {
+          const merged = new Headers();
+          const trimmedKey = transport.apiKey.trim();
+          if (trimmedKey) merged.set("X-API-Key", trimmedKey);
+          return merged;
+        })()
+      : buildHeaders();
     try {
-      await fetch(buildUrl(`/query/cancel?trace_id=${currentTraceId}`), { method: "POST", headers: buildHeaders() });
+      await fetch(cancelUrl, { method: "POST", headers: cancelHeaders });
       setStatus("Query cancelled");
       toast({ title: "Query cancelled", variant: "info" });
       setIsQuerying(false);
       setActiveStage(null);
       setProgress(null);
       setCurrentTraceId(null);
+      activeQueryTransport.current = null;
     } catch (e) {
       console.error("Cancel failed", e);
     }

@@ -34,6 +34,8 @@ type Server = {
   provider: string;
   docs: unknown[];
   gates: Record<string, Promise<unknown>>;
+  // Paths whose gates ignore abort so a late body can still arrive after switch.
+  ignoreGateAbort?: Record<string, true>;
   // Default is a minimal real posture body. Overrides model HTML/fallback and bad JSON.
   postureMode?: "json" | "html" | "empty" | "malformed";
   postureBody?: unknown;
@@ -45,6 +47,10 @@ type Server = {
   ignoreAbort?: boolean;
   ignoreAbortDelayMs?: number;
   ignoreAbortHang?: boolean;
+  // Held /query/stream responses for connection-scoping tests.
+  streamGate?: Promise<unknown>;
+  streamIgnoreAbort?: boolean;
+  streamEvents?: Array<Record<string, unknown>>;
 };
 const ADMIN_PATHS = ["/config", "/monitoring/traces", "/providers/local"];
 
@@ -172,8 +178,17 @@ const fakeFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       await new Promise<void>(resolve => setTimeout(resolve, server.ignoreAbortDelayMs));
     }
   } else {
-    if (signal?.aborted) throw new DOMException("The operation was aborted.", "AbortError");
-    await waitGate(server.gates[url.pathname], signal);
+    if (signal?.aborted && !server.ignoreGateAbort?.[url.pathname] && !(url.pathname === "/query/stream" && server.streamIgnoreAbort)) {
+      throw new DOMException("The operation was aborted.", "AbortError");
+    }
+    if (url.pathname === "/query/stream") {
+      await waitGate(server.streamGate, server.streamIgnoreAbort ? undefined : signal);
+    } else {
+      await waitGate(
+        server.gates[url.pathname],
+        server.ignoreGateAbort?.[url.pathname] ? undefined : signal,
+      );
+    }
   }
 
   if (url.pathname === "/healthz") return json(server.health, { status: server.health < 400 ? "ok" : "error" });
@@ -197,6 +212,24 @@ const fakeFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   if (server.key !== null && key === null) return json(401, { detail: "API key required. Provide X-API-Key header." });
   const readOnly = key !== null && key === server.readKey && !ADMIN_PATHS.includes(url.pathname);
   if (server.key !== null && key !== server.key && !readOnly) return json(403, { detail: "Invalid API key or insufficient permissions." });
+  if (url.pathname === "/query/stream") {
+    const events = server.streamEvents ?? [
+      { type: "stage", data: { name: "answering" } },
+      {
+        type: "result",
+        data: {
+          answer: "synthetic answer",
+          chunks: [],
+          sources: [],
+          trace_id: "trace-synthetic",
+          metrics: {},
+          steps: [],
+        },
+      },
+    ];
+    const payload = events.map(event => `data: ${JSON.stringify(event)}\n\n`).join("");
+    return new Response(payload, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+  }
   const body = protectedBody(url.pathname, server);
   return body === undefined ? json(404, { detail: "Not modeled by this test" }) : json(200, body);
 }) as typeof fetch;
@@ -309,6 +342,37 @@ afterEach(async () => {
 afterAll(async () => {
   await GlobalRegistrator.unregister();
 });
+
+
+const openTab = async (label: string) => {
+  const button = [...container.querySelectorAll("button")].find(
+    node => node.getAttribute("aria-label") === label || node.textContent?.trim() === label,
+  ) as HTMLButtonElement | undefined;
+  if (!button) throw new Error(`tab ${label} not found`);
+  await act(async () => {
+    button.click();
+  });
+  await settle();
+  // ChatInterface is lazy; give the Suspense boundary a couple more turns.
+  await settle();
+};
+
+const askQuestion = async (question: string) => {
+  await openTab("Query");
+  const area = container.querySelector('textarea[aria-label="Ask a grounded question"]') as HTMLTextAreaElement;
+  if (!area) throw new Error("question textarea missing");
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+  await act(async () => {
+    setter.call(area, question);
+    area.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await settle();
+  const ask = container.querySelector('button[aria-label="Ask grounded question"]') as HTMLButtonElement;
+  await act(async () => {
+    ask.click();
+  });
+  await settle();
+};
 
 describe("API connection lifecycle", () => {
   test("editing the URL does not contact the new origin until Connect", async () => {
@@ -688,7 +752,7 @@ describe("Status ordering", () => {
     expect(toasts()).toEqual([`Connect failed: ${ORIGIN_A} returned HTTP 503 for /healthz.`]);
   });
 
-  test("changing to a read-only key at the same URL hides data loaded with the admin key", async () => {
+  test("changing to a read-only key at the same URL hides admin config but still loads documents", async () => {
     storeSessionKey(GOOD_KEY);
     serverA.readKey = READ_KEY;
     serverA.docs = [{ id: "doc-1", title: "Synthetic admin-era doc", text: "", metadata: {} }];
@@ -702,8 +766,10 @@ describe("Status ordering", () => {
     expect(connectButton().textContent).toBe("Connected");
     expect(sessionStorage.getItem("jr-autorag-api-key")).toBe(READ_KEY);
     expect(log.some(entry => entry.path === "/config" && entry.key === READ_KEY)).toBe(true);
+    expect(log.some(entry => entry.path === "/documents" && entry.key === READ_KEY)).toBe(true);
     expect(providerShown()).toBe("No provider selected");
-    expect(shown("Documents")).toBe("0");
+    // Read-scoped /documents must not be discarded when admin /config returns 403.
+    expect(shown("Documents")).toBe("1");
   });
 
   test("a rejected key at the same URL keeps the applied connection and its data", async () => {
@@ -1070,5 +1136,135 @@ describe("Connection check body-stream and abort-ignoring deadline", () => {
     await waitForTimeout(40);
     await settle();
     expect(connectButton().textContent).toBe("Connect");
+  });
+});
+
+describe("Status ownership and permission-scoped refresh", () => {
+  test("a late successful query stream after a failed heartbeat does not restore Connected", async () => {
+    storeSessionKey(GOOD_KEY);
+    await mount();
+    expect(connectButton().textContent).toBe("Connected");
+
+    serverA.health = 503;
+    await tickHeartbeat();
+    expect(connectButton().textContent).toBe("Connect");
+
+    const stream = deferred();
+    serverA.streamGate = stream.promise;
+    await askQuestion("synthetic late stream question");
+    expect(log.some(entry => entry.path === "/query/stream")).toBe(true);
+    expect(connectButton().textContent).toBe("Connect");
+
+    await release(stream);
+    expect(connectButton().textContent).toBe("Connect");
+    expect(container.textContent).toContain("synthetic answer");
+  });
+
+  test("an old query stream after a connection switch does not restore status or leak into the new connection", async () => {
+    storeSessionKey(GOOD_KEY);
+    serverA.docs = [{ id: "doc-a", title: "Doc A", text: "", metadata: {} }];
+    serverB.docs = [{ id: "doc-b", title: "Doc B", text: "", metadata: {} }];
+    await mount();
+    expect(shown("Documents")).toBe("1");
+
+    const stream = deferred();
+    serverA.streamGate = stream.promise;
+    serverA.streamIgnoreAbort = true;
+    await askQuestion("synthetic old-stream question");
+
+    await type("API base URL", ORIGIN_B);
+    await type("API key", GOOD_KEY);
+    await clickConnect();
+    expect(connectButton().textContent).toBe("Connected");
+    expect(providerShown()).toBe("Provider B");
+    expect(shown("Documents")).toBe("1");
+
+    serverA.streamEvents = [
+      { type: "stage", data: { name: "answering" } },
+      {
+        type: "result",
+        data: {
+          answer: "stale answer from origin A",
+          chunks: [],
+          sources: [],
+          trace_id: "trace-stale",
+          metrics: {},
+          steps: [],
+        },
+      },
+    ];
+    await release(stream);
+    await settle();
+
+    expect(connectButton().textContent).toBe("Connected");
+    expect(providerShown()).toBe("Provider B");
+    expect(shown("Documents")).toBe("1");
+    expect(container.textContent).not.toContain("stale answer from origin A");
+    // refreshAll from the stale stream must not push origin A admin config back.
+    expect(providerShown()).not.toBe("Provider A");
+  });
+
+  test("admin-to-read-only switch loads documents even when admin endpoints are forbidden", async () => {
+    storeSessionKey(GOOD_KEY);
+    serverA.readKey = READ_KEY;
+    serverA.docs = [
+      { id: "doc-1", title: "Readable doc", text: "", metadata: {} },
+      { id: "doc-2", title: "Second readable doc", text: "", metadata: {} },
+    ];
+    await mount();
+    expect(providerShown()).toBe("Provider A");
+    expect(shown("Documents")).toBe("2");
+
+    await type("API key", READ_KEY);
+    await clickConnect();
+
+    expect(connectButton().textContent).toBe("Connected");
+    expect(providerShown()).toBe("No provider selected");
+    expect(shown("Documents")).toBe("2");
+    expect(log.filter(entry => entry.path === "/config" && entry.key === READ_KEY).length).toBeGreaterThan(0);
+    expect(log.filter(entry => entry.path === "/monitoring/traces" && entry.key === READ_KEY).length).toBeGreaterThan(0);
+    expect(log.filter(entry => entry.path === "/documents" && entry.key === READ_KEY).length).toBeGreaterThan(0);
+  });
+
+  test("a stale admin config reply after switching to read-only cannot reappear", async () => {
+    storeSessionKey(GOOD_KEY);
+    serverA.readKey = READ_KEY;
+    serverA.docs = [{ id: "doc-1", title: "Readable doc", text: "", metadata: {} }];
+    const staleConfig = deferred();
+    serverA.gates["/config"] = staleConfig.promise;
+    serverA.ignoreGateAbort = { "/config": true };
+    await mount();
+    // Documents settle independently while admin config is held.
+    expect(shown("Documents")).toBe("1");
+    expect(providerShown()).toBe("No provider selected");
+
+    await type("API key", READ_KEY);
+    await clickConnect();
+    expect(connectButton().textContent).toBe("Connected");
+    expect(providerShown()).toBe("No provider selected");
+    expect(shown("Documents")).toBe("1");
+
+    serverA.provider = "Stale Admin Provider";
+    await release(staleConfig);
+    await settle();
+
+    expect(providerShown()).toBe("No provider selected");
+    expect(shown("Documents")).toBe("1");
+    expect(connectButton().textContent).toBe("Connected");
+  });
+
+  test("ordinary heartbeat recovery still returns to Connected", async () => {
+    storeSessionKey(GOOD_KEY);
+    await mount();
+    expect(connectButton().textContent).toBe("Connected");
+
+    serverA.health = 503;
+    await tickHeartbeat();
+    expect(connectButton().textContent).toBe("Connect");
+
+    serverA.health = 200;
+    await tickHeartbeat();
+    expect(connectButton().textContent).toBe("Connected");
+    expect(providerShown()).toBe("Provider A");
   });
 });
