@@ -1,7 +1,8 @@
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-GlobalRegistrator.register({ url: "http://localhost:3000/" });
+const UI_ORIGIN = "http://localhost:3000";
+GlobalRegistrator.register({ url: `${UI_ORIGIN}/` });
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const { act, createElement } = await import("react");
@@ -15,13 +16,23 @@ const ORIGIN_A = "http://127.0.0.1:8000";
 const ORIGIN_B = "http://api-b.test:9000";
 const GOOD_KEY = "synthetic-good-key";
 const WRONG_KEY = "synthetic-wrong-key";
+const READ_KEY = "synthetic-read-only-key";
 
 type Logged = { origin: string; path: string; key: string | null; signal?: AbortSignal };
 // A gate holds every request to its path until the test settles it. Like a real
 // fetch, the fake refuses a request whose signal is already aborted. It ignores
 // an abort that happens mid-flight on purpose, so a late response still arrives
 // after the app has moved on and the app's own guards are what get tested.
-type Server = { health: number; key: string | null; provider: string; gates: Record<string, Promise<unknown>> };
+// `key` has every scope; `readKey` only "read", like api/app/core/security_middleware.py.
+type Server = {
+  health: number;
+  key: string | null;
+  readKey: string | null;
+  provider: string;
+  docs: unknown[];
+  gates: Record<string, Promise<unknown>>;
+};
+const ADMIN_PATHS = ["/config", "/monitoring/traces", "/providers/local"];
 
 let serverA: Server;
 let serverB: Server;
@@ -60,21 +71,26 @@ const protectedBody = (path: string, server: Server) => {
       example_queries: [],
     };
   }
-  if (["/documents", "/monitoring/traces", "/providers/local"].includes(path)) return [];
+  if (path === "/documents") return server.docs;
+  if (["/monitoring/traces", "/providers/local"].includes(path)) return [];
   return undefined;
 };
 
 const fakeFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   if (init?.signal?.aborted) throw new DOMException("The operation was aborted.", "AbortError");
-  const url = new URL(String(input));
+  // A URL without a scheme resolves against the page, like a browser fetch.
+  const url = new URL(String(input), location.href);
   const key = new Headers(init?.headers).get("X-API-Key");
   log.push({ origin: url.origin, path: url.pathname, key, signal: init?.signal ?? undefined });
+  // The UI server answers every unmatched path with index.html (src/index.ts "/*").
+  if (url.origin === UI_ORIGIN) return new Response("<!doctype html>", { status: 200, headers: { "Content-Type": "text/html" } });
   const server = url.origin === ORIGIN_A ? serverA : url.origin === ORIGIN_B ? serverB : undefined;
   if (!server) throw new TypeError("Failed to fetch");
   await server.gates[url.pathname];
   if (url.pathname === "/healthz") return json(server.health, { status: server.health < 400 ? "ok" : "error" });
   if (server.key !== null && key === null) return json(401, { detail: "API key required. Provide X-API-Key header." });
-  if (server.key !== null && key !== server.key) return json(403, { detail: "Invalid API key or insufficient permissions." });
+  const readOnly = key !== null && key === server.readKey && !ADMIN_PATHS.includes(url.pathname);
+  if (server.key !== null && key !== server.key && !readOnly) return json(403, { detail: "Invalid API key or insufficient permissions." });
   const body = protectedBody(url.pathname, server);
   return body === undefined ? json(404, { detail: "Not modeled by this test" }) : json(200, body);
 }) as typeof fetch;
@@ -102,10 +118,11 @@ const mount = async () => {
 
 const input = (label: string) => container.querySelector(`input[aria-label="${label}"]`) as HTMLInputElement;
 const connectButton = () => input("API base URL").form!.querySelector('button[type="submit"]') as HTMLButtonElement;
-const providerShown = () => {
-  const dt = [...container.querySelectorAll("dt")].find(node => node.textContent === "Provider");
+const shown = (label: string) => {
+  const dt = [...container.querySelectorAll("dt")].find(node => node.textContent === label);
   return dt?.nextElementSibling?.textContent ?? null;
 };
+const providerShown = () => shown("Provider");
 
 const type = async (label: string, value: string) => {
   const element = input(label);
@@ -144,8 +161,11 @@ const release = async (gate: { resolve: () => void }) => {
   await settle();
 };
 
+// Fire one tick without awaiting it, so a tick held at a gate can stay pending.
 const tickHeartbeat = async () => {
-  await act(async () => heartbeat!());
+  await act(async () => {
+    heartbeat!();
+  });
   await settle();
 };
 
@@ -158,8 +178,8 @@ beforeEach(() => {
   sessionStorage.clear();
   localStorage.clear();
   log = [];
-  serverA = { health: 200, key: GOOD_KEY, provider: "Provider A", gates: {} };
-  serverB = { health: 200, key: GOOD_KEY, provider: "Provider B", gates: {} };
+  serverA = { health: 200, key: GOOD_KEY, readKey: null, provider: "Provider A", docs: [], gates: {} };
+  serverB = { health: 200, key: GOOD_KEY, readKey: null, provider: "Provider B", docs: [], gates: {} };
   globalThis.fetch = fakeFetch;
   heartbeat = undefined;
   globalThis.setInterval = ((handler: () => void, ms?: number) => {
@@ -473,5 +493,133 @@ describe("Connect attempts", () => {
 
     expect(connectButton().textContent).toBe("Connect");
     expect(toasts()).toEqual([`Connect failed: ${ORIGIN_A} returned HTTP 503 for /healthz.`]);
+  });
+});
+
+describe("Status ordering", () => {
+  // Each heartbeat tick and each Connect is a probe. Tests hold probes at
+  // /healthz and release them out of order; the response is built on release.
+  const holdHealth = (server: Server) => {
+    const gate = deferred();
+    server.gates["/healthz"] = gate.promise;
+    return gate;
+  };
+
+  test.each([
+    { older: 200, newer: 503, label: "Connect" },
+    { older: 503, newer: 200, label: "Connected" },
+  ])("an older heartbeat answering last ($older) does not overwrite a newer one ($newer)", async ({ older, newer, label }) => {
+    storeSessionKey(GOOD_KEY);
+    await mount();
+    const first = holdHealth(serverA);
+    await tickHeartbeat();
+    const second = holdHealth(serverA);
+    await tickHeartbeat();
+
+    serverA.health = newer;
+    await release(second);
+    expect(connectButton().textContent).toBe(label);
+    serverA.health = older;
+    await release(first);
+
+    expect(connectButton().textContent).toBe(label);
+  });
+
+  test("an older heartbeat success does not undo a failed retry of the same connection", async () => {
+    storeSessionKey(GOOD_KEY);
+    await mount();
+    const tick = holdHealth(serverA);
+    await tickHeartbeat();
+
+    delete serverA.gates["/healthz"];
+    serverA.health = 503;
+    await clickConnect();
+    expect(connectButton().textContent).toBe("Connect");
+    serverA.health = 200;
+    await release(tick);
+
+    expect(connectButton().textContent).toBe("Connect");
+    expect(toasts()).toEqual([`Connect failed: ${ORIGIN_A} returned HTTP 503 for /healthz.`]);
+  });
+
+  test("an older heartbeat failure does not undo a successful retry of the same connection", async () => {
+    storeSessionKey(GOOD_KEY);
+    serverA.health = 503;
+    await mount();
+    expect(connectButton().textContent).toBe("Connect");
+    const tick = holdHealth(serverA);
+    await tickHeartbeat();
+
+    delete serverA.gates["/healthz"];
+    serverA.health = 200;
+    await clickConnect();
+    expect(connectButton().textContent).toBe("Connected");
+    serverA.health = 503;
+    await release(tick);
+
+    expect(connectButton().textContent).toBe("Connected");
+  });
+
+  test("a retry that answers after a newer heartbeat does not overwrite it", async () => {
+    storeSessionKey(GOOD_KEY);
+    await mount();
+    const retry = holdHealth(serverA);
+    await clickConnect();
+    delete serverA.gates["/healthz"];
+    await tickHeartbeat();
+    expect(connectButton().textContent).toBe("Connecting");
+
+    serverA.health = 503;
+    await release(retry);
+
+    expect(connectButton().textContent).toBe("Connected");
+    expect(toasts()).toEqual([`Connect failed: ${ORIGIN_A} returned HTTP 503 for /healthz.`]);
+  });
+
+  test("changing to a read-only key at the same URL hides data loaded with the admin key", async () => {
+    storeSessionKey(GOOD_KEY);
+    serverA.readKey = READ_KEY;
+    serverA.docs = [{ id: "doc-1", title: "Synthetic admin-era doc", text: "", metadata: {} }];
+    await mount();
+    expect(providerShown()).toBe("Provider A");
+    expect(shown("Documents")).toBe("1");
+
+    await type("API key", READ_KEY);
+    await clickConnect();
+
+    expect(connectButton().textContent).toBe("Connected");
+    expect(sessionStorage.getItem("jr-autorag-api-key")).toBe(READ_KEY);
+    expect(log.some(entry => entry.path === "/config" && entry.key === READ_KEY)).toBe(true);
+    expect(providerShown()).toBe("No provider selected");
+    expect(shown("Documents")).toBe("0");
+  });
+
+  test("a rejected key at the same URL keeps the applied connection and its data", async () => {
+    storeSessionKey(GOOD_KEY);
+    serverA.docs = [{ id: "doc-1", title: "Synthetic doc", text: "", metadata: {} }];
+    await mount();
+
+    await type("API key", WRONG_KEY);
+    await clickConnect();
+
+    expect(connectButton().textContent).toBe("Connected");
+    expect(providerShown()).toBe("Provider A");
+    expect(shown("Documents")).toBe("1");
+    expect(sessionStorage.getItem("jr-autorag-api-key")).toBe(GOOD_KEY);
+    expect(toasts()).toEqual([`Connect failed: ${ORIGIN_A} rejected the API key (HTTP 403). Still using ${ORIGIN_A}.`]);
+  });
+
+  test("a URL without http:// or https:// is refused, not reported as connected", async () => {
+    storeSessionKey(GOOD_KEY);
+    await mount();
+    const mark = log.length;
+
+    await type("API base URL", "127.0.0.1:8000");
+    await clickConnect();
+
+    expect(since(mark).filter(entry => entry.origin === UI_ORIGIN).map(entry => entry.path)).toEqual([]);
+    expect(toasts()).toEqual([`Connect failed: 127.0.0.1:8000 is not an http:// or https:// URL. Still using ${ORIGIN_A}.`]);
+    expect(connectButton().textContent).toBe("Connected");
+    expect(providerShown()).toBe("Provider A");
   });
 });

@@ -83,9 +83,23 @@ const originOf = (value: string) => {
 
 type ConnectionCheck = { ok: true } | { ok: false; reason: string };
 
+const isHttpUrl = (value: string) => {
+  try {
+    const { protocol } = new URL(value);
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
+};
+
 // /healthz is public. /security/posture is a small GET that needs only the
 // "read" scope, so a 200 there means this key works, or that auth is off.
 const checkConnection = async (baseUrl: string, apiKey: string, signal: AbortSignal): Promise<ConnectionCheck> => {
+  // Without a scheme, fetch resolves the URL against the page, and the UI
+  // server answers every unknown path with index.html and HTTP 200.
+  if (!isHttpUrl(baseUrl)) {
+    return { ok: false, reason: "is not an http:// or https:// URL" };
+  }
   try {
     const health = await fetch(buildApiUrl(baseUrl, "/healthz"), { method: "GET", signal });
     if (!health.ok) {
@@ -166,6 +180,9 @@ export function App() {
   const [draftApiKey, setDraftApiKey] = useState(apiKey);
   const [connectAttempt, setConnectAttempt] = useState(0);
   const pendingConnect = useRef<AbortController | null>(null);
+  // Numbers each status probe of the applied connection (heartbeat tick or a
+  // Connect retry). Only the latest one started may write isConnected.
+  const latestStatusProbe = useRef(0);
   const [status, setStatus] = useState("");
   const [isConnected, setIsConnected] = useState(false); // New state for reliable connection tracking
   const [isTestingConnection, setIsTestingConnection] = useState(false);
@@ -341,8 +358,9 @@ export function App() {
   useEffect(() => {
     const controller = new AbortController();
     const check = async () => {
+      const probe = ++latestStatusProbe.current;
       const result = await checkConnection(baseUrl, apiKey, controller.signal);
-      if (!controller.signal.aborted) {
+      if (!controller.signal.aborted && probe === latestStatusProbe.current) {
         setIsConnected(result.ok);
       }
     };
@@ -676,6 +694,11 @@ export function App() {
   const handleTestConnection = async () => {
     const nextBaseUrl = normalizeApiBaseUrl(draftBaseUrl);
     const nextApiKey = draftApiKey.trim();
+    // Retrying the applied URL and key doesn't restart the heartbeat, so the
+    // retry takes a probe number and older ticks can't overwrite its result.
+    const retriesApplied = nextBaseUrl === baseUrl && nextApiKey === apiKey;
+    const probe = retriesApplied ? ++latestStatusProbe.current : 0;
+    const ownsStatus = () => !retriesApplied || probe === latestStatusProbe.current;
     pendingConnect.current?.abort();
     const controller = new AbortController();
     pendingConnect.current = controller;
@@ -689,11 +712,10 @@ export function App() {
     setIsTestingConnection(false);
     if (!result.ok) {
       // The previous connection stays applied and the drafts stay editable.
-      const retriedApplied = nextBaseUrl === baseUrl && nextApiKey === apiKey;
-      if (retriedApplied) {
+      if (retriesApplied && ownsStatus()) {
         setIsConnected(false);
       }
-      const message = retriedApplied
+      const message = retriesApplied
         ? `${nextBaseUrl} ${result.reason}.`
         : `${nextBaseUrl} ${result.reason}. Still using ${baseUrl}.`;
       setStatus(`Connect failed: ${message}`);
@@ -701,9 +723,13 @@ export function App() {
       return;
     }
     setStatus(`Connected to ${nextBaseUrl}`);
-    setIsConnected(true);
+    if (ownsStatus()) {
+      setIsConnected(true);
+    }
     toast({ title: "Connected", description: nextBaseUrl, variant: "success" });
-    if (nextBaseUrl !== baseUrl) {
+    // Data loaded with another URL or key must not be shown under this one,
+    // for example admin-only config after switching to a read-only key.
+    if (!retriesApplied) {
       setConfig(null);
       setDocuments([]);
       setTraces([]);
