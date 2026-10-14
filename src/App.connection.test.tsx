@@ -37,6 +37,14 @@ type Server = {
   // Default is a minimal real posture body. Overrides model HTML/fallback and bad JSON.
   postureMode?: "json" | "html" | "empty" | "malformed";
   postureBody?: unknown;
+  // Headers OK; body stream errors when the probe signal aborts (body-read timeout).
+  postureBodyRejectsOnAbort?: boolean;
+  // Headers OK; body stream never completes and ignores abort.
+  postureBodyHangIgnoreAbort?: boolean;
+  // Transport ignores AbortSignal entirely (does not reject on abort).
+  ignoreAbort?: boolean;
+  ignoreAbortDelayMs?: number;
+  ignoreAbortHang?: boolean;
 };
 const ADMIN_PATHS = ["/config", "/monitoring/traces", "/providers/local"];
 
@@ -128,19 +136,54 @@ const protectedBody = (path: string, server: Server) => {
   return undefined;
 };
 
+const hangingBody = (signal: AbortSignal | undefined, honorAbort: boolean) => {
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      if (!honorAbort) {
+        return;
+      }
+      const boom = () => controller.error(new DOMException("The operation was aborted.", "AbortError"));
+      if (signal?.aborted) {
+        boom();
+        return;
+      }
+      signal?.addEventListener("abort", boom, { once: true });
+    },
+  });
+  return new Response(stream, { status: 200, headers: { "Content-Type": "application/json" } });
+};
+
 const fakeFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-  if (init?.signal?.aborted) throw new DOMException("The operation was aborted.", "AbortError");
   // A URL without a scheme resolves against the page, like a browser fetch.
   const url = new URL(String(input), location.href);
   const key = new Headers(init?.headers).get("X-API-Key");
-  log.push({ origin: url.origin, path: url.pathname, key, signal: init?.signal ?? undefined });
+  const signal = init?.signal ?? undefined;
+  log.push({ origin: url.origin, path: url.pathname, key, signal });
   // The UI server answers every unmatched path with index.html (src/index.ts "/*").
   if (url.origin === UI_ORIGIN) return new Response("<!doctype html>", { status: 200, headers: { "Content-Type": "text/html" } });
   const server = url.origin === ORIGIN_A ? serverA : url.origin === ORIGIN_B ? serverB : undefined;
   if (!server) throw new TypeError("Failed to fetch");
-  await waitGate(server.gates[url.pathname], init?.signal ?? undefined);
+
+  if (server.ignoreAbort) {
+    if (server.ignoreAbortHang) {
+      await new Promise(() => {});
+    }
+    if (server.ignoreAbortDelayMs) {
+      await new Promise<void>(resolve => setTimeout(resolve, server.ignoreAbortDelayMs));
+    }
+  } else {
+    if (signal?.aborted) throw new DOMException("The operation was aborted.", "AbortError");
+    await waitGate(server.gates[url.pathname], signal);
+  }
+
   if (url.pathname === "/healthz") return json(server.health, { status: server.health < 400 ? "ok" : "error" });
   if (url.pathname === "/security/posture") {
+    if (server.postureBodyRejectsOnAbort) {
+      return hangingBody(signal, true);
+    }
+    if (server.postureBodyHangIgnoreAbort) {
+      return hangingBody(signal, false);
+    }
     if (server.postureMode === "html") {
       return new Response("<!doctype html>", { status: 200, headers: { "Content-Type": "text/html" } });
     }
@@ -818,7 +861,9 @@ describe("Connection check timeout", () => {
     storeSessionKey(GOOD_KEY);
     serverA.docs = [{ id: "doc-1", title: "Synthetic doc", text: "", metadata: {} }];
     await mount();
-    setConnectionCheckTimeoutMsForTests(80);
+    // Keep the bound longer than clickConnect's settle loop so "Connecting" is
+    // observable under slower toolchains (Bun 1.4.0) before the deadline fires.
+    setConnectionCheckTimeoutMsForTests(200);
     serverB.gates["/healthz"] = new Promise(() => {});
 
     await type("API base URL", ORIGIN_B);
@@ -826,7 +871,7 @@ describe("Connection check timeout", () => {
     await clickConnect();
     // Still pending before the injectable timeout fires.
     expect(connectButton().textContent).toBe("Connecting");
-    await waitForTimeout(120);
+    await waitForTimeout(280);
 
     expect(connectButton().textContent).toBe("Connected");
     expect(toasts()).toEqual([`Connect failed: ${ORIGIN_B} timed out. Still using ${ORIGIN_A}.`]);
@@ -923,5 +968,107 @@ describe("Connection check timeout", () => {
     expect(shown("Documents")).toBe("1");
     expect(sessionStorage.getItem("jr-autorag-api-key-origin")).toBe(ORIGIN_A);
     expect(connectButton().textContent).toBe("Connected");
+  });
+});
+
+describe("Connection check body-stream and abort-ignoring deadline", () => {
+  const waitForTimeout = async (ms = 80) => {
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, ms));
+    });
+    await settle();
+  };
+
+  test("a posture body still reading when the deadline fires is timed out, not unexpected response", async () => {
+    storeSessionKey(GOOD_KEY);
+    await mount();
+    setConnectionCheckTimeoutMsForTests(20);
+    serverB.postureBodyRejectsOnAbort = true;
+
+    await type("API base URL", ORIGIN_B);
+    await type("API key", GOOD_KEY);
+    await clickConnect();
+    await waitForTimeout(60);
+
+    expect(toasts()).toEqual([`Connect failed: ${ORIGIN_B} timed out. Still using ${ORIGIN_A}.`]);
+    expect(providerShown()).toBe("Provider A");
+    expect(connectButton().textContent).toBe("Connected");
+    expect(sessionStorage.getItem("jr-autorag-api-key-origin")).toBe(ORIGIN_A);
+  });
+
+  test("an abort-ignoring transport that answers after the deadline does not connect", async () => {
+    storeSessionKey(GOOD_KEY);
+    serverA.docs = [{ id: "doc-1", title: "Synthetic doc", text: "", metadata: {} }];
+    await mount();
+    setConnectionCheckTimeoutMsForTests(20);
+    serverB.ignoreAbort = true;
+    serverB.ignoreAbortDelayMs = 46;
+
+    await type("API base URL", ORIGIN_B);
+    await type("API key", GOOD_KEY);
+    await clickConnect();
+    await waitForTimeout(30);
+    expect(toasts()).toEqual([`Connect failed: ${ORIGIN_B} timed out. Still using ${ORIGIN_A}.`]);
+    expect(providerShown()).toBe("Provider A");
+
+    // Late success arrives after the operation settled; must not apply the draft.
+    await waitForTimeout(40);
+    await settle();
+
+    expect(toasts()).toEqual([`Connect failed: ${ORIGIN_B} timed out. Still using ${ORIGIN_A}.`]);
+    expect(providerShown()).toBe("Provider A");
+    expect(shown("Documents")).toBe("1");
+    expect(sessionStorage.getItem("jr-autorag-api-key-origin")).toBe(ORIGIN_A);
+    expect(connectButton().textContent).toBe("Connected");
+  });
+
+  test("an abort-ignoring never-resolving fetch settles as timed out instead of hanging", async () => {
+    storeSessionKey(GOOD_KEY);
+    await mount();
+    setConnectionCheckTimeoutMsForTests(20);
+    serverB.ignoreAbort = true;
+    serverB.ignoreAbortHang = true;
+
+    await type("API base URL", ORIGIN_B);
+    await type("API key", GOOD_KEY);
+    await clickConnect();
+    await waitForTimeout(60);
+
+    expect(toasts()).toEqual([`Connect failed: ${ORIGIN_B} timed out. Still using ${ORIGIN_A}.`]);
+    expect(providerShown()).toBe("Provider A");
+    expect(connectButton().textContent).toBe("Connected");
+  });
+
+  test("an abort-ignoring hanging posture body settles as timed out", async () => {
+    storeSessionKey(GOOD_KEY);
+    await mount();
+    setConnectionCheckTimeoutMsForTests(20);
+    serverB.postureBodyHangIgnoreAbort = true;
+
+    await type("API base URL", ORIGIN_B);
+    await type("API key", GOOD_KEY);
+    await clickConnect();
+    await waitForTimeout(60);
+
+    expect(toasts()).toEqual([`Connect failed: ${ORIGIN_B} timed out. Still using ${ORIGIN_A}.`]);
+    expect(providerShown()).toBe("Provider A");
+    expect(connectButton().textContent).toBe("Connected");
+  });
+
+  test("a late abort-ignoring heartbeat success after timeout does not restore Connected", async () => {
+    storeSessionKey(GOOD_KEY);
+    await mount();
+    expect(connectButton().textContent).toBe("Connected");
+    setConnectionCheckTimeoutMsForTests(20);
+    serverA.ignoreAbort = true;
+    serverA.ignoreAbortDelayMs = 46;
+
+    await tickHeartbeat();
+    await waitForTimeout(30);
+    expect(connectButton().textContent).toBe("Connect");
+
+    await waitForTimeout(40);
+    await settle();
+    expect(connectButton().textContent).toBe("Connect");
   });
 });

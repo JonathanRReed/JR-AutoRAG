@@ -84,11 +84,26 @@ const originOf = (value: string) => {
 type ConnectionCheck = { ok: true } | { ok: false; reason: string };
 
 // Bound each heartbeat/Connect probe so a hung host cannot spin Connect forever.
+// Deadline settles the caller-facing promise even when fetch/body ignore abort.
 export const CONNECTION_CHECK_TIMEOUT_MS = 10_000;
-let connectionCheckTimeoutMs = CONNECTION_CHECK_TIMEOUT_MS;
+
+export type ConnectionProbeTimeout = {
+  timeoutMs: number;
+};
+
+const defaultConnectionProbeTimeout: ConnectionProbeTimeout = {
+  timeoutMs: CONNECTION_CHECK_TIMEOUT_MS,
+};
+
+let connectionProbeTimeout: ConnectionProbeTimeout = defaultConnectionProbeTimeout;
+
+// Injectable timeout for tests. Prefer this over exporting mutable settle/epoch flags.
+export const setConnectionProbeTimeoutForTests = (timeout: ConnectionProbeTimeout | null) => {
+  connectionProbeTimeout = timeout == null ? defaultConnectionProbeTimeout : timeout;
+};
 
 export const setConnectionCheckTimeoutMsForTests = (ms: number | null) => {
-  connectionCheckTimeoutMs = ms == null ? CONNECTION_CHECK_TIMEOUT_MS : ms;
+  setConnectionProbeTimeoutForTests(ms == null ? null : { timeoutMs: ms });
 };
 
 const isHttpUrl = (value: string) => {
@@ -127,62 +142,115 @@ const isSecurityPostureProbeBody = (value: unknown): boolean => {
   return typeof (settings as Record<string, unknown>).auth_enabled === "boolean";
 };
 
-// /healthz is public. /security/posture is a small GET that needs only the
-// "read" scope. A 200 alone is not enough: the UI HTML fallback also returns
-// 200, so the body must match the posture contract (level, summary,
-// settings.auth_enabled) from schemas/security.py and types.ts.
-const checkConnection = async (baseUrl: string, apiKey: string, signal: AbortSignal): Promise<ConnectionCheck> => {
+// Fetch + posture body parse only. AbortError from fetch/body propagates so the
+// bounded wrapper can classify timeout vs external cancel. JSON parse failures
+// stay "unexpected response" and are not confused with abort.
+const runConnectionProbe = async (
+  baseUrl: string,
+  apiKey: string,
+  signal: AbortSignal,
+): Promise<ConnectionCheck> => {
+  const health = await fetch(buildApiUrl(baseUrl, "/healthz"), { method: "GET", signal });
+  if (!health.ok) {
+    return { ok: false, reason: `returned HTTP ${health.status} for /healthz` };
+  }
+  const key = apiKey.trim();
+  const probe = await fetch(buildApiUrl(baseUrl, "/security/posture"), {
+    method: "GET",
+    headers: key ? { "X-API-Key": key } : undefined,
+    signal,
+  });
+  if (probe.status === 401 || probe.status === 403) {
+    return { ok: false, reason: `rejected the API key (HTTP ${probe.status})` };
+  }
+  if (!probe.ok) {
+    return { ok: false, reason: `returned HTTP ${probe.status} for /security/posture` };
+  }
+  const text = await probe.text();
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    return { ok: false, reason: "returned an unexpected response for /security/posture" };
+  }
+  if (!isSecurityPostureProbeBody(body)) {
+    return { ok: false, reason: "returned an unexpected response for /security/posture" };
+  }
+  return { ok: true };
+};
+
+// Shared by heartbeat and Connect. Settles at the deadline independently of
+// whether fetch or the response body honor abort, while still aborting the
+// transport and cleaning the timer + external listener. A late probe result
+// cannot resolve again after the operation has settled.
+const checkConnection = (
+  baseUrl: string,
+  apiKey: string,
+  signal: AbortSignal,
+): Promise<ConnectionCheck> => {
   // Without a scheme, fetch resolves the URL against the page, and the UI
   // server answers every unknown path with index.html and HTTP 200.
   if (!isHttpUrl(baseUrl)) {
-    return { ok: false, reason: "is not an http:// or https:// URL" };
+    return Promise.resolve({ ok: false, reason: "is not an http:// or https:// URL" });
   }
-  const local = new AbortController();
-  const onExternalAbort = () => local.abort();
   if (signal.aborted) {
-    return { ok: false, reason: "is unreachable" };
+    return Promise.resolve({ ok: false, reason: "is unreachable" });
   }
-  signal.addEventListener("abort", onExternalAbort);
-  const timer = setTimeout(() => local.abort(), connectionCheckTimeoutMs);
-  try {
-    const health = await fetch(buildApiUrl(baseUrl, "/healthz"), { method: "GET", signal: local.signal });
-    if (!health.ok) {
-      return { ok: false, reason: `returned HTTP ${health.status} for /healthz` };
-    }
-    const key = apiKey.trim();
-    const probe = await fetch(buildApiUrl(baseUrl, "/security/posture"), {
-      method: "GET",
-      headers: key ? { "X-API-Key": key } : undefined,
-      signal: local.signal,
-    });
-    if (probe.status === 401 || probe.status === 403) {
-      return { ok: false, reason: `rejected the API key (HTTP ${probe.status})` };
-    }
-    if (!probe.ok) {
-      return { ok: false, reason: `returned HTTP ${probe.status} for /security/posture` };
-    }
-    let body: unknown;
-    try {
-      body = JSON.parse(await probe.text());
-    } catch {
-      return { ok: false, reason: "returned an unexpected response for /security/posture" };
-    }
-    if (!isSecurityPostureProbeBody(body)) {
-      return { ok: false, reason: "returned an unexpected response for /security/posture" };
-    }
-    return { ok: true };
-  } catch {
-    if (signal.aborted) {
-      return { ok: false, reason: "is unreachable" };
-    }
-    if (local.signal.aborted) {
-      return { ok: false, reason: "timed out" };
-    }
-    return { ok: false, reason: "is unreachable" };
-  } finally {
-    clearTimeout(timer);
-    signal.removeEventListener("abort", onExternalAbort);
-  }
+
+  const local = new AbortController();
+  let settled = false;
+
+  return new Promise<ConnectionCheck>(resolve => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const finish = (result: ConnectionCheck) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timer !== undefined) {
+        clearTimeout(timer);
+      }
+      signal.removeEventListener("abort", onExternalAbort);
+      resolve(result);
+    };
+
+    const onExternalAbort = () => {
+      local.abort();
+      finish({ ok: false, reason: "is unreachable" });
+    };
+    signal.addEventListener("abort", onExternalAbort);
+
+    timer = setTimeout(() => {
+      local.abort();
+      finish({ ok: false, reason: "timed out" });
+    }, connectionProbeTimeout.timeoutMs);
+
+    runConnectionProbe(baseUrl, apiKey, local.signal).then(
+      result => {
+        if (signal.aborted) {
+          finish({ ok: false, reason: "is unreachable" });
+          return;
+        }
+        if (local.signal.aborted) {
+          finish({ ok: false, reason: "timed out" });
+          return;
+        }
+        finish(result);
+      },
+      () => {
+        if (signal.aborted) {
+          finish({ ok: false, reason: "is unreachable" });
+          return;
+        }
+        if (local.signal.aborted) {
+          finish({ ok: false, reason: "timed out" });
+          return;
+        }
+        finish({ ok: false, reason: "is unreachable" });
+      },
+    );
+  });
 };
 
 const readStoredJson = <T,>(key: string, fallback: T): T => {
