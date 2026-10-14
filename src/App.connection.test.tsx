@@ -7,7 +7,10 @@ GlobalRegistrator.register({ url: `${UI_ORIGIN}/` });
 
 const { act, createElement } = await import("react");
 const { createRoot } = await import("react-dom/client");
-const { App } = await import("./App");
+const appModule = await import("./App");
+const { App } = appModule;
+const setConnectionCheckTimeoutMsForTests =
+  appModule.setConnectionCheckTimeoutMsForTests ?? ((_: number | null) => {});
 const { ToastProvider } = await import("@/components/ui/toast");
 
 // Synthetic values only. No real key or provider is ever contacted: every
@@ -31,8 +34,57 @@ type Server = {
   provider: string;
   docs: unknown[];
   gates: Record<string, Promise<unknown>>;
+  // Default is a minimal real posture body. Overrides model HTML/fallback and bad JSON.
+  postureMode?: "json" | "html" | "empty" | "malformed";
+  postureBody?: unknown;
 };
 const ADMIN_PATHS = ["/config", "/monitoring/traces", "/providers/local"];
+
+const postureFor = (server: Server) =>
+  server.postureBody ?? {
+    level: "local_only",
+    summary: "synthetic",
+    settings: {
+      auth_enabled: server.key !== null,
+      api_keys_configured: server.key !== null,
+      exposed_mode: false,
+      rate_limit_enabled: true,
+      allowed_origin_count: 1,
+      wildcard_cors: false,
+      docs_public: true,
+    },
+    checks: [],
+    recommendations: [],
+  };
+
+const waitGate = async (gate: Promise<unknown> | undefined, signal?: AbortSignal) => {
+  if (!gate) return;
+  if (!signal) {
+    await gate;
+    return;
+  }
+  await new Promise<void>((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new DOMException("The operation was aborted.", "AbortError"));
+      return;
+    }
+    const onAbort = () => {
+      signal.removeEventListener("abort", onAbort);
+      reject(new DOMException("The operation was aborted.", "AbortError"));
+    };
+    signal.addEventListener("abort", onAbort);
+    gate.then(
+      () => {
+        signal.removeEventListener("abort", onAbort);
+        resolve();
+      },
+      err => {
+        signal.removeEventListener("abort", onAbort);
+        reject(err);
+      },
+    );
+  });
+};
 
 let serverA: Server;
 let serverB: Server;
@@ -59,7 +111,7 @@ const configFor = (provider: string) => ({
 const protectedBody = (path: string, server: Server) => {
   if (path === "/config") return configFor(server.provider);
   if (path === "/monitoring/cache") return {};
-  if (path === "/security/posture") return { level: "local_only", summary: "synthetic", settings: {}, checks: [] };
+  if (path === "/security/posture") return postureFor(server);
   if (path === "/onboarding") {
     return {
       flow: { steps: [], current_step: 0, progress: 0, is_complete: false },
@@ -86,8 +138,19 @@ const fakeFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   if (url.origin === UI_ORIGIN) return new Response("<!doctype html>", { status: 200, headers: { "Content-Type": "text/html" } });
   const server = url.origin === ORIGIN_A ? serverA : url.origin === ORIGIN_B ? serverB : undefined;
   if (!server) throw new TypeError("Failed to fetch");
-  await server.gates[url.pathname];
+  await waitGate(server.gates[url.pathname], init?.signal ?? undefined);
   if (url.pathname === "/healthz") return json(server.health, { status: server.health < 400 ? "ok" : "error" });
+  if (url.pathname === "/security/posture") {
+    if (server.postureMode === "html") {
+      return new Response("<!doctype html>", { status: 200, headers: { "Content-Type": "text/html" } });
+    }
+    if (server.postureMode === "empty") {
+      return new Response("", { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (server.postureMode === "malformed") {
+      return new Response("{not-json", { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+  }
   if (server.key !== null && key === null) return json(401, { detail: "API key required. Provide X-API-Key header." });
   const readOnly = key !== null && key === server.readKey && !ADMIN_PATHS.includes(url.pathname);
   if (server.key !== null && key !== server.key && !readOnly) return json(403, { detail: "Invalid API key or insufficient permissions." });
@@ -180,6 +243,7 @@ beforeEach(() => {
   log = [];
   serverA = { health: 200, key: GOOD_KEY, readKey: null, provider: "Provider A", docs: [], gates: {} };
   serverB = { health: 200, key: GOOD_KEY, readKey: null, provider: "Provider B", docs: [], gates: {} };
+  setConnectionCheckTimeoutMsForTests(null);
   globalThis.fetch = fakeFetch;
   heartbeat = undefined;
   globalThis.setInterval = ((handler: () => void, ms?: number) => {
@@ -194,6 +258,7 @@ afterEach(async () => {
     root = null;
   }
   container?.remove();
+  setConnectionCheckTimeoutMsForTests(null);
   globalThis.fetch = realFetch;
   globalThis.setInterval = realSetInterval;
 });
@@ -323,17 +388,21 @@ describe("API connection lifecycle", () => {
 
   test("unmount aborts in-flight protected requests and heartbeat checks", async () => {
     storeSessionKey(GOOD_KEY);
+    // Hold both so the signals under test are still in flight at unmount.
+    // checkConnection uses a linked local controller per probe; a completed
+    // probe's signal is no longer aborted by the effect cleanup.
     serverA.gates["/config"] = new Promise<void>(() => {});
+    serverA.gates["/healthz"] = new Promise<void>(() => {});
     await mount();
     const pending = log.filter(entry => entry.path === "/config");
+    const heartbeats = log.filter(entry => entry.path === "/healthz");
     expect(pending.length).toBeGreaterThan(0);
+    expect(heartbeats.length).toBeGreaterThan(0);
 
     await act(async () => root!.unmount());
     root = null;
 
     expect(pending.every(entry => entry.signal?.aborted === true)).toBe(true);
-    const heartbeats = log.filter(entry => entry.path === "/healthz");
-    expect(heartbeats.length).toBeGreaterThan(0);
     expect(heartbeats.every(entry => entry.signal?.aborted === true)).toBe(true);
   });
 });
@@ -621,5 +690,238 @@ describe("Status ordering", () => {
     expect(toasts()).toEqual([`Connect failed: 127.0.0.1:8000 is not an http:// or https:// URL. Still using ${ORIGIN_A}.`]);
     expect(connectButton().textContent).toBe("Connected");
     expect(providerShown()).toBe("Provider A");
+  });
+});
+
+describe("Posture probe contract", () => {
+  test("an absolute UI origin HTML 200 is not reported as connected", async () => {
+    storeSessionKey(GOOD_KEY);
+    serverA.docs = [{ id: "doc-1", title: "Synthetic doc", text: "", metadata: {} }];
+    await mount();
+    expect(providerShown()).toBe("Provider A");
+    expect(shown("Documents")).toBe("1");
+
+    await type("API base URL", UI_ORIGIN);
+    await type("API key", "synthetic-ui-key");
+    await clickConnect();
+
+    expect(toasts()).toEqual([
+      `Connect failed: ${UI_ORIGIN} returned an unexpected response for /security/posture. Still using ${ORIGIN_A}.`,
+    ]);
+    expect(connectButton().textContent).toBe("Connected");
+    expect(providerShown()).toBe("Provider A");
+    expect(shown("Documents")).toBe("1");
+    expect(sessionStorage.getItem("jr-autorag-api-key")).toBe(GOOD_KEY);
+    expect(sessionStorage.getItem("jr-autorag-api-key-origin")).toBe(ORIGIN_A);
+  });
+
+  test("HTML 200 from /security/posture is refused and keeps the previous connection", async () => {
+    storeSessionKey(GOOD_KEY);
+    serverA.docs = [{ id: "doc-1", title: "Synthetic doc", text: "", metadata: {} }];
+    await mount();
+    serverB.postureMode = "html";
+
+    await type("API base URL", ORIGIN_B);
+    await type("API key", GOOD_KEY);
+    await clickConnect();
+
+    expect(toasts()).toEqual([
+      `Connect failed: ${ORIGIN_B} returned an unexpected response for /security/posture. Still using ${ORIGIN_A}.`,
+    ]);
+    expect(providerShown()).toBe("Provider A");
+    expect(shown("Documents")).toBe("1");
+    expect(sessionStorage.getItem("jr-autorag-api-key-origin")).toBe(ORIGIN_A);
+  });
+
+  test("malformed JSON from /security/posture is refused", async () => {
+    storeSessionKey(GOOD_KEY);
+    await mount();
+    serverB.postureMode = "malformed";
+
+    await type("API base URL", ORIGIN_B);
+    await type("API key", GOOD_KEY);
+    await clickConnect();
+
+    expect(toasts().at(-1)).toBe(
+      `Connect failed: ${ORIGIN_B} returned an unexpected response for /security/posture. Still using ${ORIGIN_A}.`,
+    );
+    expect(providerShown()).toBe("Provider A");
+  });
+
+  test("unrelated JSON from /security/posture is refused", async () => {
+    storeSessionKey(GOOD_KEY);
+    await mount();
+    serverB.postureBody = { status: "ok", healthy: true };
+
+    await type("API base URL", ORIGIN_B);
+    await type("API key", GOOD_KEY);
+    await clickConnect();
+
+    expect(toasts().at(-1)).toBe(
+      `Connect failed: ${ORIGIN_B} returned an unexpected response for /security/posture. Still using ${ORIGIN_A}.`,
+    );
+    expect(providerShown()).toBe("Provider A");
+  });
+
+  test("incomplete posture JSON missing settings.auth_enabled is refused", async () => {
+    storeSessionKey(GOOD_KEY);
+    await mount();
+    serverB.postureBody = { level: "local_only", summary: "synthetic", settings: {}, checks: [] };
+
+    await type("API base URL", ORIGIN_B);
+    await type("API key", GOOD_KEY);
+    await clickConnect();
+
+    expect(toasts().at(-1)).toBe(
+      `Connect failed: ${ORIGIN_B} returned an unexpected response for /security/posture. Still using ${ORIGIN_A}.`,
+    );
+    expect(providerShown()).toBe("Provider A");
+  });
+
+  test("auth-disabled posture (auth_enabled false) still connects", async () => {
+    storeSessionKey(GOOD_KEY);
+    await mount();
+    serverB.key = null;
+
+    await type("API base URL", ORIGIN_B);
+    await type("API key", "");
+    await clickConnect();
+
+    expect(connectButton().textContent).toBe("Connected");
+    expect(providerShown()).toBe("Provider B");
+    expect(toasts()).toEqual([`Connected: ${ORIGIN_B}`]);
+  });
+
+  test("a valid read-only key still connects when posture matches the contract", async () => {
+    storeSessionKey(GOOD_KEY);
+    serverA.readKey = READ_KEY;
+    await mount();
+
+    await type("API key", READ_KEY);
+    await clickConnect();
+
+    expect(connectButton().textContent).toBe("Connected");
+    expect(sessionStorage.getItem("jr-autorag-api-key")).toBe(READ_KEY);
+    expect(log.some(entry => entry.path === "/security/posture" && entry.key === READ_KEY)).toBe(true);
+  });
+});
+
+describe("Connection check timeout", () => {
+  const waitForTimeout = async (ms = 80) => {
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, ms));
+    });
+    await settle();
+  };
+
+  test("a never-resolving /healthz probe times out Connect and keeps the previous connection", async () => {
+    storeSessionKey(GOOD_KEY);
+    serverA.docs = [{ id: "doc-1", title: "Synthetic doc", text: "", metadata: {} }];
+    await mount();
+    setConnectionCheckTimeoutMsForTests(80);
+    serverB.gates["/healthz"] = new Promise(() => {});
+
+    await type("API base URL", ORIGIN_B);
+    await type("API key", GOOD_KEY);
+    await clickConnect();
+    // Still pending before the injectable timeout fires.
+    expect(connectButton().textContent).toBe("Connecting");
+    await waitForTimeout(120);
+
+    expect(connectButton().textContent).toBe("Connected");
+    expect(toasts()).toEqual([`Connect failed: ${ORIGIN_B} timed out. Still using ${ORIGIN_A}.`]);
+    expect(providerShown()).toBe("Provider A");
+    expect(shown("Documents")).toBe("1");
+    expect(log.filter(entry => entry.origin === ORIGIN_B).every(entry => entry.signal?.aborted === true)).toBe(true);
+  });
+
+  test("a never-resolving /security/posture probe times out Connect", async () => {
+    storeSessionKey(GOOD_KEY);
+    await mount();
+    setConnectionCheckTimeoutMsForTests(40);
+    serverB.gates["/security/posture"] = new Promise(() => {});
+
+    await type("API base URL", ORIGIN_B);
+    await type("API key", GOOD_KEY);
+    await clickConnect();
+    await waitForTimeout();
+
+    expect(toasts()).toEqual([`Connect failed: ${ORIGIN_B} timed out. Still using ${ORIGIN_A}.`]);
+    expect(providerShown()).toBe("Provider A");
+    expect(connectButton().textContent).toBe("Connected");
+  });
+
+  test("a never-resolving heartbeat health probe times out and clears Connected", async () => {
+    storeSessionKey(GOOD_KEY);
+    await mount();
+    expect(connectButton().textContent).toBe("Connected");
+    setConnectionCheckTimeoutMsForTests(40);
+    serverA.gates["/healthz"] = new Promise(() => {});
+    await tickHeartbeat();
+    await waitForTimeout();
+
+    expect(connectButton().textContent).toBe("Connect");
+    expect(log.filter(entry => entry.path === "/healthz").at(-1)?.signal?.aborted).toBe(true);
+  });
+
+  test("editing the draft while a timed Connect is pending cancels it without a timeout toast", async () => {
+    storeSessionKey(GOOD_KEY);
+    await mount();
+    setConnectionCheckTimeoutMsForTests(200);
+    serverB.gates["/healthz"] = new Promise(() => {});
+
+    await type("API base URL", ORIGIN_B);
+    await type("API key", GOOD_KEY);
+    await clickConnect();
+    expect(connectButton().textContent).toBe("Connecting");
+    await type("API key", "synthetic-newer-draft");
+    expect(connectButton().textContent).toBe("Connected");
+    await waitForTimeout(250);
+
+    expect(toasts()).toEqual([]);
+    expect(input("API key").value).toBe("synthetic-newer-draft");
+    expect(providerShown()).toBe("Provider A");
+  });
+
+  test("unmount aborts a pending Connect timeout and its in-flight fetches", async () => {
+    storeSessionKey(GOOD_KEY);
+    await mount();
+    setConnectionCheckTimeoutMsForTests(200);
+    serverB.gates["/healthz"] = new Promise(() => {});
+
+    await type("API base URL", ORIGIN_B);
+    await type("API key", GOOD_KEY);
+    await clickConnect();
+    const pending = log.filter(entry => entry.origin === ORIGIN_B);
+    expect(pending.length).toBeGreaterThan(0);
+
+    await act(async () => root!.unmount());
+    root = null;
+
+    expect(pending.every(entry => entry.signal?.aborted === true)).toBe(true);
+  });
+
+  test("a late reply after timeout does not apply the draft connection", async () => {
+    storeSessionKey(GOOD_KEY);
+    serverA.docs = [{ id: "doc-1", title: "Synthetic doc", text: "", metadata: {} }];
+    await mount();
+    setConnectionCheckTimeoutMsForTests(40);
+    const gate = deferred();
+    serverB.gates["/healthz"] = gate.promise;
+
+    await type("API base URL", ORIGIN_B);
+    await type("API key", GOOD_KEY);
+    await clickConnect();
+    await waitForTimeout();
+    expect(toasts()).toEqual([`Connect failed: ${ORIGIN_B} timed out. Still using ${ORIGIN_A}.`]);
+    expect(providerShown()).toBe("Provider A");
+
+    await release(gate);
+    await settle();
+
+    expect(providerShown()).toBe("Provider A");
+    expect(shown("Documents")).toBe("1");
+    expect(sessionStorage.getItem("jr-autorag-api-key-origin")).toBe(ORIGIN_A);
+    expect(connectButton().textContent).toBe("Connected");
   });
 });

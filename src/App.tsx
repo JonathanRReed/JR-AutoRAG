@@ -83,6 +83,14 @@ const originOf = (value: string) => {
 
 type ConnectionCheck = { ok: true } | { ok: false; reason: string };
 
+// Bound each heartbeat/Connect probe so a hung host cannot spin Connect forever.
+export const CONNECTION_CHECK_TIMEOUT_MS = 10_000;
+let connectionCheckTimeoutMs = CONNECTION_CHECK_TIMEOUT_MS;
+
+export const setConnectionCheckTimeoutMsForTests = (ms: number | null) => {
+  connectionCheckTimeoutMs = ms == null ? CONNECTION_CHECK_TIMEOUT_MS : ms;
+};
+
 const isHttpUrl = (value: string) => {
   try {
     const { protocol } = new URL(value);
@@ -92,16 +100,52 @@ const isHttpUrl = (value: string) => {
   }
 };
 
+// Minimal fields agreed by api/app/schemas/security.py SecurityPostureResponse
+// and src/types.ts SecurityPostureResponse. Present with auth on or off.
+const SECURITY_POSTURE_LEVELS = new Set([
+  "local_only",
+  "client_ready",
+  "needs_attention",
+  "unsafe",
+]);
+
+const isSecurityPostureProbeBody = (value: unknown): boolean => {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const body = value as Record<string, unknown>;
+  if (typeof body.level !== "string" || !SECURITY_POSTURE_LEVELS.has(body.level)) {
+    return false;
+  }
+  if (typeof body.summary !== "string") {
+    return false;
+  }
+  const settings = body.settings;
+  if (!settings || typeof settings !== "object") {
+    return false;
+  }
+  return typeof (settings as Record<string, unknown>).auth_enabled === "boolean";
+};
+
 // /healthz is public. /security/posture is a small GET that needs only the
-// "read" scope, so a 200 there means this key works, or that auth is off.
+// "read" scope. A 200 alone is not enough: the UI HTML fallback also returns
+// 200, so the body must match the posture contract (level, summary,
+// settings.auth_enabled) from schemas/security.py and types.ts.
 const checkConnection = async (baseUrl: string, apiKey: string, signal: AbortSignal): Promise<ConnectionCheck> => {
   // Without a scheme, fetch resolves the URL against the page, and the UI
   // server answers every unknown path with index.html and HTTP 200.
   if (!isHttpUrl(baseUrl)) {
     return { ok: false, reason: "is not an http:// or https:// URL" };
   }
+  const local = new AbortController();
+  const onExternalAbort = () => local.abort();
+  if (signal.aborted) {
+    return { ok: false, reason: "is unreachable" };
+  }
+  signal.addEventListener("abort", onExternalAbort);
+  const timer = setTimeout(() => local.abort(), connectionCheckTimeoutMs);
   try {
-    const health = await fetch(buildApiUrl(baseUrl, "/healthz"), { method: "GET", signal });
+    const health = await fetch(buildApiUrl(baseUrl, "/healthz"), { method: "GET", signal: local.signal });
     if (!health.ok) {
       return { ok: false, reason: `returned HTTP ${health.status} for /healthz` };
     }
@@ -109,7 +153,7 @@ const checkConnection = async (baseUrl: string, apiKey: string, signal: AbortSig
     const probe = await fetch(buildApiUrl(baseUrl, "/security/posture"), {
       method: "GET",
       headers: key ? { "X-API-Key": key } : undefined,
-      signal,
+      signal: local.signal,
     });
     if (probe.status === 401 || probe.status === 403) {
       return { ok: false, reason: `rejected the API key (HTTP ${probe.status})` };
@@ -117,9 +161,27 @@ const checkConnection = async (baseUrl: string, apiKey: string, signal: AbortSig
     if (!probe.ok) {
       return { ok: false, reason: `returned HTTP ${probe.status} for /security/posture` };
     }
+    let body: unknown;
+    try {
+      body = JSON.parse(await probe.text());
+    } catch {
+      return { ok: false, reason: "returned an unexpected response for /security/posture" };
+    }
+    if (!isSecurityPostureProbeBody(body)) {
+      return { ok: false, reason: "returned an unexpected response for /security/posture" };
+    }
     return { ok: true };
   } catch {
+    if (signal.aborted) {
+      return { ok: false, reason: "is unreachable" };
+    }
+    if (local.signal.aborted) {
+      return { ok: false, reason: "timed out" };
+    }
     return { ok: false, reason: "is unreachable" };
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener("abort", onExternalAbort);
   }
 };
 
