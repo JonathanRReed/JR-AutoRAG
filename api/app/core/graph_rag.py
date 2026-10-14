@@ -13,6 +13,7 @@ Paper: https://arxiv.org/abs/2404.16130
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -22,6 +23,47 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from .gatherer import EvidenceChunk
     from .providers import LLMProvider
+
+
+_JSON_WHITESPACE = " \t\n\r"
+
+
+def _strip_trailing_commas(text: str) -> str:
+    """Drop commas outside JSON strings whose next non-whitespace character is } or ]."""
+    out: list[str] = []
+    in_string = False
+    escaped = False
+    end = len(text)
+    for i, ch in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+        elif ch == '"':
+            in_string = True
+        elif ch == ",":
+            j = i + 1
+            while j < end and text[j] in _JSON_WHITESPACE:
+                j += 1
+            if j < end and text[j] in "}]":
+                continue
+        out.append(ch)
+    return "".join(out)
+
+
+def _parse_llm_json(text: str) -> dict[str, Any] | None:
+    """Parse strict JSON, then retry once after structural trailing-comma repair."""
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        try:
+            data = json.loads(_strip_trailing_commas(text))
+        except json.JSONDecodeError:
+            return None
+    return data if isinstance(data, dict) else None
 
 
 class EntityType(str, Enum):
@@ -134,7 +176,6 @@ STRICT FORMATTING RULES:
     ) -> tuple[list[Entity], list[Relationship]]:
         """Extract both entities and relationships in a single pass with retries."""
         import asyncio
-        import json
         import re
 
         prompt = self.KNOWLEDGE_EXTRACTION_PROMPT.format(text=chunk_text[:2500])
@@ -160,20 +201,11 @@ STRICT FORMATTING RULES:
                     if json_match:
                         clean_response = json_match.group(1)
 
-                # Simple repair: remove trailing commas before closing braces/brackets
-                clean_response = re.sub(r',\s*([}\]])', r'\1', clean_response)
-
-                try:
-                    data = json.loads(clean_response)
-                except json.JSONDecodeError:
-                    # Fallback: try to fix unescaped quotes if safe
-                    try:
-                        clean_response_fixed = clean_response.replace("'", '"')
-                        data = json.loads(clean_response_fixed)
-                    except Exception:
-                        if attempt < 2:
-                            continue  # Retry on parse error
-                        raise ValueError(f"Failed to parse JSON: {clean_response[:100]}...")
+                data = _parse_llm_json(clean_response)
+                if data is None:
+                    if attempt < 2:
+                        continue  # Retry on parse error
+                    raise ValueError(f"Failed to parse JSON: {clean_response[:100]}...")
 
                 entities = []
                 for e_data in data.get("entities", []):
