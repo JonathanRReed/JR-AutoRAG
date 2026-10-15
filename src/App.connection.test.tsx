@@ -61,6 +61,7 @@ type Server = {
 type LiveStreamHandle = {
   push: (events: Array<Record<string, unknown>>) => void;
   close: () => void;
+  error: (reason: unknown) => void;
 };
 let liveStreams: LiveStreamHandle[] = [];
 const ADMIN_PATHS = ["/config", "/monitoring/traces", "/providers/local"];
@@ -256,6 +257,13 @@ const fakeFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
             // already closed
           }
         },
+        error(reason) {
+          try {
+            streamController.error(reason);
+          } catch {
+            // already closed
+          }
+        },
       };
       liveStreams.push(handle);
       return new Response(stream, { status: 200, headers: { "Content-Type": "text/event-stream" } });
@@ -336,10 +344,12 @@ const toasts = () =>
 
 const deferred = () => {
   let resolve!: () => void;
-  const promise = new Promise<void>(res => {
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<void>((res, rej) => {
     resolve = res;
+    reject = rej;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 };
 
 const release = async (gate: { resolve: () => void }) => {
@@ -1501,12 +1511,133 @@ describe("Query ownership", () => {
     await clickConnect();
     expect(connectButton().textContent).toBe("Connected");
 
-    serverA.streamEvents = [resultEvent("should not appear", "trace-switch")];
-    await release(stream);
+    // The replaced stream's fetch rejects (network failure), not a late success.
+    await act(async () => {
+      stream.reject(new TypeError("Failed to fetch"));
+    });
     await settle();
 
-    expect(container.textContent).not.toContain("should not appear");
     expect(toasts().some(t => t.includes("Query interrupted"))).toBe(false);
+    expect(container.textContent).not.toContain("Failed to fetch");
+    expect(container.textContent).not.toMatch(/Query failed:/);
+    expect(connectButton().textContent).toBe("Connected");
     expect(providerShown()).toBe("Provider B");
+  });
+
+  test("an old stream reader error after URL/key switch does not toast Query interrupted", async () => {
+    storeSessionKey(GOOD_KEY);
+    serverA.liveStream = true;
+    await mount();
+    await askQuestion("switch reader error question");
+    expect(liveStreams.length).toBe(1);
+    liveStreams[0]!.push([{ type: "stage", data: { name: "answering" } }]);
+    await settle();
+
+    await type("API base URL", ORIGIN_B);
+    await type("API key", GOOD_KEY);
+    await clickConnect();
+    expect(connectButton().textContent).toBe("Connected");
+
+    liveStreams[0]!.error(new TypeError("network error while reading"));
+    await settle();
+
+    expect(toasts().some(t => t.includes("Query interrupted"))).toBe(false);
+    expect(container.textContent).not.toContain("network error while reading");
+    expect(connectButton().textContent).toBe("Connected");
+    expect(providerShown()).toBe("Provider B");
+  });
+});
+
+describe("Cancel across a connection switch", () => {
+  // Ask on A, get a trace id, press Cancel while the cancel POST is held, then
+  // apply B with no newer Ask. The held reply belongs to A and must stay silent.
+  const cancelThenSwitch = async (cancelGate: Promise<unknown>) => {
+    storeSessionKey(GOOD_KEY);
+    serverA.liveStream = true;
+    serverA.cancelGate = cancelGate;
+    serverA.cancelIgnoreAbort = true;
+    await mount();
+    await askQuestion("cancel then switch");
+    liveStreams[0]!.push([progressEvent("trace-switch-cancel")]);
+    await settle();
+    await clickCancel();
+    expect(log.some(entry => entry.path === "/query/cancel" && entry.origin === ORIGIN_A)).toBe(true);
+
+    await type("API base URL", ORIGIN_B);
+    await type("API key", GOOD_KEY);
+    await clickConnect();
+    expect(connectButton().textContent).toBe("Connected");
+    expect(providerShown()).toBe("Provider B");
+  };
+
+  const expectCurrentConnectionUntouched = () => {
+    expect(toasts().some(t => /Query cancelled|Cancel failed|Stopped streaming/.test(t))).toBe(false);
+    expect(container.textContent).not.toMatch(/Query cancelled|Cancel failed/);
+    expect(connectButton().textContent).toBe("Connected");
+    expect(providerShown()).toBe("Provider B");
+  };
+
+  test("a delayed cancel success after URL/key switch does not announce cancellation", async () => {
+    const hold = deferred();
+    await cancelThenSwitch(hold.promise);
+    const toastsBefore = toasts().length;
+    await release(hold);
+    await settle();
+    expectCurrentConnectionUntouched();
+    expect(toasts().length).toBe(toastsBefore);
+  });
+
+  test("a delayed cancel HTTP failure after URL/key switch stays silent", async () => {
+    const hold = deferred();
+    serverA.cancelStatus = 500;
+    await cancelThenSwitch(hold.promise);
+    const toastsBefore = toasts().length;
+    await release(hold);
+    await settle();
+    expectCurrentConnectionUntouched();
+    expect(toasts().length).toBe(toastsBefore);
+  });
+
+  test("a delayed cancel network failure after URL/key switch stays silent", async () => {
+    const hold = deferred();
+    await cancelThenSwitch(hold.promise);
+    const toastsBefore = toasts().length;
+    await act(async () => {
+      hold.reject(new TypeError("Failed to fetch"));
+    });
+    await settle();
+    expectCurrentConnectionUntouched();
+    expect(toasts().length).toBe(toastsBefore);
+  });
+
+  test("a cancel HTTP failure with no replacement tells the user it failed", async () => {
+    storeSessionKey(GOOD_KEY);
+    serverA.liveStream = true;
+    serverA.cancelStatus = 500;
+    await mount();
+    await askQuestion("cancel fails in place");
+    liveStreams[0]!.push([progressEvent("trace-cancel-fails")]);
+    await settle();
+    await clickCancel();
+    await settle();
+
+    const failed = toasts().find(t => t.includes("Cancel failed"));
+    expect(failed).toBeTruthy();
+    expect(failed).not.toBe("Cancel failed");
+    expect(toasts().some(t => t.includes("Query cancelled"))).toBe(false);
+  });
+
+  test("cancel before the server reports a trace says only local streaming stopped", async () => {
+    storeSessionKey(GOOD_KEY);
+    serverA.liveStream = true;
+    await mount();
+    await askQuestion("cancel before trace");
+    liveStreams[0]!.push([{ type: "stage", data: { name: "answering" } }]);
+    await settle();
+    await clickCancel();
+
+    expect(log.some(entry => entry.path === "/query/cancel")).toBe(false);
+    expect(toasts().some(t => t.includes("Stopped streaming") && t.includes("not asked to cancel"))).toBe(true);
+    expect(toasts().some(t => t.includes("Query cancelled"))).toBe(false);
   });
 });

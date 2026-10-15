@@ -1339,12 +1339,18 @@ export function App() {
     }
 
     if (!traceId) {
-      setStatus("Query cancelled");
-      toast({ title: "Query cancelled", variant: "info" });
+      // No trace id yet, so there is nothing to ask the server to cancel. Only the
+      // local stream stopped; the server may still finish this query.
+      const message = "Stopped streaming. The server had not reported this query yet, so it was not asked to cancel.";
+      setStatus(message);
+      toast({ title: "Stopped streaming", description: message, variant: "info" });
       return;
     }
 
-    const noNewerQuery = () => queryIdSeq.current === cancelledQueryId;
+    // A late cancel reply may only report on the connection and query it was sent
+    // for: not after a newer Ask, and not after Connect applied another URL/key.
+    const noNewerQuery = () =>
+      queryIdSeq.current === cancelledQueryId && connectionGeneration.current === transport.generation;
 
     try {
       const response = await fetch(cancelUrl, { method: "POST", headers: cancelHeaders });
