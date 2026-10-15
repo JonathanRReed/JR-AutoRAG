@@ -34,6 +34,8 @@ type Server = {
   provider: string;
   docs: unknown[];
   gates: Record<string, Promise<unknown>>;
+  // Paths whose gates ignore abort so a late body can still arrive after switch.
+  ignoreGateAbort?: Record<string, true>;
   // Default is a minimal real posture body. Overrides model HTML/fallback and bad JSON.
   postureMode?: "json" | "html" | "empty" | "malformed";
   postureBody?: unknown;
@@ -45,7 +47,23 @@ type Server = {
   ignoreAbort?: boolean;
   ignoreAbortDelayMs?: number;
   ignoreAbortHang?: boolean;
+  // Held /query/stream responses for connection-scoping tests.
+  streamGate?: Promise<unknown>;
+  streamIgnoreAbort?: boolean;
+  streamEvents?: Array<Record<string, unknown>>;
+  // Pushable SSE body for cancel / ownership races. When set, /query/stream
+  // returns this live stream instead of a one-shot events payload.
+  liveStream?: boolean;
+  cancelGate?: Promise<unknown>;
+  cancelStatus?: number;
+  cancelIgnoreAbort?: boolean;
 };
+type LiveStreamHandle = {
+  push: (events: Array<Record<string, unknown>>) => void;
+  close: () => void;
+  error: (reason: unknown) => void;
+};
+let liveStreams: LiveStreamHandle[] = [];
 const ADMIN_PATHS = ["/config", "/monitoring/traces", "/providers/local"];
 
 const postureFor = (server: Server) =>
@@ -172,8 +190,17 @@ const fakeFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       await new Promise<void>(resolve => setTimeout(resolve, server.ignoreAbortDelayMs));
     }
   } else {
-    if (signal?.aborted) throw new DOMException("The operation was aborted.", "AbortError");
-    await waitGate(server.gates[url.pathname], signal);
+    if (signal?.aborted && !server.ignoreGateAbort?.[url.pathname] && !(url.pathname === "/query/stream" && server.streamIgnoreAbort)) {
+      throw new DOMException("The operation was aborted.", "AbortError");
+    }
+    if (url.pathname === "/query/stream") {
+      await waitGate(server.streamGate, server.streamIgnoreAbort ? undefined : signal);
+    } else {
+      await waitGate(
+        server.gates[url.pathname],
+        server.ignoreGateAbort?.[url.pathname] ? undefined : signal,
+      );
+    }
   }
 
   if (url.pathname === "/healthz") return json(server.health, { status: server.health < 400 ? "ok" : "error" });
@@ -197,6 +224,67 @@ const fakeFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   if (server.key !== null && key === null) return json(401, { detail: "API key required. Provide X-API-Key header." });
   const readOnly = key !== null && key === server.readKey && !ADMIN_PATHS.includes(url.pathname);
   if (server.key !== null && key !== server.key && !readOnly) return json(403, { detail: "Invalid API key or insufficient permissions." });
+  if (url.pathname === "/query/cancel") {
+    await waitGate(server.cancelGate, server.cancelIgnoreAbort ? undefined : signal);
+    return json(server.cancelStatus ?? 200, { ok: true });
+  }
+  if (url.pathname === "/query/stream") {
+    if (server.liveStream) {
+      const encoder = new TextEncoder();
+      let streamController!: ReadableStreamDefaultController<Uint8Array>;
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          streamController = controller;
+        },
+        cancel() {
+          try {
+            streamController.close();
+          } catch {
+            // already closed
+          }
+        },
+      });
+      const handle: LiveStreamHandle = {
+        push(events) {
+          for (const event of events) {
+            streamController.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+          }
+        },
+        close() {
+          try {
+            streamController.close();
+          } catch {
+            // already closed
+          }
+        },
+        error(reason) {
+          try {
+            streamController.error(reason);
+          } catch {
+            // already closed
+          }
+        },
+      };
+      liveStreams.push(handle);
+      return new Response(stream, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+    }
+    const events = server.streamEvents ?? [
+      { type: "stage", data: { name: "answering" } },
+      {
+        type: "result",
+        data: {
+          answer: "synthetic answer",
+          chunks: [],
+          sources: [],
+          trace_id: "trace-synthetic",
+          metrics: {},
+          steps: [],
+        },
+      },
+    ];
+    const payload = events.map(event => `data: ${JSON.stringify(event)}\n\n`).join("");
+    return new Response(payload, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+  }
   const body = protectedBody(url.pathname, server);
   return body === undefined ? json(404, { detail: "Not modeled by this test" }) : json(200, body);
 }) as typeof fetch;
@@ -256,10 +344,12 @@ const toasts = () =>
 
 const deferred = () => {
   let resolve!: () => void;
-  const promise = new Promise<void>(res => {
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<void>((res, rej) => {
     resolve = res;
+    reject = rej;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 };
 
 const release = async (gate: { resolve: () => void }) => {
@@ -284,6 +374,7 @@ beforeEach(() => {
   sessionStorage.clear();
   localStorage.clear();
   log = [];
+  liveStreams = [];
   serverA = { health: 200, key: GOOD_KEY, readKey: null, provider: "Provider A", docs: [], gates: {} };
   serverB = { health: 200, key: GOOD_KEY, readKey: null, provider: "Provider B", docs: [], gates: {} };
   setConnectionCheckTimeoutMsForTests(null);
@@ -308,6 +399,65 @@ afterEach(async () => {
 
 afterAll(async () => {
   await GlobalRegistrator.unregister();
+});
+
+
+const openTab = async (label: string) => {
+  const button = [...container.querySelectorAll("button")].find(
+    node => node.getAttribute("aria-label") === label || node.textContent?.trim() === label,
+  ) as HTMLButtonElement | undefined;
+  if (!button) throw new Error(`tab ${label} not found`);
+  await act(async () => {
+    button.click();
+  });
+  await settle();
+  // ChatInterface is lazy; give the Suspense boundary a couple more turns.
+  await settle();
+};
+
+const askQuestion = async (question: string) => {
+  await openTab("Query");
+  const area = container.querySelector('textarea[aria-label="Ask a grounded question"]') as HTMLTextAreaElement;
+  if (!area) throw new Error("question textarea missing");
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+  await act(async () => {
+    setter.call(area, question);
+    area.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await settle();
+  const ask = container.querySelector('button[aria-label="Ask grounded question"]') as HTMLButtonElement;
+  await act(async () => {
+    ask.click();
+  });
+  await settle();
+};
+
+const clickCancel = async () => {
+  const button = [...container.querySelectorAll("button")].find(node => node.textContent?.trim() === "Cancel") as
+    | HTMLButtonElement
+    | undefined;
+  if (!button) throw new Error("Cancel button not found");
+  await act(async () => {
+    button.click();
+  });
+  await settle();
+};
+
+const resultEvent = (answer: string, traceId: string) => ({
+  type: "result",
+  data: {
+    answer,
+    chunks: [],
+    sources: [],
+    trace_id: traceId,
+    metrics: {},
+    steps: [],
+  },
+});
+
+const progressEvent = (traceId: string) => ({
+  type: "progress",
+  data: { stage: "answering", message: "working", trace_id: traceId },
 });
 
 describe("API connection lifecycle", () => {
@@ -688,7 +838,7 @@ describe("Status ordering", () => {
     expect(toasts()).toEqual([`Connect failed: ${ORIGIN_A} returned HTTP 503 for /healthz.`]);
   });
 
-  test("changing to a read-only key at the same URL hides data loaded with the admin key", async () => {
+  test("changing to a read-only key at the same URL hides admin config but still loads documents", async () => {
     storeSessionKey(GOOD_KEY);
     serverA.readKey = READ_KEY;
     serverA.docs = [{ id: "doc-1", title: "Synthetic admin-era doc", text: "", metadata: {} }];
@@ -702,8 +852,10 @@ describe("Status ordering", () => {
     expect(connectButton().textContent).toBe("Connected");
     expect(sessionStorage.getItem("jr-autorag-api-key")).toBe(READ_KEY);
     expect(log.some(entry => entry.path === "/config" && entry.key === READ_KEY)).toBe(true);
+    expect(log.some(entry => entry.path === "/documents" && entry.key === READ_KEY)).toBe(true);
     expect(providerShown()).toBe("No provider selected");
-    expect(shown("Documents")).toBe("0");
+    // Read-scoped /documents must not be discarded when admin /config returns 403.
+    expect(shown("Documents")).toBe("1");
   });
 
   test("a rejected key at the same URL keeps the applied connection and its data", async () => {
@@ -1070,5 +1222,422 @@ describe("Connection check body-stream and abort-ignoring deadline", () => {
     await waitForTimeout(40);
     await settle();
     expect(connectButton().textContent).toBe("Connect");
+  });
+});
+
+describe("Status ownership and permission-scoped refresh", () => {
+  test("a late successful query stream after a failed heartbeat does not restore Connected", async () => {
+    storeSessionKey(GOOD_KEY);
+    await mount();
+    expect(connectButton().textContent).toBe("Connected");
+
+    serverA.health = 503;
+    await tickHeartbeat();
+    expect(connectButton().textContent).toBe("Connect");
+
+    const stream = deferred();
+    serverA.streamGate = stream.promise;
+    await askQuestion("synthetic late stream question");
+    expect(log.some(entry => entry.path === "/query/stream")).toBe(true);
+    expect(connectButton().textContent).toBe("Connect");
+
+    await release(stream);
+    expect(connectButton().textContent).toBe("Connect");
+    expect(container.textContent).toContain("synthetic answer");
+  });
+
+  test("an old query stream after a connection switch does not restore status or leak into the new connection", async () => {
+    storeSessionKey(GOOD_KEY);
+    serverA.docs = [{ id: "doc-a", title: "Doc A", text: "", metadata: {} }];
+    serverB.docs = [{ id: "doc-b", title: "Doc B", text: "", metadata: {} }];
+    await mount();
+    expect(shown("Documents")).toBe("1");
+
+    const stream = deferred();
+    serverA.streamGate = stream.promise;
+    serverA.streamIgnoreAbort = true;
+    await askQuestion("synthetic old-stream question");
+
+    await type("API base URL", ORIGIN_B);
+    await type("API key", GOOD_KEY);
+    await clickConnect();
+    expect(connectButton().textContent).toBe("Connected");
+    expect(providerShown()).toBe("Provider B");
+    expect(shown("Documents")).toBe("1");
+
+    serverA.streamEvents = [
+      { type: "stage", data: { name: "answering" } },
+      {
+        type: "result",
+        data: {
+          answer: "stale answer from origin A",
+          chunks: [],
+          sources: [],
+          trace_id: "trace-stale",
+          metrics: {},
+          steps: [],
+        },
+      },
+    ];
+    await release(stream);
+    await settle();
+
+    expect(connectButton().textContent).toBe("Connected");
+    expect(providerShown()).toBe("Provider B");
+    expect(shown("Documents")).toBe("1");
+    expect(container.textContent).not.toContain("stale answer from origin A");
+    // refreshAll from the stale stream must not push origin A admin config back.
+    expect(providerShown()).not.toBe("Provider A");
+    expect(toasts().some(t => t.includes("Query interrupted"))).toBe(false);
+    expect(container.textContent).not.toMatch(/Query failed:/);
+  });
+
+  test("admin-to-read-only switch loads documents even when admin endpoints are forbidden", async () => {
+    storeSessionKey(GOOD_KEY);
+    serverA.readKey = READ_KEY;
+    serverA.docs = [
+      { id: "doc-1", title: "Readable doc", text: "", metadata: {} },
+      { id: "doc-2", title: "Second readable doc", text: "", metadata: {} },
+    ];
+    await mount();
+    expect(providerShown()).toBe("Provider A");
+    expect(shown("Documents")).toBe("2");
+
+    await type("API key", READ_KEY);
+    await clickConnect();
+
+    expect(connectButton().textContent).toBe("Connected");
+    expect(providerShown()).toBe("No provider selected");
+    expect(shown("Documents")).toBe("2");
+    expect(log.filter(entry => entry.path === "/config" && entry.key === READ_KEY).length).toBeGreaterThan(0);
+    expect(log.filter(entry => entry.path === "/monitoring/traces" && entry.key === READ_KEY).length).toBeGreaterThan(0);
+    expect(log.filter(entry => entry.path === "/documents" && entry.key === READ_KEY).length).toBeGreaterThan(0);
+  });
+
+  test("a stale admin config reply after switching to read-only cannot reappear", async () => {
+    storeSessionKey(GOOD_KEY);
+    serverA.readKey = READ_KEY;
+    serverA.docs = [{ id: "doc-1", title: "Readable doc", text: "", metadata: {} }];
+    const staleConfig = deferred();
+    serverA.gates["/config"] = staleConfig.promise;
+    serverA.ignoreGateAbort = { "/config": true };
+    await mount();
+    // Documents settle independently while admin config is held.
+    expect(shown("Documents")).toBe("1");
+    expect(providerShown()).toBe("No provider selected");
+
+    await type("API key", READ_KEY);
+    await clickConnect();
+    expect(connectButton().textContent).toBe("Connected");
+    expect(providerShown()).toBe("No provider selected");
+    expect(shown("Documents")).toBe("1");
+
+    serverA.provider = "Stale Admin Provider";
+    await release(staleConfig);
+    await settle();
+
+    expect(providerShown()).toBe("No provider selected");
+    expect(shown("Documents")).toBe("1");
+    expect(connectButton().textContent).toBe("Connected");
+  });
+
+  test("ordinary heartbeat recovery still returns to Connected", async () => {
+    storeSessionKey(GOOD_KEY);
+    await mount();
+    expect(connectButton().textContent).toBe("Connected");
+
+    serverA.health = 503;
+    await tickHeartbeat();
+    expect(connectButton().textContent).toBe("Connect");
+
+    serverA.health = 200;
+    await tickHeartbeat();
+    expect(connectButton().textContent).toBe("Connected");
+    expect(providerShown()).toBe("Provider A");
+  });
+});
+
+describe("Query ownership", () => {
+  test("an old stream finalization after a newer same-connection query starts does not overwrite it", async () => {
+    storeSessionKey(GOOD_KEY);
+    await mount();
+    expect(connectButton().textContent).toBe("Connected");
+
+    const first = deferred();
+    serverA.streamGate = first.promise;
+    serverA.streamIgnoreAbort = true;
+    await askQuestion("first ownership question");
+    expect(log.some(entry => entry.path === "/query/stream")).toBe(true);
+
+    await clickCancel();
+    expect(container.querySelector('button[aria-label="Ask grounded question"]')).toBeTruthy();
+
+    serverA.streamGate = undefined;
+    serverA.streamIgnoreAbort = false;
+    serverA.streamEvents = [
+      { type: "stage", data: { name: "answering" } },
+      resultEvent("second query answer", "trace-second"),
+    ];
+    await askQuestion("second ownership question");
+    await settle();
+    expect(container.textContent).toContain("second query answer");
+
+    serverA.streamEvents = [
+      { type: "stage", data: { name: "answering" } },
+      resultEvent("stale first query answer", "trace-first"),
+    ];
+    await release(first);
+    await settle();
+
+    expect(container.textContent).toContain("second query answer");
+    expect(container.textContent).not.toContain("stale first query answer");
+    expect(toasts().some(t => t.includes("Query interrupted"))).toBe(false);
+    expect(container.querySelector('button[aria-label="Query running"]')).toBeNull();
+  });
+
+  test("cancel then an immediate same-connection query keeps the new stream", async () => {
+    storeSessionKey(GOOD_KEY);
+    serverA.liveStream = true;
+    await mount();
+
+    await askQuestion("live cancel question");
+    expect(liveStreams.length).toBe(1);
+    liveStreams[0]!.push([progressEvent("trace-live-1"), { type: "stage", data: { name: "answering" } }]);
+    await settle();
+    expect(container.querySelector("button") && [...container.querySelectorAll("button")].some(b => b.textContent?.trim() === "Cancel")).toBe(true);
+
+    await clickCancel();
+    expect(log.some(entry => entry.path === "/query/cancel" && entry.origin === ORIGIN_A)).toBe(true);
+
+    serverA.liveStream = false;
+    serverA.streamEvents = [
+      { type: "stage", data: { name: "answering" } },
+      resultEvent("post-cancel answer", "trace-live-2"),
+    ];
+    await askQuestion("after cancel question");
+    await settle();
+
+    expect(container.textContent).toContain("post-cancel answer");
+    expect(toasts().some(t => t.includes("Query cancelled"))).toBe(true);
+    liveStreams[0]!.push([resultEvent("cancelled stream answer", "trace-live-1")]);
+    liveStreams[0]!.close();
+    await settle();
+    expect(container.textContent).not.toContain("cancelled stream answer");
+    expect(container.textContent).toContain("post-cancel answer");
+  });
+
+  test("a late cancel response does not clear a newer query", async () => {
+    storeSessionKey(GOOD_KEY);
+    serverA.liveStream = true;
+    const cancelHold = deferred();
+    serverA.cancelGate = cancelHold.promise;
+    serverA.cancelIgnoreAbort = true;
+    await mount();
+
+    await askQuestion("late cancel first");
+    liveStreams[0]!.push([progressEvent("trace-late-1")]);
+    await settle();
+
+    await clickCancel();
+    expect(log.some(entry => entry.path === "/query/cancel")).toBe(true);
+
+    serverA.liveStream = false;
+    serverA.streamEvents = [
+      { type: "stage", data: { name: "answering" } },
+      resultEvent("newer query after late cancel", "trace-late-2"),
+    ];
+    await askQuestion("late cancel second");
+    await settle();
+    expect(container.textContent).toContain("newer query after late cancel");
+    expect(container.querySelector('button[aria-label="Query running"]')).toBeNull();
+
+    // Begin a third in-flight query so a late cancel clear would be visible.
+    serverA.liveStream = true;
+    await askQuestion("late cancel third in flight");
+    expect(liveStreams.length).toBeGreaterThanOrEqual(2);
+    liveStreams[liveStreams.length - 1]!.push([progressEvent("trace-late-3"), { type: "stage", data: { name: "gatherer" } }]);
+    await settle();
+    expect(container.querySelector('button[aria-label="Query running"]')).toBeTruthy();
+    expect(container.textContent).toMatch(/gatherer|Running|Streaming/i);
+
+    await release(cancelHold);
+    await settle();
+
+    expect(container.querySelector('button[aria-label="Query running"]')).toBeTruthy();
+    expect(container.textContent).toMatch(/gatherer|Running|Streaming/i);
+  });
+
+  test("cancel HTTP failure does not announce cancellation or clear a newer query", async () => {
+    storeSessionKey(GOOD_KEY);
+    serverA.liveStream = true;
+    const cancelHold = deferred();
+    serverA.cancelGate = cancelHold.promise;
+    serverA.cancelIgnoreAbort = true;
+    serverA.cancelStatus = 500;
+    await mount();
+
+    await askQuestion("cancel failure first");
+    liveStreams[0]!.push([progressEvent("trace-fail-1")]);
+    await settle();
+    await clickCancel();
+
+    serverA.liveStream = false;
+    serverA.streamEvents = [
+      { type: "stage", data: { name: "answering" } },
+      resultEvent("survives cancel failure", "trace-fail-2"),
+    ];
+    await askQuestion("cancel failure second");
+    await settle();
+    expect(container.textContent).toContain("survives cancel failure");
+
+    await release(cancelHold);
+    await settle();
+
+    expect(toasts().some(t => t.includes("Query cancelled"))).toBe(false);
+    expect(container.textContent).toContain("survives cancel failure");
+    expect(toasts().some(t => t.includes("Cancel failed"))).toBe(false);
+  });
+
+  test("old stream rejection after URL/key switch does not toast Query interrupted", async () => {
+    storeSessionKey(GOOD_KEY);
+    await mount();
+    const stream = deferred();
+    serverA.streamGate = stream.promise;
+    serverA.streamIgnoreAbort = true;
+    await askQuestion("switch reject question");
+
+    await type("API base URL", ORIGIN_B);
+    await type("API key", GOOD_KEY);
+    await clickConnect();
+    expect(connectButton().textContent).toBe("Connected");
+
+    // The replaced stream's fetch rejects (network failure), not a late success.
+    await act(async () => {
+      stream.reject(new TypeError("Failed to fetch"));
+    });
+    await settle();
+
+    expect(toasts().some(t => t.includes("Query interrupted"))).toBe(false);
+    expect(container.textContent).not.toContain("Failed to fetch");
+    expect(container.textContent).not.toMatch(/Query failed:/);
+    expect(connectButton().textContent).toBe("Connected");
+    expect(providerShown()).toBe("Provider B");
+  });
+
+  test("an old stream reader error after URL/key switch does not toast Query interrupted", async () => {
+    storeSessionKey(GOOD_KEY);
+    serverA.liveStream = true;
+    await mount();
+    await askQuestion("switch reader error question");
+    expect(liveStreams.length).toBe(1);
+    liveStreams[0]!.push([{ type: "stage", data: { name: "answering" } }]);
+    await settle();
+
+    await type("API base URL", ORIGIN_B);
+    await type("API key", GOOD_KEY);
+    await clickConnect();
+    expect(connectButton().textContent).toBe("Connected");
+
+    liveStreams[0]!.error(new TypeError("network error while reading"));
+    await settle();
+
+    expect(toasts().some(t => t.includes("Query interrupted"))).toBe(false);
+    expect(container.textContent).not.toContain("network error while reading");
+    expect(connectButton().textContent).toBe("Connected");
+    expect(providerShown()).toBe("Provider B");
+  });
+});
+
+describe("Cancel across a connection switch", () => {
+  // Ask on A, get a trace id, press Cancel while the cancel POST is held, then
+  // apply B with no newer Ask. The held reply belongs to A and must stay silent.
+  const cancelThenSwitch = async (cancelGate: Promise<unknown>) => {
+    storeSessionKey(GOOD_KEY);
+    serverA.liveStream = true;
+    serverA.cancelGate = cancelGate;
+    serverA.cancelIgnoreAbort = true;
+    await mount();
+    await askQuestion("cancel then switch");
+    liveStreams[0]!.push([progressEvent("trace-switch-cancel")]);
+    await settle();
+    await clickCancel();
+    expect(log.some(entry => entry.path === "/query/cancel" && entry.origin === ORIGIN_A)).toBe(true);
+
+    await type("API base URL", ORIGIN_B);
+    await type("API key", GOOD_KEY);
+    await clickConnect();
+    expect(connectButton().textContent).toBe("Connected");
+    expect(providerShown()).toBe("Provider B");
+  };
+
+  const expectCurrentConnectionUntouched = () => {
+    expect(toasts().some(t => /Query cancelled|Cancel failed|Stopped streaming/.test(t))).toBe(false);
+    expect(container.textContent).not.toMatch(/Query cancelled|Cancel failed/);
+    expect(connectButton().textContent).toBe("Connected");
+    expect(providerShown()).toBe("Provider B");
+  };
+
+  test("a delayed cancel success after URL/key switch does not announce cancellation", async () => {
+    const hold = deferred();
+    await cancelThenSwitch(hold.promise);
+    const toastsBefore = toasts().length;
+    await release(hold);
+    await settle();
+    expectCurrentConnectionUntouched();
+    expect(toasts().length).toBe(toastsBefore);
+  });
+
+  test("a delayed cancel HTTP failure after URL/key switch stays silent", async () => {
+    const hold = deferred();
+    serverA.cancelStatus = 500;
+    await cancelThenSwitch(hold.promise);
+    const toastsBefore = toasts().length;
+    await release(hold);
+    await settle();
+    expectCurrentConnectionUntouched();
+    expect(toasts().length).toBe(toastsBefore);
+  });
+
+  test("a delayed cancel network failure after URL/key switch stays silent", async () => {
+    const hold = deferred();
+    await cancelThenSwitch(hold.promise);
+    const toastsBefore = toasts().length;
+    await act(async () => {
+      hold.reject(new TypeError("Failed to fetch"));
+    });
+    await settle();
+    expectCurrentConnectionUntouched();
+    expect(toasts().length).toBe(toastsBefore);
+  });
+
+  test("a cancel HTTP failure with no replacement tells the user it failed", async () => {
+    storeSessionKey(GOOD_KEY);
+    serverA.liveStream = true;
+    serverA.cancelStatus = 500;
+    await mount();
+    await askQuestion("cancel fails in place");
+    liveStreams[0]!.push([progressEvent("trace-cancel-fails")]);
+    await settle();
+    await clickCancel();
+    await settle();
+
+    const failed = toasts().find(t => t.includes("Cancel failed"));
+    expect(failed).toBeTruthy();
+    expect(failed).not.toBe("Cancel failed");
+    expect(toasts().some(t => t.includes("Query cancelled"))).toBe(false);
+  });
+
+  test("cancel before the server reports a trace says only local streaming stopped", async () => {
+    storeSessionKey(GOOD_KEY);
+    serverA.liveStream = true;
+    await mount();
+    await askQuestion("cancel before trace");
+    liveStreams[0]!.push([{ type: "stage", data: { name: "answering" } }]);
+    await settle();
+    await clickCancel();
+
+    expect(log.some(entry => entry.path === "/query/cancel")).toBe(false);
+    expect(toasts().some(t => t.includes("Stopped streaming") && t.includes("not asked to cancel"))).toBe(true);
+    expect(toasts().some(t => t.includes("Query cancelled"))).toBe(false);
   });
 });
