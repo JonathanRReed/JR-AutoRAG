@@ -420,3 +420,222 @@ def test_closed_channel_ignores_late_callbacks() -> None:
         channel.emit({"type": "token", "data": {"text": "late"}})
     channel.finish({"type": "result", "data": {}})
     assert channel.buffered == 0
+
+
+# --- Byte-bounded storage under a token flood --------------------------------
+
+
+def stored_bytes(channel) -> int:
+    """Bytes the channel is holding, measured from its storage, not its counters.
+
+    Queued events are counted at their encoded SSE frame size; merged token
+    text that has not been queued yet is counted by length. This deliberately
+    does not trust ``buffered`` (a queue size) or ``buffered_bytes``.
+    """
+    queued = 0
+    for item in list(channel._queue._queue):
+        if isinstance(item, dict):
+            queued += len(query_router._encode_event(item))
+    pending = sum(len(text) for text in channel._pending_tokens)
+    return queued + pending
+
+
+class TokenFloodOrchestrator:
+    """Emits many large, numbered tokens with yields in between, then answers."""
+
+    def __init__(self, *, tokens: int, token_size: int, probe) -> None:
+        self.tokens = [f"<{i:05d}>" + "x" * token_size for i in range(tokens)]
+        self.probe = probe
+        self.flooded = asyncio.Event()
+        self.started = asyncio.Event()
+
+    async def answer(self, question, **kwargs):
+        on_token = kwargs["on_token"]
+        kwargs["on_stage"]("generating")
+        self.started.set()
+        for i, token in enumerate(self.tokens):
+            on_token(token)
+            self.probe()
+            if i % 50 == 0:
+                await asyncio.sleep(0)
+        self.flooded.set()
+        answer = "".join(self.tokens)
+        return {"answer": answer, "chunks": [], "sources": [], "trace_id": "trace-flood", "metrics": {}, "steps": []}
+
+
+class StalledClient(Client):
+    """A connected client that stops reading after its first body chunk."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.resume = asyncio.Event()
+
+    async def send(self, message):
+        await super().send(message)
+        if message["type"] == "http.response.body" and message.get("body") and len(self.body_chunks) == 1:
+            await self.resume.wait()
+
+
+@pytest.mark.asyncio
+async def test_token_flood_with_stalled_consumer_stays_within_byte_bound(channels, monkeypatch) -> None:
+    max_bytes = 64 * 1024
+    monkeypatch.setattr(query_router, "STREAM_MAX_BUFFERED_EVENTS", 16, raising=False)
+    monkeypatch.setattr(query_router, "STREAM_MAX_BUFFERED_BYTES", max_bytes, raising=False)
+    peak = {"bytes": 0}
+
+    def probe() -> None:
+        peak["bytes"] = max(peak["bytes"], stored_bytes(channels[0]))
+
+    orchestrator = TokenFloodOrchestrator(tokens=2000, token_size=1000, probe=probe)
+    use_orchestrator(orchestrator)
+    before = all_tasks_except_current()
+    client = StalledClient()
+    app_task = client.start()
+
+    await asyncio.wait_for(orchestrator.flooded.wait(), TIMEOUT)
+    # About 2 MB of tokens were produced while the consumer was stalled.
+    assert peak["bytes"] <= max_bytes, f"stored {peak['bytes']} bytes for a stalled consumer"
+
+    client.resume.set()
+    await asyncio.wait_for(client.finished.wait(), TIMEOUT)
+    await wait_for_app(app_task)
+    events = client.events()
+    full = "".join(orchestrator.tokens)
+    streamed = "".join(e["data"]["text"] for e in events if e["type"] == "token")
+    types = [e["type"] for e in events]
+    # Honest partial stream: an exact prefix, a truncation notice, then the
+    # complete final result.
+    assert full.startswith(streamed) and len(streamed) < len(full)
+    assert types.count("stream_truncated") == 1
+    assert types[-1] == "result"
+    assert types.index("stream_truncated") < types.index("result")
+    assert all(t != "token" for t in types[types.index("stream_truncated"):])
+    assert events[-1]["data"]["answer"] == full
+    await asyncio.sleep(0)
+    assert all_tasks_except_current() - before == set()
+
+
+def drain(channel) -> list:
+    items = []
+    while channel.buffered:
+        items.append(channel._queue.get_nowait())
+    return items
+
+
+def test_oversized_single_token_is_not_stored_and_stream_stays_an_honest_prefix() -> None:
+    channel = query_router._StreamChannel(max_events=8, max_bytes=1024)
+    channel.emit({"type": "token", "data": {"text": "a"}})
+    channel.emit({"type": "token", "data": {"text": "b" * 10_000}})
+    assert stored_bytes(channel) <= 1024
+    # Later text would leave a gap after the dropped token, so it is not sent.
+    channel.emit({"type": "token", "data": {"text": "c"}})
+    channel.emit({"type": "stage", "data": {"name": "finalizing"}})
+    assert stored_bytes(channel) <= 1024
+    channel.finish({"type": "result", "data": {"answer": "a" + "b" * 10_000 + "c"}})
+    items = drain(channel)
+    assert items[-1] is None
+    types = [item["type"] for item in items[:-1]]
+    assert "".join(i["data"]["text"] for i in items[:-1] if i["type"] == "token") == "a"
+    assert types.count("stream_truncated") == 1
+    assert types[-1] == "result"
+    assert items[-2]["data"]["answer"].endswith("c")
+
+
+def test_coalesced_pending_tokens_count_against_the_byte_budget() -> None:
+    channel = query_router._StreamChannel(max_events=2, max_bytes=2000)
+    channel.emit({"type": "progress", "data": {"n": 1}})
+    channel.emit({"type": "progress", "data": {"n": 2}})
+    # The event slots are full, so tokens merge into pending text.
+    for i in range(50):
+        channel.emit({"type": "token", "data": {"text": f"{i:03d}" + "y" * 97}})
+        assert stored_bytes(channel) <= 2000
+    assert channel.buffered_bytes <= 2000
+    channel.finish({"type": "error", "data": {"message": "provider failed"}})
+    items = drain(channel)
+    assert items[-1] is None
+    assert items[-2] == {"type": "error", "data": {"message": "provider failed"}}
+    streamed = "".join(i["data"]["text"] for i in items[:-1] if i["type"] == "token")
+    full = "".join(f"{i:03d}" + "y" * 97 for i in range(50))
+    assert streamed and full.startswith(streamed) and streamed != full
+    assert [i["type"] for i in items[:-1]].count("stream_truncated") == 1
+
+
+@pytest.mark.asyncio
+async def test_live_consumer_receives_every_token_in_order_without_truncation() -> None:
+    channel = query_router._StreamChannel(max_events=8)
+    received: list[dict] = []
+    for i in range(300):
+        channel.emit({"type": "token", "data": {"text": f"t{i};"}})
+        if i % 5 == 0:
+            channel.emit({"type": "progress", "data": {"n": i}})
+        if i % 3 == 0:
+            while channel.buffered:
+                received.append(await channel.next(1.0))
+    channel.finish({"type": "result", "data": {"answer": "ok"}})
+    while True:
+        item = await channel.next(1.0)
+        if item is None:
+            break
+        received.append(item)
+    tokens = "".join(e["data"]["text"] for e in received if e["type"] == "token")
+    assert tokens == "".join(f"t{i};" for i in range(300))
+    assert all(e["type"] != "stream_truncated" for e in received)
+    assert received[-1] == {"type": "result", "data": {"answer": "ok"}}
+
+
+# --- A producer that outlives the cancel grace period ------------------------
+
+
+@pytest.mark.asyncio
+async def test_cancellation_resistant_producer_is_owned_and_observed_after_grace(monkeypatch, caplog) -> None:
+    import gc
+    import logging
+
+    monkeypatch.setattr(query_router, "STREAM_CANCEL_GRACE_SECONDS", 0.05, raising=False)
+    loop = asyncio.get_running_loop()
+    unhandled: list[dict] = []
+    previous_handler = loop.get_exception_handler()
+    loop.set_exception_handler(lambda _loop, context: unhandled.append(context))
+    started = asyncio.Event()
+    allow_exit = asyncio.Event()
+    resisted = {"count": 0}
+
+    async def stubborn_producer() -> None:
+        started.set()
+        while not allow_exit.is_set():
+            try:
+                await allow_exit.wait()
+            except asyncio.CancelledError:
+                # Stands in for a provider SDK that swallows cancellation.
+                resisted["count"] += 1
+        raise RuntimeError("late provider failure after grace")
+
+    channel = query_router._StreamChannel(max_events=8)
+    response = query_router._OwnedEventStreamResponse(channel, stubborn_producer)
+    client = Client()
+    try:
+        with caplog.at_level(logging.WARNING, logger=query_router.__name__):
+            call = asyncio.create_task(response(client.scope(), client.receive, client.send))
+            await asyncio.wait_for(started.wait(), TIMEOUT)
+            client.disconnected.set()
+            # Response cleanup is bounded by the grace period, not by the producer.
+            await asyncio.wait_for(call, 2.0)
+            producer = response.producer
+            assert producer is not None and not producer.done()
+            assert resisted["count"] >= 1
+
+            allow_exit.set()
+            for _ in range(20):
+                await asyncio.sleep(0)
+            assert producer.done()
+            del producer, response, call
+            gc.collect()
+            await asyncio.sleep(0)
+        never_retrieved = [c for c in unhandled if "never retrieved" in str(c.get("message", ""))]
+        assert never_retrieved == []
+        messages = [record.getMessage() for record in caplog.records]
+        assert any("outlived" in m for m in messages), messages
+        assert any("late provider failure after grace" in (record.exc_text or str(record.exc_info)) for record in caplog.records)
+        assert getattr(query_router, "_DETACHED_PRODUCERS", set()) == set()
+    finally:
+        loop.set_exception_handler(previous_handler)

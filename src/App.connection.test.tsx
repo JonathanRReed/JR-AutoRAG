@@ -66,6 +66,10 @@ type Server = {
   deleteStatus?: number;
   // Body for GET /providers/local (default []).
   localProviders?: unknown[];
+  // File names this server accepted on POST /documents/upload, in order.
+  uploads?: string[];
+  // Per-file-name hold on POST /documents/upload. Ignores abort like a server mid-write.
+  uploadGates?: Record<string, Promise<unknown>>;
 };
 type LiveStreamHandle = {
   push: (events: Array<Record<string, unknown>>) => void;
@@ -212,6 +216,16 @@ const fakeFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       server.docs = server.docs.filter(doc => (doc as { id: string }).id !== id);
     }
     return json(200, { status: "deleted" });
+  }
+  if (method === "POST" && url.pathname === "/documents/upload") {
+    const file = (init?.body as FormData).get("file") as File;
+    await waitGate(server.uploadGates?.[file.name]);
+    const denied = authFailure();
+    if (denied) return denied;
+    server.uploads = [...(server.uploads ?? []), file.name];
+    const id = `up-${file.name}`;
+    server.docs = [...server.docs, { id, title: file.name, text: "", metadata: { processing_status: "ready" } }];
+    return json(200, { document_id: id, title: file.name, chunk_count: 1 });
   }
   if (method === "POST" && url.pathname === "/documents/text") {
     const denied = authFailure();
@@ -1872,5 +1886,103 @@ describe("Operation identity across a connection switch", () => {
 
     expect(shown("Documents")).toBe("0");
     expect(toasts()).toContain("Document deleted: Doc A");
+  });
+
+  // A multi-file upload is one operation: it stays on the connection it started on.
+  const uploadFiles = async (names: string[]) => {
+    const files = names.map(name => new File([`synthetic ${name}`], name, { type: "text/plain" }));
+    const element = input("Upload documents");
+    Object.defineProperty(element, "files", { configurable: true, value: files });
+    await act(async () => {
+      element.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await settle();
+  };
+  const uploadRows = () => {
+    const heading = [...container.querySelectorAll("h4")].find(node => node.textContent?.trim() === "Upload Progress");
+    if (!heading) return [];
+    return [...heading.nextElementSibling!.children].map(row => {
+      const spans = row.querySelectorAll(":scope > span");
+      return `${spans[0]?.textContent}:${spans[1]?.textContent}`;
+    });
+  };
+  const uploadRequests = (mark = 0) => since(mark).filter(entry => entry.path === "/documents/upload");
+
+  test("a multi-file upload held on its first file at A sends no remaining file to B", async () => {
+    await setup();
+    const hold = deferred();
+    serverA.uploadGates = { "one.txt": hold.promise };
+    await uploadFiles(["one.txt", "two.txt", "three.txt"]);
+    expect(uploadRequests().map(entry => [entry.origin, entry.key])).toEqual([[ORIGIN_A, GOOD_KEY]]);
+
+    await switchToB();
+    const before = snapshot();
+    await release(hold);
+    await settle();
+
+    // The started request finished on A with A's URL and key; nothing else was sent.
+    expect(serverA.uploads).toEqual(["one.txt"]);
+    expect(serverB.uploads ?? []).toEqual([]);
+    expect(uploadRequests().every(entry => entry.origin === ORIGIN_A && entry.key === GOOD_KEY)).toBe(true);
+    expectBUntouchedSince(before);
+    expect(uploadRows()).toEqual(["one.txt:cancelled", "two.txt:cancelled", "three.txt:cancelled"]);
+  });
+
+  test("a multi-file upload whose ready-poll is held on A sends no remaining file to B", async () => {
+    await setup();
+    const poll = deferred();
+    serverA.gates["/documents"] = poll.promise;
+    await uploadFiles(["one.txt", "two.txt"]);
+    expect(serverA.uploads).toEqual(["one.txt"]);
+    expect(log.some(entry => entry.origin === ORIGIN_A && entry.path === "/documents")).toBe(true);
+
+    await switchToB();
+    const before = snapshot();
+    await release(poll);
+    await settle();
+
+    expect(serverA.uploads).toEqual(["one.txt"]);
+    expect(serverB.uploads ?? []).toEqual([]);
+    expectBUntouchedSince(before);
+    expect(uploadRows()).toEqual(["one.txt:cancelled", "two.txt:cancelled"]);
+  });
+
+  test("a same-URL retry keeps a held multi-file upload on A and finishes every file", async () => {
+    await setup();
+    const hold = deferred();
+    serverA.uploadGates = { "one.txt": hold.promise };
+    await uploadFiles(["one.txt", "two.txt"]);
+
+    await clickConnect();
+    expect(connectButton().textContent).toBe("Connected");
+    await release(hold);
+    await settle();
+
+    expect(serverA.uploads).toEqual(["one.txt", "two.txt"]);
+    expect(serverB.uploads ?? []).toEqual([]);
+    expect(uploadRequests().every(entry => entry.origin === ORIGIN_A && entry.key === GOOD_KEY)).toBe(true);
+    expect(uploadRows()).toEqual(["one.txt:done", "two.txt:done"]);
+    expect(statusLog).toContain("two.txt ready");
+  });
+
+  test("overlapping upload batches each keep their own rows and connection", async () => {
+    await setup();
+    const hold = deferred();
+    serverA.uploadGates = { "a1.txt": hold.promise };
+    await uploadFiles(["a1.txt", "a2.txt"]);
+    // A second batch starts while the first is held; it runs on A to completion.
+    await uploadFiles(["b1.txt"]);
+    expect(serverA.uploads).toEqual(["b1.txt"]);
+    expect(uploadRows()).toEqual(["a1.txt:uploading", "a2.txt:pending", "b1.txt:done"]);
+
+    await switchToB();
+    const before = snapshot();
+    await release(hold);
+    await settle();
+
+    expect(serverA.uploads).toEqual(["b1.txt", "a1.txt"]);
+    expect(serverB.uploads ?? []).toEqual([]);
+    expectBUntouchedSince(before);
+    expect(uploadRows()).toEqual(["a1.txt:cancelled", "a2.txt:cancelled", "b1.txt:done"]);
   });
 });
