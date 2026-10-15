@@ -684,3 +684,27 @@ def test_unicode_and_escaped_pending_tokens_obey_the_encoded_byte_bound() -> Non
         assert channel.buffered_bytes == queued + pending
     assert channel.tokens_truncated
     assert 0 < len(channel._pending_tokens) < 100
+
+
+@pytest.mark.asyncio
+async def test_dequeue_flushes_pending_tokens_without_another_producer_callback() -> None:
+    channel = query_router._StreamChannel(max_events=1, max_bytes=256)
+    progress = {"type": "progress", "data": {"n": 1}}
+    channel.emit(progress)
+    channel.emit({"type": "token", "data": {"text": "ready"}})
+    assert await channel.next(0.01) == progress
+    assert await channel.next(0.01) == {"type": "token", "data": {"text": "ready"}}
+    assert channel.buffered_bytes == 0
+
+
+@pytest.mark.asyncio
+async def test_dequeue_flushes_truncation_notice_after_pending_text() -> None:
+    channel = query_router._StreamChannel(max_events=1, max_bytes=256)
+    channel.emit({"type": "progress", "data": {"n": 1}})
+    channel.emit({"type": "token", "data": {"text": "prefix"}})
+    channel.emit({"type": "token", "data": {"text": "x" * 1000}})
+    await channel.next(0.01)
+    assert await channel.next(0.01) == {"type": "token", "data": {"text": "prefix"}}
+    assert await channel.next(0.01) == query_router._TRUNCATED_NOTICE
+    assert channel.buffered_bytes == 0
+    assert channel.buffered == 0

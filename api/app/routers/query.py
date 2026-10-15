@@ -257,6 +257,7 @@ class _StreamChannel:
             return _KEEPALIVE
         if self._sizes:
             self._queued_bytes -= self._sizes.popleft()
+        self._flush_pending()
         return item
 
     def close(self) -> None:
