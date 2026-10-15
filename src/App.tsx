@@ -1,4 +1,5 @@
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ScopedActivity } from "./lib/scoped-activity";
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import {
   Activity,
   ArrowRight,
@@ -48,6 +49,7 @@ import type {
   ProviderConfig as ProviderConfigType,
   ProviderProfile,
   QueryResponse,
+  UploadBatch,
   RetrievalDefaults,
   RoleSelection,
   SecurityPostureResponse,
@@ -104,6 +106,58 @@ export const setConnectionProbeTimeoutForTests = (timeout: ConnectionProbeTimeou
 
 export const setConnectionCheckTimeoutMsForTests = (ms: number | null) => {
   setConnectionProbeTimeoutForTests(ms == null ? null : { timeoutMs: ms });
+};
+
+// Status text is not rendered; tests observe every write through this hook.
+let statusObserverForTests: ((status: string) => void) | null = null;
+export const observeStatusForTests = (observer: ((status: string) => void) | null) => {
+  statusObserverForTests = observer;
+};
+
+// Operation identity. Every operation captures the applied connection once, when
+// it starts, and uses that same immutable value for its transport (URL + key) and
+// for deciding whether any later state write, toast, refresh, or poll may still
+// happen. Connect to another URL/key replaces the value; retrying the applied
+// URL/key keeps it. Nothing defaults to "whatever is current now" after an await,
+// so an old handler can never pair its own transport with a newer generation.
+export type ConnectionScope = Readonly<{
+  generation: number;
+  baseUrl: string;
+  apiKey: string;
+}>;
+
+// Thrown by scoped polling once its connection has been replaced.
+export class StaleConnectionError extends Error {
+  constructor() {
+    super("Connection changed before this operation finished");
+    this.name = "StaleConnectionError";
+  }
+}
+
+const JSON_HEADERS: HeadersInit = { "Content-Type": "application/json" };
+
+const scopedHeaders = (scope: ConnectionScope, extra?: HeadersInit) => {
+  const merged = new Headers(extra);
+  // The scope's key is the only key this operation may send.
+  merged.delete("X-API-Key");
+  const trimmedKey = scope.apiKey.trim();
+  if (trimmedKey) {
+    merged.set("X-API-Key", trimmedKey);
+  }
+  return merged;
+};
+
+const scopedFetch = (scope: ConnectionScope, path: string, init?: RequestInit) =>
+  fetch(buildApiUrl(scope.baseUrl, path), { ...init, headers: scopedHeaders(scope, init?.headers) });
+
+// Connection status is owned by checkConnection (heartbeat and Connect). Data
+// requests never write it, so a late response from a replaced connection can't.
+const scopedFetchJson = async <T,>(scope: ConnectionScope, path: string, init?: RequestInit): Promise<T> => {
+  const response = await scopedFetch(scope, path, init);
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
 };
 
 const isHttpUrl = (value: string) => {
@@ -313,10 +367,17 @@ export function App() {
   // Numbers each status probe of the applied connection (heartbeat tick or a
   // Connect retry). Only the latest one started may write isConnected.
   const latestStatusProbe = useRef(0);
-  // Bumps when the applied URL/key change. Data loads and query streams capture
-  // it so a superseded connection cannot apply status, corpus, or query state.
-  const connectionGeneration = useRef(0);
-  const [status, setStatus] = useState("");
+  // The applied connection as one immutable value (see ConnectionScope). Connect
+  // replaces it when the URL/key change. Operations capture it at their start.
+  const appliedConnection = useRef<ConnectionScope>(Object.freeze({ generation: 0, baseUrl, apiKey }));
+  const [activities] = useState(() => new ScopedActivity());
+  const currentScope = () => appliedConnection.current;
+  const isCurrentScope = (scope: ConnectionScope) => scope === appliedConnection.current;
+  const [status, setStatusState] = useState("");
+  const setStatus = (value: string) => {
+    statusObserverForTests?.(value);
+    setStatusState(value);
+  };
   const [isConnected, setIsConnected] = useState(false); // New state for reliable connection tracking
   const [isTestingConnection, setIsTestingConnection] = useState(false);
   const [config, setConfig] = useState<AppConfig | null>(null);
@@ -339,13 +400,11 @@ export function App() {
   }, [currentSessionId]);
   const [currentTraceId, setCurrentTraceId] = useState<string | null>(null);
   // Each Ask gets a query id. Cancel and cleanup compare that id, not only the
-  // connection generation, so a cancelled query cannot clear a newer one on the
-  // same URL/key. Origin/key stay bound to the stream for cancel POSTs.
+  // connection, so a cancelled query cannot clear a newer one on the same
+  // URL/key. The stream's scope keeps origin/key bound for cancel POSTs.
   type ActiveQueryTransport = {
     queryId: number;
-    baseUrl: string;
-    apiKey: string;
-    generation: number;
+    scope: ConnectionScope;
     controller: AbortController;
   };
   const queryIdSeq = useRef(0);
@@ -432,7 +491,6 @@ export function App() {
     },
     [apiKey],
   );
-  const headers = useMemo(() => buildHeaders({ "Content-Type": "application/json" }), [buildHeaders]);
   const [activePreset, setActivePreset] = useState<PresetLevel>(() => {
     if (typeof window !== "undefined") {
       const saved = localStorage.getItem("jr-autorag-preset") as PresetLevel | null;
@@ -495,20 +553,10 @@ export function App() {
     }
   }, [chatHistory, queryResult?.answer, activeTab]);
 
+  // Only for child components that issue their own requests (QualityCockpit).
+  // App operations use scopedFetch/scopedFetchJson with a captured scope.
   const buildUrl = (path: string) => buildApiUrl(baseUrl, path);
-
-  // Connection status is owned by checkConnection (heartbeat and Connect). Data
-  // requests never write it, so a late response from a replaced connection can't.
-  const fetchJson = async <T,>(path: string, init?: RequestInit): Promise<T> => {
-    const response = await fetch(buildUrl(path), {
-      ...init,
-      headers: buildHeaders(init?.headers),
-    });
-    if (!response.ok) {
-      throw new Error(await response.text());
-    }
-    return response.json();
-  };
+  const fetchJson = scopedFetchJson;
 
   // Heartbeat for connection status
   useEffect(() => {
@@ -534,31 +582,40 @@ export function App() {
 
   useEffect(() => () => pendingConnect.current?.abort(), []);
 
-  const refreshLocalProviders = async (signal?: AbortSignal) => {
+  const refreshLocalProviders = async (scope: ConnectionScope, signal?: AbortSignal) => {
+    const owns = () => !signal?.aborted && isCurrentScope(scope);
+    if (!owns()) return;
     setLocalProvidersStatus("loading");
     try {
-      const providers = await fetchJson<LocalProviderInfo[]>("/providers/local", { signal });
-      if (signal?.aborted) return;
+      const providers = await fetchJson<LocalProviderInfo[]>(scope, "/providers/local", { signal });
+      if (!owns()) return;
       setLocalProviders(providers);
       setLocalProvidersStatus("ready");
       if (!providers.length) {
         setStatus("No local runtimes detected. Launch Ollama or LM Studio and rescan.");
       }
     } catch (error) {
-      if (signal?.aborted) return;
+      if (!owns()) return;
       setLocalProvidersStatus("error");
       setStatus(`Local provider scan failed: ${toMessage(error)}`);
     }
   };
 
-  const waitForDocumentReady = async (documentId: string, label?: string) => {
+  // Polls on the scope the upload/ingest started on, and stops (throwing
+  // StaleConnectionError) as soon as that connection is replaced.
+  const waitForDocumentReady = async (scope: ConnectionScope, documentId: string, label?: string) => {
     const timeoutMs = 120_000;
     const intervalMs = 1500;
     const deadline = Date.now() + timeoutMs;
     let lastDocs: DocumentOut[] = [];
+    const ensureCurrent = () => {
+      if (!isCurrentScope(scope)) throw new StaleConnectionError();
+    };
 
     while (Date.now() < deadline) {
-      const docs = await fetchJson<DocumentOut[]>("/documents");
+      ensureCurrent();
+      const docs = await fetchJson<DocumentOut[]>(scope, "/documents");
+      ensureCurrent();
       lastDocs = docs;
       const doc = docs.find(item => item.id === documentId);
       if (doc) {
@@ -581,6 +638,7 @@ export function App() {
       await new Promise(resolve => setTimeout(resolve, intervalMs));
     }
 
+    ensureCurrent();
     if (lastDocs.length) {
       setDocuments(lastDocs);
     }
@@ -592,15 +650,20 @@ export function App() {
     if (!confirmed) {
       return;
     }
+    // Captured after confirm: the delete goes to the connection applied when the
+    // user confirmed it, and only that connection's UI may hear about it.
+    const scope = currentScope();
     try {
-      const response = await fetch(buildUrl(`/documents/${id}`), { method: "DELETE", headers: buildHeaders() });
+      const response = await scopedFetch(scope, `/documents/${encodeURIComponent(id)}`, { method: "DELETE" });
       if (!response.ok) {
         throw new Error(await response.text());
       }
+      if (!isCurrentScope(scope)) return;
       setStatus(`Deleted ${title}`);
       toast({ title: "Document deleted", description: title, variant: "success" });
-      refreshAll();
+      void refreshAll(scope);
     } catch (error) {
+      if (!isCurrentScope(scope)) return;
       setStatus(`Delete failed: ${toMessage(error)}`);
       toast({ title: "Delete failed", description: toMessage(error), variant: "error" });
     }
@@ -610,33 +673,38 @@ export function App() {
     if (!window.confirm("Are you sure you want to clear ALL ingested documents? This cannot be undone.")) {
       return;
     }
+    const scope = currentScope();
     setStatus("Clearing knowledge base...");
     try {
-      const response = await fetch(buildUrl("/documents"), {
+      const response = await scopedFetch(scope, "/documents", {
         method: "DELETE",
-        headers,
+        headers: JSON_HEADERS,
       });
       if (!response.ok) {
         throw new Error(await response.text());
       }
+      if (!isCurrentScope(scope)) return;
       setStatus("Knowledge base cleared");
       toast({ title: "Knowledge base cleared", description: "All documents deleted", variant: "success" });
-      refreshAll();
+      void refreshAll(scope);
     } catch (error) {
+      if (!isCurrentScope(scope)) return;
       setStatus(`Clear failed: ${toMessage(error)}`);
       toast({ title: "Clear failed", description: toMessage(error), variant: "error" });
     }
   };
 
-  const refreshAll = async (signal?: AbortSignal, generation?: number) => {
-    const gen = generation ?? connectionGeneration.current;
-    const isCurrent = () => !signal?.aborted && gen === connectionGeneration.current;
+  // The scope is required: a refresh always reads through, and may only apply
+  // to, the connection its operation started on.
+  const refreshAll = async (scope: ConnectionScope, signal?: AbortSignal) => {
+    const isCurrent = () => !signal?.aborted && isCurrentScope(scope);
+    if (!isCurrent()) return;
 
     type Settled<T> = { ok: true; value: T } | { ok: false; error: unknown; aborted: boolean };
 
     const loadOne = async <T,>(path: string): Promise<Settled<T>> => {
       try {
-        const value = await fetchJson<T>(path, { signal });
+        const value = await fetchJson<T>(scope, path, { signal });
         return { ok: true, value };
       } catch (error) {
         const aborted = Boolean(signal?.aborted) || (error instanceof DOMException && error.name === "AbortError");
@@ -700,33 +768,38 @@ export function App() {
     }
   };
 
-  const refreshOnboarding = async (signal?: AbortSignal) => {
+  const refreshOnboarding = async (scope: ConnectionScope, signal?: AbortSignal) => {
+    const owns = () => !signal?.aborted && isCurrentScope(scope);
+    if (!owns()) return;
     try {
-      const data = await fetchJson<OnboardingState>("/onboarding", { signal });
-      if (signal?.aborted) return;
+      const data = await fetchJson<OnboardingState>(scope, "/onboarding", { signal });
+      if (!owns()) return;
       setOnboarding(data);
     } catch (error) {
-      if (signal?.aborted) return;
+      if (!owns()) return;
       setStatus(`Onboarding failed to load: ${toMessage(error)}`);
     }
   };
 
-  const refreshModelStatus = async (embeddingModel?: string, rerankerModel?: string) => {
+  const refreshModelStatus = async (scope: ConnectionScope, embeddingModel?: string, rerankerModel?: string) => {
     if (!embeddingModel && !rerankerModel) {
       return;
     }
-    setIsCheckingModels(true);
+    if (!isCurrentScope(scope)) return;
+    const finishActivity = activities.begin(scope, setIsCheckingModels);
     try {
-      const status = await fetchJson<ModelStatus>("/config/models/status", {
+      const status = await fetchJson<ModelStatus>(scope, "/config/models/status", {
         method: "POST",
-        headers,
+        headers: JSON_HEADERS,
         body: JSON.stringify({
           embedding_model: embeddingModel,
           reranker_model: rerankerModel,
         }),
       });
+      if (!isCurrentScope(scope)) return;
       setModelStatus(status);
     } catch (error) {
+      if (!isCurrentScope(scope)) return;
       setModelStatus({
         embedding: "error",
         reranker: "error",
@@ -734,14 +807,17 @@ export function App() {
         reranker_message: toMessage(error),
       });
     } finally {
-      setIsCheckingModels(false);
+      finishActivity();
     }
   };
 
   const downloadInstallReport = async () => {
-    setIsExportingInstallReport(true);
+    const scope = currentScope();
+    const finishActivity = activities.begin(scope, setIsExportingInstallReport);
     try {
-      const report = await fetchJson<InstallReportResponse>("/install/report");
+      const report = await fetchJson<InstallReportResponse>(scope, "/install/report");
+      // A report for a replaced connection is not offered under the new one.
+      if (!isCurrentScope(scope)) return;
       const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
@@ -754,10 +830,11 @@ export function App() {
       URL.revokeObjectURL(url);
       toast({ title: "Install report exported", description: report.status, variant: "success" });
     } catch (error) {
+      if (!isCurrentScope(scope)) return;
       setStatus(`Install report export failed: ${toMessage(error)}`);
       toast({ title: "Install report export failed", description: toMessage(error), variant: "error" });
     } finally {
-      setIsExportingInstallReport(false);
+      finishActivity();
     }
   };
 
@@ -770,34 +847,27 @@ export function App() {
     if (!model) {
       return;
     }
-    if (kind === "embedding") {
-      setIsDownloadingEmbedding(true);
-    } else {
-      setIsDownloadingReranker(true);
-    }
+    const scope = currentScope();
+    const { embedding_model: embeddingModel, reranker_model: rerankerModel } = config.retrieval;
+    const finishActivity = activities.begin(scope, kind === "embedding" ? setIsDownloadingEmbedding : setIsDownloadingReranker);
     try {
-      await fetchJson("/config/models/download", {
+      await fetchJson(scope, "/config/models/download", {
         method: "POST",
-        headers,
+        headers: JSON_HEADERS,
         body: JSON.stringify({ kind, model }),
       });
+      if (!isCurrentScope(scope)) return;
       const message = `Downloaded ${kind} model`;
       setStatus(message);
       setModelActionMessage(message);
-      await refreshModelStatus(
-        config.retrieval.embedding_model,
-        config.retrieval.reranker_model,
-      );
+      await refreshModelStatus(scope, embeddingModel, rerankerModel);
     } catch (error) {
+      if (!isCurrentScope(scope)) return;
       const message = `Download failed: ${toMessage(error)}`;
       setStatus(message);
       setModelActionMessage(message);
     } finally {
-      if (kind === "embedding") {
-        setIsDownloadingEmbedding(false);
-      } else {
-        setIsDownloadingReranker(false);
-      }
+      finishActivity();
     }
   };
 
@@ -814,20 +884,21 @@ export function App() {
     if (!confirmed) {
       return;
     }
+    const scope = currentScope();
+    const { embedding_model: embeddingModel, reranker_model: rerankerModel } = config.retrieval;
     try {
-      await fetchJson("/config/models/delete", {
+      await fetchJson(scope, "/config/models/delete", {
         method: "POST",
-        headers,
+        headers: JSON_HEADERS,
         body: JSON.stringify({ kind, model }),
       });
+      if (!isCurrentScope(scope)) return;
       const message = `Removed ${kind} model cache`;
       setStatus(message);
       setModelActionMessage(message);
-      await refreshModelStatus(
-        config.retrieval.embedding_model,
-        config.retrieval.reranker_model,
-      );
+      await refreshModelStatus(scope, embeddingModel, rerankerModel);
     } catch (error) {
+      if (!isCurrentScope(scope)) return;
       const message = `Remove failed: ${toMessage(error)}`;
       setStatus(message);
       setModelActionMessage(message);
@@ -836,10 +907,10 @@ export function App() {
 
   useEffect(() => {
     const controller = new AbortController();
-    const gen = connectionGeneration.current;
-    refreshAll(controller.signal, gen);
-    refreshOnboarding(controller.signal);
-    refreshLocalProviders(controller.signal);
+    const scope = currentScope();
+    void refreshAll(scope, controller.signal);
+    void refreshOnboarding(scope, controller.signal);
+    void refreshLocalProviders(scope, controller.signal);
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [baseUrl, apiKey, connectAttempt]);
@@ -870,6 +941,7 @@ export function App() {
       return;
     }
     void refreshModelStatus(
+      currentScope(),
       config.retrieval.embedding_model,
       config.retrieval.reranker_model,
     );
@@ -935,7 +1007,12 @@ export function App() {
     // Data loaded with another URL or key must not be shown under this one,
     // for example admin-only config after switching to a read-only key.
     if (!retriesApplied) {
-      connectionGeneration.current += 1;
+      appliedConnection.current = Object.freeze({
+        generation: appliedConnection.current.generation + 1,
+        baseUrl: nextBaseUrl,
+        apiKey: nextApiKey,
+      });
+      activities.reset();
       discardActiveQuery();
       setConfig(null);
       setDocuments([]);
@@ -944,6 +1021,8 @@ export function App() {
       setSecurityPosture(null);
       setOnboarding(null);
       setLocalProviders([]);
+      setLocalSelections({});
+      setSelectedDocumentIds([]);
     }
     setBaseUrl(nextBaseUrl);
     setApiKey(nextApiKey);
@@ -982,26 +1061,30 @@ export function App() {
     toast({ title: "Profile saved", description: profile.name, variant: "success" });
   };
 
-  const persistConfig = async (nextConfig: AppConfig, message = "Configuration saved") => {
-    setIsSavingConfig(true);
+  const persistConfigIn = async (scope: ConnectionScope, nextConfig: AppConfig, message = "Configuration saved") => {
+    const finishActivity = activities.begin(scope, setIsSavingConfig);
     try {
-      const updated = await fetchJson<AppConfig>("/config", {
+      const updated = await fetchJson<AppConfig>(scope, "/config", {
         method: "PUT",
-        headers,
+        headers: JSON_HEADERS,
         body: JSON.stringify({ ...nextConfig, profile: selectedProfile }),
       });
+      if (!isCurrentScope(scope)) return;
       setConfig(updated);
       setStatus(message);
       toast({ title: "Configuration saved", description: nextConfig.provider?.name || "Provider updated", variant: "success" });
     } catch (error) {
+      if (!isCurrentScope(scope)) throw error;
       console.error("Error saving configuration:", error);
       setStatus(`Save failed: ${toMessage(error)}`);
       toast({ title: "Save failed", description: toMessage(error), variant: "error" });
       throw error;
     } finally {
-      setIsSavingConfig(false);
+      finishActivity();
     }
   };
+  const persistConfig = (nextConfig: AppConfig, message?: string) =>
+    persistConfigIn(currentScope(), nextConfig, message);
 
   const handleSaveConfig = async () => {
     if (!config) {
@@ -1014,17 +1097,20 @@ export function App() {
     if (!config?.provider) {
       return;
     }
+    const scope = currentScope();
     setStatus("Discovering models...");
     try {
-      const models = await fetchJson<string[]>("/config/models", {
+      const models = await fetchJson<string[]>(scope, "/config/models", {
         method: "POST",
-        headers,
+        headers: JSON_HEADERS,
         body: JSON.stringify(config.provider),
       });
+      if (!isCurrentScope(scope)) return;
       setModelOptions(models);
       setStatus(`Found ${models.length} models`);
       toast({ title: "Models discovered", description: `${models.length} options found`, variant: "success" });
     } catch (error) {
+      if (!isCurrentScope(scope)) return;
       console.error("Error discovering models:", error);
       setStatus(`Model discovery failed: ${toMessage(error)}`);
       toast({ title: "Model discovery failed", description: toMessage(error), variant: "error" });
@@ -1032,7 +1118,8 @@ export function App() {
   };
 
   const handleIngest = async () => {
-    setIsIngesting(true);
+    const scope = currentScope();
+    const finishActivity = activities.begin(scope, setIsIngesting);
     try {
       const payload: Record<string, unknown> = {
         title: ingestTitle,
@@ -1047,20 +1134,23 @@ export function App() {
       if (promptOverride) {
         payload.langextract_prompt_override = promptOverride;
       }
-      const result = await fetchJson<IngestResponse>("/documents/text", {
+      const result = await fetchJson<IngestResponse>(scope, "/documents/text", {
         method: "POST",
-        headers,
+        headers: JSON_HEADERS,
         body: JSON.stringify(payload),
       });
+      if (!isCurrentScope(scope)) return;
       setStatus(`Processing ${result.title}...`);
       setIngestText("");
-      await waitForDocumentReady(result.document_id, result.title);
+      await waitForDocumentReady(scope, result.document_id, result.title);
+      if (!isCurrentScope(scope)) return;
       toast({ title: "Ingest queued", description: result.title, variant: "success" });
     } catch (error) {
+      if (!isCurrentScope(scope)) return;
       setStatus(`Ingest failed: ${toMessage(error)}`);
       toast({ title: "Ingest failed", description: toMessage(error), variant: "error" });
     } finally {
-      setIsIngesting(false);
+      finishActivity();
     }
   };
 
@@ -1071,18 +1161,16 @@ export function App() {
     const currentQuestion = overrideQuestion || question;
     if (!currentQuestion.trim()) return;
     const queryId = ++queryIdSeq.current;
-    const queryGeneration = connectionGeneration.current;
+    const queryScope = currentScope();
     const controller = new AbortController();
     const queryTransport: ActiveQueryTransport = {
       queryId,
-      baseUrl,
-      apiKey,
-      generation: queryGeneration,
+      scope: queryScope,
       controller,
     };
     activeQueryTransport.current = queryTransport;
     const ownsQuery = () => activeQueryTransport.current?.queryId === queryId;
-    const connectionStillCurrent = () => queryGeneration === connectionGeneration.current;
+    const connectionStillCurrent = () => isCurrentScope(queryScope);
     const mayApplyQueryUi = () => ownsQuery() && connectionStillCurrent();
 
     // NEW: Session persistence logic
@@ -1137,9 +1225,9 @@ export function App() {
       const payload = useFilter
         ? { question: currentQuestion, document_ids: selectedDocumentIds, history: historyToSend, conversation_id: localSessionId, query_mode: queryMode }
         : { question: currentQuestion, history: historyToSend, conversation_id: localSessionId, query_mode: queryMode };
-      const response = await fetch(buildUrl("/query/stream"), {
+      const response = await scopedFetch(queryScope, "/query/stream", {
         method: "POST",
-        headers,
+        headers: JSON_HEADERS,
         body: JSON.stringify(payload),
         signal: controller.signal,
       });
@@ -1264,7 +1352,7 @@ export function App() {
               setSavedSessions(prev => prev.map(s =>
                 s.id === localSessionId ? { ...s, history: updatedHistory, queryResult: event.data } : s
               ));
-              refreshAll(undefined, queryGeneration);
+              void refreshAll(queryScope);
               toast({ title: "Query complete", description: "Results updated", variant: "success" });
             }
           }
@@ -1322,13 +1410,7 @@ export function App() {
     if (!transport) return;
     const cancelledQueryId = transport.queryId;
     const traceId = currentTraceId;
-    const cancelUrl = buildApiUrl(transport.baseUrl, `/query/cancel${traceId ? `?trace_id=${traceId}` : ""}`);
-    const cancelHeaders = (() => {
-      const merged = new Headers();
-      const trimmedKey = transport.apiKey.trim();
-      if (trimmedKey) merged.set("X-API-Key", trimmedKey);
-      return merged;
-    })();
+    const cancelPath = `/query/cancel${traceId ? `?trace_id=${encodeURIComponent(traceId)}` : ""}`;
 
     // Stop the local stream immediately and release ownership so a same-connection
     // Ask can start. A delayed cancel response must not clear that newer query.
@@ -1349,11 +1431,10 @@ export function App() {
 
     // A late cancel reply may only report on the connection and query it was sent
     // for: not after a newer Ask, and not after Connect applied another URL/key.
-    const noNewerQuery = () =>
-      queryIdSeq.current === cancelledQueryId && connectionGeneration.current === transport.generation;
+    const noNewerQuery = () => queryIdSeq.current === cancelledQueryId && isCurrentScope(transport.scope);
 
     try {
-      const response = await fetch(cancelUrl, { method: "POST", headers: cancelHeaders });
+      const response = await scopedFetch(transport.scope, cancelPath, { method: "POST" });
       if (!response.ok) {
         const detail = await response.text().catch(() => "");
         const message = detail.trim() || `Cancel failed (${response.status})`;
@@ -1406,53 +1487,59 @@ export function App() {
   };
 
   const handleEvaluation = async () => {
-    setIsEvaluating(true);
+    const scope = currentScope();
+    const finishActivity = activities.begin(scope, setIsEvaluating);
     try {
       const payload = {
         name: "Smoke Test",
         questions: ["What is JR AutoRAG?", "How do I onboard documents?"],
       };
-      const result = await fetchJson<{ average_coverage: number; average_tokens: number }>("/evaluation", {
+      const result = await fetchJson<{ average_coverage: number; average_tokens: number }>(scope, "/evaluation", {
         method: "POST",
-        headers,
+        headers: JSON_HEADERS,
         body: JSON.stringify(payload),
       });
+      if (!isCurrentScope(scope)) return;
       setEvaluationSummary(
         `Avg coverage ${(result.average_coverage * 100).toFixed(1)}%, Avg tokens ${result.average_tokens.toFixed(0)}`,
       );
       setStatus("Evaluation complete");
       toast({ title: "Evaluation complete", description: "Coverage and tokens updated", variant: "success" });
     } catch (error) {
+      if (!isCurrentScope(scope)) return;
       const message = `Evaluation failed: ${toMessage(error)}`;
       setEvaluationSummary(message);
       setStatus(message);
       toast({ title: "Evaluation failed", description: toMessage(error), variant: "error" });
     } finally {
-      setIsEvaluating(false);
+      finishActivity();
     }
   };
 
   const handleSeedDemo = async () => {
-    setIsSeedingDemo(true);
+    const scope = currentScope();
+    const finishActivity = activities.begin(scope, setIsSeedingDemo);
     setStatus("Loading demo corpus...");
     try {
-      const result = await fetchJson<DemoSeedResponse>("/onboarding/demo/seed", {
+      const result = await fetchJson<DemoSeedResponse>(scope, "/onboarding/demo/seed", {
         method: "POST",
-        headers,
+        headers: JSON_HEADERS,
       });
+      if (!isCurrentScope(scope)) return;
       setStatus(`Demo corpus ready with ${result.document_count} document(s)`);
       toast({
         title: "Demo corpus ready",
         description: `${result.seeded.length} added, ${result.skipped.length} already present`,
         variant: "success",
       });
-      await refreshAll();
-      await refreshOnboarding();
+      await refreshAll(scope);
+      await refreshOnboarding(scope);
     } catch (error) {
+      if (!isCurrentScope(scope)) return;
       setStatus(`Demo setup failed: ${toMessage(error)}`);
       toast({ title: "Demo setup failed", description: toMessage(error), variant: "error" });
     } finally {
-      setIsSeedingDemo(false);
+      finishActivity();
     }
   };
 
@@ -1471,19 +1558,22 @@ export function App() {
     if (!confirmed) {
       return;
     }
-    setIsClearingCache(true);
+    const scope = currentScope();
+    const finishActivity = activities.begin(scope, setIsClearingCache);
     try {
-      const result = await fetchJson<{ status: string; message: string }>("/api/cache/clear", {
+      const result = await fetchJson<{ status: string; message: string }>(scope, "/api/cache/clear", {
         method: "DELETE",
       });
+      if (!isCurrentScope(scope)) return;
       setStatus(result.message || "Cache cleared");
-      refreshAll();
+      void refreshAll(scope);
       toast({ title: "Cache cleared", description: "All indexes and query caches reset", variant: "success" });
     } catch (error) {
+      if (!isCurrentScope(scope)) return;
       setStatus(`Cache clear failed: ${toMessage(error)}`);
       toast({ title: "Cache clear failed", description: toMessage(error), variant: "error" });
     } finally {
-      setIsClearingCache(false);
+      finishActivity();
     }
   };
 
@@ -1500,6 +1590,7 @@ export function App() {
   };
 
   const applyLocalProvider = async (provider: LocalProviderInfo) => {
+    const scope = currentScope();
     const selection = (localSelections[provider.base_url] || {}) as Partial<RoleSelection>;
     const ensureConfig = async () => {
       if (config) {
@@ -1507,12 +1598,14 @@ export function App() {
       }
       setStatus("Loading configuration...");
       try {
-        const cfg = await fetchJson<AppConfig>("/config");
+        const cfg = await fetchJson<AppConfig>(scope, "/config");
+        if (!isCurrentScope(scope)) return null;
         setConfig(cfg);
         setSelectedProfile(cfg.profile);
         setNewProfileName(cfg.profile);
         return cfg;
       } catch (error) {
+        if (!isCurrentScope(scope)) return null;
         setStatus(`Failed to load configuration: ${toMessage(error)}`);
         toast({ title: "Load config failed", description: toMessage(error), variant: "error" });
         return null;
@@ -1545,9 +1638,11 @@ export function App() {
         gatherer_model: gatherer,
       },
     };
+    if (!isCurrentScope(scope)) return;
     setConfig(nextConfig);
     try {
-      await persistConfig(nextConfig, `Applied ${provider.name} (${planner}/${generator})`);
+      await persistConfigIn(scope, nextConfig, `Applied ${provider.name} (${planner}/${generator})`);
+      if (!isCurrentScope(scope)) return;
       setStatus(`Successfully applied ${provider.name} with ${planner}`);
       toast({ title: "Provider applied", description: `${provider.name} (${planner}/${generator})`, variant: "success" });
     } catch {
@@ -1555,8 +1650,11 @@ export function App() {
     }
   };
 
-  const uploadFile = async (file: File): Promise<IngestResponse> => {
-    setIsUploadingFile(true);
+  // Sends one file on the batch's scope. Refuses to send once that connection
+  // has been replaced, so a stale batch can never reach the new destination.
+  const uploadFileIn = async (scope: ConnectionScope, file: File): Promise<IngestResponse> => {
+    if (!isCurrentScope(scope)) throw new StaleConnectionError();
+    const finishActivity = activities.begin(scope, setIsUploadingFile);
     setStatus(`Uploading ${file.name}...`);
     try {
       const formData = new FormData();
@@ -1574,9 +1672,8 @@ export function App() {
       if (promptOverride) {
         formData.append("langextract_prompt_override", promptOverride);
       }
-      const resp = await fetch(buildUrl("/documents/upload"), {
+      const resp = await scopedFetch(scope, "/documents/upload", {
         method: "POST",
-        headers: buildHeaders(),
         body: formData,
       });
       if (!resp.ok) {
@@ -1584,20 +1681,32 @@ export function App() {
         throw new Error(err.detail || "Upload failed");
       }
       const result: IngestResponse = await resp.json();
+      if (!isCurrentScope(scope)) throw new StaleConnectionError();
       setStatus(`Processing ${file.name}...`);
       setIngestTitle("");
       setIngestText("");
       return result;
     } catch (error) {
+      if (!isCurrentScope(scope)) throw error;
       setStatus(`Upload failed: ${toMessage(error)}`);
       toast({ title: "Upload failed", description: toMessage(error), variant: "error" });
       throw error;
     } finally {
-      setIsUploadingFile(false);
-      if (fileInputRef.current) {
+      finishActivity();
+      if (isCurrentScope(scope) && fileInputRef.current) {
         fileInputRef.current.value = "";
       }
     }
+  };
+
+  const startUploadBatch = (): UploadBatch => {
+    const scope = currentScope();
+    return Object.freeze({
+      isCurrent: () => isCurrentScope(scope),
+      upload: (file: File) => uploadFileIn(scope, file),
+      waitUntilReady: (upload: IngestResponse, label?: string) =>
+        waitForDocumentReady(scope, upload.document_id, label),
+    });
   };
 
   const updateRetrieval = (field: keyof RetrievalDefaults, value: string | number | boolean) => {
@@ -2046,6 +2155,7 @@ export function App() {
                   {/* Provider Carousel - Ollama, LM Studio, OpenRouter */}
                   <Suspense fallback={<LoadingSpinner message="Loading providers..." />}>
                     <ProviderCarousel
+                      key={currentScope().generation}
                       config={config}
                       setConfig={setConfig}
                       isSavingConfig={isSavingConfig}
@@ -2053,7 +2163,7 @@ export function App() {
                       persistConfig={persistConfig}
                       localProviders={localProviders}
                       localProvidersStatus={localProvidersStatus}
-                      refreshLocalProviders={() => refreshLocalProviders()}
+                      refreshLocalProviders={() => void refreshLocalProviders(currentScope())}
                       localSelections={localSelections}
                       setLocalSelection={setLocalSelection}
                       applyLocalProvider={applyLocalProvider}
@@ -2079,7 +2189,7 @@ export function App() {
                       handleAddProfile={handleAddProfile}
                       newProfileName={newProfileName}
                       setNewProfileName={setNewProfileName}
-                      refreshAll={() => refreshAll()}
+                      refreshAll={() => void refreshAll(currentScope())}
                     />
                   </Suspense>
 
@@ -2096,12 +2206,15 @@ export function App() {
                       <PresetSelector
                         value={activePreset}
                         onChange={async (newPreset: PresetLevel) => {
+                          const scope = currentScope();
                           setActivePreset(newPreset);
                           try {
-                            const updated = await fetchJson<AppConfig>(`/config/presets/${newPreset}`, { method: "POST" });
+                            const updated = await fetchJson<AppConfig>(scope, `/config/presets/${newPreset}`, { method: "POST" });
+                            if (!isCurrentScope(scope)) return;
                             setConfig(updated);
                             toast({ title: `Applied ${newPreset} preset`, variant: "default" });
                           } catch (e) {
+                            if (!isCurrentScope(scope)) return;
                             toast({ title: toMessage(e), variant: "error" });
                           }
                         }}
@@ -2121,7 +2234,7 @@ export function App() {
                       onSave={handleSaveConfig}
                       isSaving={isSavingConfig}
                       modelStatus={modelStatus}
-                      onRefreshModelStatus={() => refreshModelStatus(config?.retrieval?.embedding_model, config?.retrieval?.reranker_model)}
+                      onRefreshModelStatus={() => refreshModelStatus(currentScope(), config?.retrieval?.embedding_model, config?.retrieval?.reranker_model)}
                       onDownloadEmbedding={() => downloadModel("embedding")}
                       onDownloadReranker={() => downloadModel("reranker")}
                       onDeleteEmbedding={() => deleteModel("embedding")}
@@ -2187,13 +2300,12 @@ export function App() {
                       isIngesting={isIngesting}
                       ingestSync={ingestSync}
                       setIngestSync={setIngestSync}
-                      uploadFile={uploadFile}
+                      startUploadBatch={startUploadBatch}
                       isUploadingFile={isUploadingFile}
                       fileInputRef={fileInputRef}
                       documents={documents}
                       handleDeleteDocument={handleDeleteDocument}
                       handleDeleteAllDocuments={handleDeleteAllDocuments}
-                      waitForDocumentReady={waitForDocumentReady}
                       formatDateTime={formatDateTime}
                       langextractProfileOverride={langextractProfileOverride}
                       setLangextractProfileOverride={setLangextractProfileOverride}
@@ -2298,9 +2410,11 @@ export function App() {
                   queryMode={queryMode}
                   onQueryModeChange={setQueryMode}
                   onPresetChange={async (preset) => {
+                    const scope = currentScope();
                     setActivePreset(preset);
                     try {
-                      const updated = await fetchJson<AppConfig>(`/config/presets/${preset}`, { method: "POST" });
+                      const updated = await fetchJson<AppConfig>(scope, `/config/presets/${preset}`, { method: "POST" });
+                      if (!isCurrentScope(scope)) return;
                       setConfig(updated);
                       toast({ title: "Preset applied", description: `Switched to ${preset} mode`, variant: "success" });
                     } catch (e) {
@@ -2315,10 +2429,11 @@ export function App() {
               <div className="mx-auto max-w-[1400px]">
                 <Suspense fallback={<LoadingSpinner message="Loading quality cockpit..." />}>
                   <QualityCockpit
+                    key={currentScope().generation}
                     documents={documents}
                     buildUrl={buildUrl}
                     buildHeaders={buildHeaders}
-                    onPresetPromoted={() => refreshAll()}
+                    onPresetPromoted={() => void refreshAll(currentScope())}
                   />
                 </Suspense>
               </div>
@@ -2328,7 +2443,7 @@ export function App() {
               {/* Metrics & Traces */}
               <div className="space-y-6 max-w-5xl mx-auto">
                 <Suspense fallback={<LoadingSpinner message="Loading status panel..." />}>
-                  <EnterpriseStatusPanel baseUrl={baseUrl} apiKey={apiKey} />
+                  <EnterpriseStatusPanel key={currentScope().generation} baseUrl={baseUrl} apiKey={apiKey} />
                 </Suspense>
 
                 <Suspense fallback={<LoadingSpinner message="Loading metrics..." />}>

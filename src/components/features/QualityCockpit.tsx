@@ -1,3 +1,5 @@
+import { useRequestOwner } from "@/lib/use-request-owner";
+import type { RequestOwner } from "@/lib/request-owner";
 import { useEffect, useMemo, useState } from "react";
 import { Activity, ArrowUpRight, Beaker, Download, FileCheck2, FileSearch, RefreshCw, ShieldCheck, Trophy } from "lucide-react";
 
@@ -37,11 +39,11 @@ const CLIENT_READINESS_METRIC_THRESHOLDS = {
   "Completeness": 0.7,
 } as const;
 
-const readJson = async <T,>(response: Response): Promise<T> => {
+const readJson = async <T,>(response: Response, operation: ReturnType<RequestOwner["start"]>): Promise<T> => {
   if (!response.ok) {
     throw new Error(await response.text());
   }
-  return response.json() as Promise<T>;
+  return operation.json<T>(response);
 };
 
 const formatScore = (value?: number) =>
@@ -58,6 +60,7 @@ const auditString = (run: EvalRunSummary | undefined, section: string, key: stri
 };
 
 export function QualityCockpit({ documents, buildUrl, buildHeaders, onPresetPromoted }: QualityCockpitProps) {
+  const requests = useRequestOwner(buildUrl(""), buildHeaders().get("X-API-Key") ?? "");
   const [recommendations, setRecommendations] = useState<QualityRecommendations | null>(null);
   const [experiments, setExperiments] = useState<ExperimentRun[]>([]);
   const [evalRuns, setEvalRuns] = useState<EvalRunSummary[]>([]);
@@ -75,52 +78,63 @@ export function QualityCockpit({ documents, buildUrl, buildHeaders, onPresetProm
   );
 
   const refresh = async () => {
+    const operation = requests.start("quality-refresh");
     setIsLoading(true);
     setError("");
     try {
       const [recommendationData, experimentData, evalData] = await Promise.all([
-        fetch(buildUrl("/config/recommendations"), { headers: buildHeaders() }).then((response) =>
-          readJson<QualityRecommendations>(response),
+        operation.fetch(buildUrl("/config/recommendations"), { headers: buildHeaders() }).then((response) =>
+          readJson<QualityRecommendations>(response, operation),
         ),
-        fetch(buildUrl("/experiments"), { headers: buildHeaders() }).then((response) =>
-          readJson<ExperimentRun[]>(response),
+        operation.fetch(buildUrl("/experiments"), { headers: buildHeaders() }).then((response) =>
+          readJson<ExperimentRun[]>(response, operation),
         ),
-        fetch(buildUrl("/evaluation/runs"), { headers: buildHeaders() }).then((response) =>
-          readJson<EvalRunSummary[]>(response),
+        operation.fetch(buildUrl("/evaluation/runs"), { headers: buildHeaders() }).then((response) =>
+          readJson<EvalRunSummary[]>(response, operation),
         ),
       ]);
+      if (!operation.current()) return;
       setRecommendations(recommendationData);
       setExperiments(experimentData);
       setEvalRuns(evalData);
     } catch (caught) {
+      if (!operation.current()) return;
       setError(toMessage(caught));
     } finally {
-      setIsLoading(false);
+      if (operation.current()) setIsLoading(false);
+      operation.finish();
     }
   };
 
   const loadPreview = async (documentId: string) => {
+    const operation = requests.start("document-preview");
     if (!documentId) {
       setPreview(null);
+      operation.finish();
       return;
     }
     setError("");
     try {
-      const data = await fetch(buildUrl(`/documents/${documentId}/preview`), { headers: buildHeaders() }).then(
-        (response) => readJson<DocumentPreview>(response),
+      const data = await operation.fetch(buildUrl(`/documents/${documentId}/preview`), { headers: buildHeaders() }).then(
+        (response) => readJson<DocumentPreview>(response, operation),
       );
+      if (!operation.current()) return;
       setPreview(data);
       setSelectedDocumentId(documentId);
     } catch (caught) {
+      if (!operation.current()) return;
       setError(toMessage(caught));
+    } finally {
+      operation.finish();
     }
   };
 
   const runExperiment = async () => {
+    const operation = requests.start();
     setIsRunningExperiment(true);
     setError("");
     try {
-      const run = await fetch(buildUrl("/experiments"), {
+      const run = await operation.fetch(buildUrl("/experiments"), {
         method: "POST",
         headers: buildHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
@@ -128,58 +142,71 @@ export function QualityCockpit({ documents, buildUrl, buildHeaders, onPresetProm
           description: "Parser, retrieval, OCR, graph, and RAPTOR advisory sweep",
           questions: ["What is this corpus about?", "Which sources support the answer?"],
         }),
-      }).then((response) => readJson<ExperimentRun>(response));
+      }).then((response) => readJson<ExperimentRun>(response, operation));
+      if (!operation.current()) return;
       setExperiments((current) => [run, ...current.filter((item) => item.id !== run.id)]);
       await refresh();
     } catch (caught) {
+      if (!operation.current()) return;
       setError(toMessage(caught));
     } finally {
-      setIsRunningExperiment(false);
+      if (operation.current()) setIsRunningExperiment(false);
+      operation.finish();
     }
   };
 
   const runClientReadinessBenchmark = async () => {
+    const operation = requests.start();
     setIsRunningClientReadiness(true);
     setError("");
     try {
-      await fetch(buildUrl("/evaluation/golden-sets/builtins"), {
+      await operation.fetch(buildUrl("/evaluation/golden-sets/builtins"), {
         method: "POST",
         headers: buildHeaders(),
-      }).then((response) => readJson<unknown>(response));
-      const run = await fetch(buildUrl("/evaluation/batch/client_readiness"), {
+      }).then((response) => readJson<unknown>(response, operation));
+      const run = await operation.fetch(buildUrl("/evaluation/batch/client_readiness"), {
         method: "POST",
         headers: buildHeaders(),
-      }).then((response) => readJson<EvalRunSummary>(response));
+      }).then((response) => readJson<EvalRunSummary>(response, operation));
+      if (!operation.current()) return;
       setEvalRuns((current) => [run, ...current.filter((item) => item.run_id !== run.run_id)]);
       await refresh();
     } catch (caught) {
+      if (!operation.current()) return;
       setError(toMessage(caught));
     } finally {
-      setIsRunningClientReadiness(false);
+      if (operation.current()) setIsRunningClientReadiness(false);
+      operation.finish();
     }
   };
 
   const promoteExperiment = async (runId: string) => {
+    const operation = requests.start();
     setError("");
     try {
-      await fetch(buildUrl(`/experiments/${runId}/promote`), {
+      await operation.fetch(buildUrl(`/experiments/${runId}/promote`), {
         method: "POST",
         headers: buildHeaders(),
-      }).then((response) => readJson<unknown>(response));
+      }).then((response) => readJson<unknown>(response, operation));
       await refresh();
-      onPresetPromoted();
+      if (operation.current()) onPresetPromoted();
     } catch (caught) {
+      if (!operation.current()) return;
       setError(toMessage(caught));
+    } finally {
+      operation.finish();
     }
   };
 
   const downloadEvalReport = async (run: EvalRunSummary) => {
+    const operation = requests.start();
     setDownloadingReportId(run.run_id);
     setError("");
     try {
-      const report = await fetch(buildUrl(`/evaluation/runs/${run.run_id}/report`), {
+      const report = await operation.fetch(buildUrl(`/evaluation/runs/${run.run_id}/report`), {
         headers: buildHeaders(),
-      }).then((response) => readJson<Record<string, unknown>>(response));
+      }).then((response) => readJson<Record<string, unknown>>(response, operation));
+      if (!operation.current()) return;
       const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
@@ -190,15 +217,13 @@ export function QualityCockpit({ documents, buildUrl, buildHeaders, onPresetProm
       link.remove();
       URL.revokeObjectURL(url);
     } catch (caught) {
+      if (!operation.current()) return;
       setError(toMessage(caught));
     } finally {
-      setDownloadingReportId("");
+      if (operation.current()) setDownloadingReportId("");
+      operation.finish();
     }
   };
-
-  useEffect(() => {
-    void refresh();
-  }, []);
 
   useEffect(() => {
     void refresh();

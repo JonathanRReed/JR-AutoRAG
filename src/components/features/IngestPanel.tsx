@@ -1,4 +1,4 @@
-import { type ChangeEvent, type DragEvent, useState } from "react";
+import { type ChangeEvent, type DragEvent, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -19,13 +19,19 @@ import {
     ShieldCheck,
     Info,
 } from "lucide-react";
-import type { DocumentOut, IngestResponse, OCRPolicy } from "@/types";
+import type { DocumentOut, OCRPolicy, UploadBatch } from "@/types";
 
 interface UploadProgress {
+    batchId: number;
+    index: number;
     filename: string;
-    status: "pending" | "uploading" | "processing" | "done" | "error";
+    status: "pending" | "uploading" | "processing" | "done" | "error" | "cancelled";
     error?: string;
 }
+
+const CANCELLED_NOT_SENT = "Connection changed before this file was sent; it was not uploaded.";
+const CANCELLED_IN_FLIGHT =
+    "Connection changed while this file was in progress; it may exist on the previous connection.";
 
 interface IngestPanelProps {
     ingestTitle: string;
@@ -40,8 +46,8 @@ interface IngestPanelProps {
     handleDeleteDocument: (id: string, title: string) => void;
     handleDeleteAllDocuments: () => void;
     isUploadingFile: boolean;
-    uploadFile: (file: File) => Promise<IngestResponse>;
-    waitForDocumentReady: (documentId: string, label?: string) => Promise<void>;
+    // Starts one batch bound to the connection applied right now.
+    startUploadBatch: () => UploadBatch;
     fileInputRef: React.RefObject<HTMLInputElement | null>;
     formatDateTime: (value?: string) => string;
     langextractProfileOverride: string;
@@ -78,8 +84,7 @@ export function IngestPanel({
     handleDeleteDocument,
     handleDeleteAllDocuments,
     isUploadingFile,
-    uploadFile,
-    waitForDocumentReady,
+    startUploadBatch,
     fileInputRef,
     formatDateTime,
     langextractProfileOverride,
@@ -94,6 +99,9 @@ export function IngestPanel({
     const [isDragOver, setIsDragOver] = useState(false);
     const profileOptions = ["generic_entities_v1", "compliance_risk_v1", "contract_terms_v1"];
 
+    const batchSeq = useRef(0);
+    const activeBatches = useRef(new Set<number>());
+
     const processFiles = async (files: FileList | File[]) => {
         const fileArray = Array.from(files);
         const validFiles = fileArray.filter(f =>
@@ -104,37 +112,67 @@ export function IngestPanel({
             return;
         }
 
-        const initialQueue: UploadProgress[] = validFiles.map(f => ({
+        // The whole batch is bound to the connection applied now. A later
+        // connection replacement cancels what is left; it never redirects it.
+        const batch = startUploadBatch();
+        const batchId = ++batchSeq.current;
+        activeBatches.current.add(batchId);
+        const initialQueue: UploadProgress[] = validFiles.map((f, index) => ({
+            batchId,
+            index,
             filename: f.name,
             status: "pending",
         }));
-        setUploadQueue(initialQueue);
+        // Rows of batches that already finished make way; running ones stay.
+        setUploadQueue(prev => [...prev.filter(item => activeBatches.current.has(item.batchId)), ...initialQueue]);
 
-        for (let i = 0; i < validFiles.length; i++) {
-            const file = validFiles[i];
-            if (!file) continue;
-
-            setUploadQueue(prev => prev.map((item, idx) =>
-                idx === i ? { ...item, status: "uploading" } : item
+        const update = (index: number, patch: Partial<UploadProgress>) =>
+            setUploadQueue(prev => prev.map(item =>
+                item.batchId === batchId && item.index === index ? { ...item, ...patch } : item
+            ));
+        const cancelFrom = (index: number, inFlight: boolean) =>
+            setUploadQueue(prev => prev.map(item =>
+                item.batchId === batchId && item.index >= index
+                    ? {
+                        ...item,
+                        status: "cancelled",
+                        error: inFlight && item.index === index ? CANCELLED_IN_FLIGHT : CANCELLED_NOT_SENT,
+                    }
+                    : item
             ));
 
-            try {
-                const result = await uploadFile(file);
-                setUploadQueue(prev => prev.map((item, idx) =>
-                    idx === i ? { ...item, status: "processing" } : item
-                ));
-                await waitForDocumentReady(result.document_id, file.name);
-                setUploadQueue(prev => prev.map((item, idx) =>
-                    idx === i ? { ...item, status: "done" } : item
-                ));
-            } catch (err) {
-                setUploadQueue(prev => prev.map((item, idx) =>
-                    idx === i ? { ...item, status: "error", error: String(err) } : item
-                ));
+        try {
+            for (let i = 0; i < validFiles.length; i++) {
+                const file = validFiles[i];
+                if (!file) continue;
+                if (!batch.isCurrent()) {
+                    cancelFrom(i, false);
+                    break;
+                }
+
+                update(i, { status: "uploading" });
+                try {
+                    const result = await batch.upload(file);
+                    if (!batch.isCurrent()) {
+                        cancelFrom(i, true);
+                        break;
+                    }
+                    update(i, { status: "processing" });
+                    await batch.waitUntilReady(result, file.name);
+                    update(i, { status: "done" });
+                } catch (err) {
+                    if (!batch.isCurrent()) {
+                        cancelFrom(i, true);
+                        break;
+                    }
+                    update(i, { status: "error", error: String(err) });
+                }
             }
+        } finally {
+            activeBatches.current.delete(batchId);
         }
 
-        setTimeout(() => setUploadQueue([]), 5000);
+        setTimeout(() => setUploadQueue(prev => prev.filter(item => item.batchId !== batchId)), 5000);
     };
 
     const handleFileInputChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -324,12 +362,18 @@ export function IngestPanel({
                             Upload Progress
                         </h4>
                         <div className="space-y-3">
-                            {uploadQueue.map((item, idx) => (
-                                <div key={idx} className="flex items-center gap-3 rounded-md bg-card/60 p-2 text-sm">
+                            {uploadQueue.map(item => (
+                                <div
+                                    key={`${item.batchId}-${item.index}`}
+                                    className="flex items-center gap-3 rounded-md bg-card/60 p-2 text-sm"
+                                    title={item.error}
+                                >
                                     {item.status === "done" ? (
                                         <CheckCircle2 className="h-4 w-4 text-primary" />
                                     ) : item.status === "error" ? (
                                         <XCircle className="h-4 w-4 text-destructive" />
+                                    ) : item.status === "cancelled" ? (
+                                        <XCircle className="h-4 w-4 text-muted-foreground" />
                                     ) : item.status === "uploading" || item.status === "processing" ? (
                                         <Loader2 className="h-4 w-4 text-muted-foreground animate-spin" />
                                     ) : (

@@ -11,6 +11,10 @@ const appModule = await import("./App");
 const { App } = appModule;
 const setConnectionCheckTimeoutMsForTests =
   appModule.setConnectionCheckTimeoutMsForTests ?? ((_: number | null) => {});
+// Status text is not rendered; this observer records every status write.
+const observeStatusForTests =
+  (appModule as { observeStatusForTests?: (observer: ((status: string) => void) | null) => void })
+    .observeStatusForTests ?? ((_: ((status: string) => void) | null) => {});
 const { ToastProvider } = await import("@/components/ui/toast");
 
 // Synthetic values only. No real key or provider is ever contacted: every
@@ -57,6 +61,15 @@ type Server = {
   cancelGate?: Promise<unknown>;
   cancelStatus?: number;
   cancelIgnoreAbort?: boolean;
+  // Held DELETE /documents[/:id]. Ignores abort like a server mid-write.
+  deleteGate?: Promise<unknown>;
+  deleteStatus?: number;
+  // Body for GET /providers/local (default []).
+  localProviders?: unknown[];
+  // File names this server accepted on POST /documents/upload, in order.
+  uploads?: string[];
+  // Per-file-name hold on POST /documents/upload. Ignores abort like a server mid-write.
+  uploadGates?: Record<string, Promise<unknown>>;
 };
 type LiveStreamHandle = {
   push: (events: Array<Record<string, unknown>>) => void;
@@ -64,6 +77,7 @@ type LiveStreamHandle = {
   error: (reason: unknown) => void;
 };
 let liveStreams: LiveStreamHandle[] = [];
+let providerCredentialLog: Array<{origin:string;key:string}> = [];
 const ADMIN_PATHS = ["/config", "/monitoring/traces", "/providers/local"];
 
 const postureFor = (server: Server) =>
@@ -135,6 +149,13 @@ const configFor = (provider: string) => ({
 });
 
 const protectedBody = (path: string, server: Server) => {
+  if (path === "/api/artifacts/status") return { corpus_version: server.provider, graph_rag_status: "ready", raptor_status: "ready" };
+  if (path === "/providers/openrouter/status") return { available: server.provider === "Provider A" };
+  if (path === "/providers/openrouter/models") return [];
+  if (path === "/rag/audit/health") return { available: false };
+  if (path === "/config/recommendations") return { document_count: server.provider === "Provider A" ? 99 : 2, recommendations: [], low_confidence_documents: 0 };
+  if (path === "/experiments" || path === "/evaluation/runs") return [];
+  if (path === "/evaluation/golden-sets/builtins") return {};
   if (path === "/config") return configFor(server.provider);
   if (path === "/monitoring/cache") return {};
   if (path === "/security/posture") return postureFor(server);
@@ -150,7 +171,8 @@ const protectedBody = (path: string, server: Server) => {
     };
   }
   if (path === "/documents") return server.docs;
-  if (["/monitoring/traces", "/providers/local"].includes(path)) return [];
+  if (path === "/providers/local") return server.localProviders ?? [];
+  if (path === "/monitoring/traces") return [];
   return undefined;
 };
 
@@ -175,12 +197,52 @@ const fakeFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   // A URL without a scheme resolves against the page, like a browser fetch.
   const url = new URL(String(input), location.href);
   const key = new Headers(init?.headers).get("X-API-Key");
+  const providerKey = new Headers(init?.headers).get("x-openrouter-key");
+  if (providerKey) providerCredentialLog.push({origin:url.origin,key:providerKey});
   const signal = init?.signal ?? undefined;
   log.push({ origin: url.origin, path: url.pathname, key, signal });
   // The UI server answers every unmatched path with index.html (src/index.ts "/*").
   if (url.origin === UI_ORIGIN) return new Response("<!doctype html>", { status: 200, headers: { "Content-Type": "text/html" } });
   const server = url.origin === ORIGIN_A ? serverA : url.origin === ORIGIN_B ? serverB : undefined;
   if (!server) throw new TypeError("Failed to fetch");
+
+  const method = (init?.method ?? "GET").toUpperCase();
+  const authFailure = () => {
+    if (server.key !== null && key === null) return json(401, { detail: "API key required. Provide X-API-Key header." });
+    if (server.key !== null && key !== server.key) return json(403, { detail: "Invalid API key or insufficient permissions." });
+    return null;
+  };
+  if (method === "DELETE" && (url.pathname === "/documents" || url.pathname.startsWith("/documents/"))) {
+    await waitGate(server.deleteGate);
+    const denied = authFailure();
+    if (denied) return denied;
+    if (server.deleteStatus && server.deleteStatus >= 400) {
+      return json(server.deleteStatus, { detail: "synthetic delete failure" });
+    }
+    if (url.pathname === "/documents") {
+      server.docs = [];
+    } else {
+      const id = decodeURIComponent(url.pathname.slice("/documents/".length));
+      server.docs = server.docs.filter(doc => (doc as { id: string }).id !== id);
+    }
+    return json(200, { status: "deleted" });
+  }
+  if (method === "POST" && url.pathname === "/documents/upload") {
+    const file = (init?.body as FormData).get("file") as File;
+    await waitGate(server.uploadGates?.[file.name]);
+    const denied = authFailure();
+    if (denied) return denied;
+    server.uploads = [...(server.uploads ?? []), file.name];
+    const id = `up-${file.name}`;
+    server.docs = [...server.docs, { id, title: file.name, text: "", metadata: { processing_status: "ready" } }];
+    return json(200, { document_id: id, title: file.name, chunk_count: 1 });
+  }
+  if (method === "POST" && url.pathname === "/documents/text") {
+    const denied = authFailure();
+    if (denied) return denied;
+    const body = JSON.parse(String(init?.body ?? "{}")) as { title?: string };
+    return json(200, { document_id: "doc-new", title: body.title ?? "Untitled", chunk_count: 1 });
+  }
 
   if (server.ignoreAbort) {
     if (server.ignoreAbortHang) {
@@ -370,11 +432,18 @@ const storeSessionKey = (key: string, origin = ORIGIN_A) => {
   sessionStorage.setItem("jr-autorag-api-key-origin", origin);
 };
 
+let statusLog: string[] = [];
+const realConfirm = window.confirm;
+
 beforeEach(() => {
+  statusLog = [];
+  observeStatusForTests(status => statusLog.push(status));
+  window.confirm = () => true;
   sessionStorage.clear();
   localStorage.clear();
   log = [];
   liveStreams = [];
+  providerCredentialLog = [];
   serverA = { health: 200, key: GOOD_KEY, readKey: null, provider: "Provider A", docs: [], gates: {} };
   serverB = { health: 200, key: GOOD_KEY, readKey: null, provider: "Provider B", docs: [], gates: {} };
   setConnectionCheckTimeoutMsForTests(null);
@@ -393,6 +462,8 @@ afterEach(async () => {
   }
   container?.remove();
   setConnectionCheckTimeoutMsForTests(null);
+  observeStatusForTests(null);
+  window.confirm = realConfirm;
   globalThis.fetch = realFetch;
   globalThis.setInterval = realSetInterval;
 });
@@ -1639,5 +1710,404 @@ describe("Cancel across a connection switch", () => {
     expect(log.some(entry => entry.path === "/query/cancel")).toBe(false);
     expect(toasts().some(t => t.includes("Stopped streaming") && t.includes("not asked to cancel"))).toBe(true);
     expect(toasts().some(t => t.includes("Query cancelled"))).toBe(false);
+  });
+});
+
+describe("Operation identity across a connection switch", () => {
+  // Every operation below starts on A, is held, and then A is replaced by B.
+  // When A's operation finishes, nothing it does may land in B's UI, and its
+  // follow-up work must keep using A's own transport or stop.
+  const docsA = () => [{ id: "doc-a", title: "Doc A", text: "", metadata: { processing_status: "ready" } }];
+  const docsB = () => [
+    { id: "doc-b1", title: "Doc B1", text: "", metadata: { processing_status: "ready" } },
+    { id: "doc-b2", title: "Doc B2", text: "", metadata: { processing_status: "ready" } },
+  ];
+
+  const documentsPanel = () => container.querySelector("#tabpanel-documents") as HTMLElement;
+  const clickDocumentsButton = async (label: string) => {
+    const button = [...documentsPanel().querySelectorAll("button")].find(
+      node => node.textContent?.trim() === label,
+    ) as HTMLButtonElement | undefined;
+    if (!button) throw new Error(`documents button ${label} not found`);
+    await act(async () => {
+      button.click();
+    });
+    await settle();
+  };
+
+  const switchToB = async () => {
+    await type("API base URL", ORIGIN_B);
+    await type("API key", GOOD_KEY);
+    await clickConnect();
+    expect(connectButton().textContent).toBe("Connected");
+    expect(providerShown()).toBe("Provider B");
+    expect(shown("Documents")).toBe("2");
+  };
+
+  type Snapshot = { toasts: string[]; status: number; requests: number };
+  const snapshot = (): Snapshot => ({ toasts: toasts(), status: statusLog.length, requests: log.length });
+  const expectBUntouchedSince = (before: Snapshot) => {
+    expect(shown("Documents")).toBe("2");
+    expect(providerShown()).toBe("Provider B");
+    expect(connectButton().textContent).toBe("Connected");
+    expect(toasts()).toEqual(before.toasts);
+    expect(statusLog.slice(before.status)).toEqual([]);
+    // A's late handler neither refreshed through A nor adopted B's transport.
+    expect(since(before.requests).filter(entry => entry.path !== "/healthz" && entry.path !== "/security/posture")).toEqual([]);
+  };
+
+  const setup = async () => {
+    storeSessionKey(GOOD_KEY);
+    serverA.docs = docsA();
+    serverB.docs = docsB();
+    await mount();
+    await openTab("Documents");
+    expect(shown("Documents")).toBe("1");
+  };
+
+  test("retrying the same applied connection preserves provider credentials", async () => {
+    await setup();
+    await openTab("Configuration");
+    await openTab("OpenRouter");
+    await type("OpenRouter API key", "synthetic-provider-key-for-a");
+    await clickConnect();
+    expect((container.querySelector("#openrouter-api-key") as HTMLInputElement).value).toBe("synthetic-provider-key-for-a");
+  });
+
+  test("provider credentials entered for A are not reused on B", async () => {
+    await setup();
+    await openTab("Configuration");
+    await openTab("OpenRouter");
+    await type("OpenRouter API key", "synthetic-provider-key-for-a");
+    await switchToB();
+    await openTab("OpenRouter");
+    expect((container.querySelector("#openrouter-api-key") as HTMLInputElement).value).toBe("");
+    expect(providerCredentialLog.filter(entry => entry.origin === ORIGIN_B)).toEqual([]);
+  });
+
+  test("a same-connection retry allows the quality run to continue on A", async () => {
+    await setup();
+    await openTab("Quality");
+    const hold = deferred();
+    serverA.gates["/evaluation/golden-sets/builtins"] = hold.promise;
+    const button = [...container.querySelectorAll("#tabpanel-quality button")].find(node => node.textContent?.trim() === "Run Client Readiness") as HTMLButtonElement;
+    await act(async () => { button.click(); });
+    await settle();
+    await clickConnect();
+    await release(hold);
+    expect(log.some(entry => entry.origin === ORIGIN_A && entry.path === "/evaluation/batch/client_readiness")).toBe(true);
+  });
+
+  test("an old quality run cannot enqueue its next write after switching to B", async () => {
+    await setup();
+    await openTab("Quality");
+    const hold = deferred();
+    serverA.gates["/evaluation/golden-sets/builtins"] = hold.promise;
+    serverA.ignoreGateAbort = { "/evaluation/golden-sets/builtins": true };
+    const button = [...container.querySelectorAll("#tabpanel-quality button")].find(node => node.textContent?.trim() === "Run Client Readiness") as HTMLButtonElement;
+    await act(async () => { button.click(); });
+    await settle();
+    await switchToB();
+    const mark = log.length;
+    await release(hold);
+    expect(since(mark).filter(entry => entry.path === "/evaluation/batch/client_readiness")).toEqual([]);
+  });
+
+  test("late quality recommendations cannot restore A's corpus count under B", async () => {
+    const hold = deferred();
+    serverA.gates["/config/recommendations"] = hold.promise;
+    serverA.ignoreGateAbort = { "/config/recommendations": true };
+    await setup();
+    await openTab("Quality");
+    await switchToB();
+    await release(hold);
+    expect(container.querySelector("#tabpanel-quality")?.textContent).not.toContain("99");
+  });
+
+  test("a late artifact status cannot replace B's corpus version", async () => {
+    const hold = deferred();
+    serverA.gates["/api/artifacts/status"] = hold.promise;
+    serverA.ignoreGateAbort = { "/api/artifacts/status": true };
+    await setup();
+    await openTab("Metrics");
+    await switchToB();
+    await settle();
+    expect(container.querySelector("#tabpanel-metrics")?.textContent).toContain("vProvider B");
+    await release(hold);
+    expect(container.querySelector("#tabpanel-metrics")?.textContent).toContain("vProvider B");
+    expect(container.querySelector("#tabpanel-metrics")?.textContent).not.toContain("vProvider A");
+  });
+
+  test("an old provider status cannot start more requests after switching to B", async () => {
+    const hold = deferred();
+    serverA.gates["/providers/openrouter/status"] = hold.promise;
+    serverA.ignoreGateAbort = { "/providers/openrouter/status": true };
+    await setup();
+    await openTab("Configuration");
+    await switchToB();
+    const mark = log.length;
+    await release(hold);
+    expect(since(mark).filter(entry => entry.origin === ORIGIN_A && entry.path === "/providers/openrouter/models")).toEqual([]);
+  });
+
+  test("a late save on A cannot clear B's pending save indicator", async () => {
+    await setup();
+    await openTab("Configuration");
+    const saveButton = () => [...container.querySelectorAll("button")].find(
+      node => /^(Save Configuration|Saving\.\.\.)$/.test(node.textContent?.trim() ?? ""),
+    ) as HTMLButtonElement;
+    const holdA = deferred();
+    serverA.gates["/config"] = holdA.promise;
+    serverA.ignoreGateAbort = { "/config": true };
+    await act(async () => { saveButton().click(); });
+    await settle();
+    expect(saveButton().disabled).toBe(true);
+
+    await switchToB();
+    expect(saveButton().disabled).toBe(false);
+    const holdB = deferred();
+    serverB.gates["/config"] = holdB.promise;
+    await act(async () => { saveButton().click(); });
+    await settle();
+    expect(saveButton().disabled).toBe(true);
+
+    await release(holdA);
+    expect(saveButton().textContent?.trim()).toBe("Saving...");
+    expect(saveButton().disabled).toBe(true);
+    await release(holdB);
+    expect(saveButton().textContent?.trim()).toBe("Save Configuration");
+    expect(saveButton().disabled).toBe(false);
+  });
+
+  test("a delete held on A and resolved after switching to B leaves B's documents, status and toasts unchanged", async () => {
+    await setup();
+    const hold = deferred();
+    serverA.deleteGate = hold.promise;
+    await clickDocumentsButton("Delete");
+    expect(log.some(entry => entry.origin === ORIGIN_A && entry.path === "/documents/doc-a")).toBe(true);
+
+    await switchToB();
+    const before = snapshot();
+    await release(hold);
+    await settle();
+
+    expect(serverA.docs).toEqual([]);
+    expectBUntouchedSince(before);
+    expect(toasts().some(t => t.includes("Document deleted"))).toBe(false);
+  });
+
+  test("a delete-all held on A and resolved after switching to B leaves B unchanged", async () => {
+    await setup();
+    const hold = deferred();
+    serverA.deleteGate = hold.promise;
+    await clickDocumentsButton("Delete All");
+    expect(log.some(entry => entry.origin === ORIGIN_A && entry.path === "/documents")).toBe(true);
+
+    await switchToB();
+    const before = snapshot();
+    await release(hold);
+    await settle();
+
+    expectBUntouchedSince(before);
+    expect(toasts().some(t => t.includes("Knowledge base cleared"))).toBe(false);
+  });
+
+  test("a failed delete on A that answers after switching to B stays silent", async () => {
+    await setup();
+    const hold = deferred();
+    serverA.deleteGate = hold.promise;
+    serverA.deleteStatus = 500;
+    await clickDocumentsButton("Delete");
+
+    await switchToB();
+    const before = snapshot();
+    await release(hold);
+    await settle();
+
+    expectBUntouchedSince(before);
+    expect(toasts().some(t => t.includes("Delete failed"))).toBe(false);
+  });
+
+  test("a document-ready poll started on A stops after switching to B", async () => {
+    await setup();
+    serverA.docs = [...docsA(), { id: "doc-new", title: "Getting Started", text: "", metadata: { processing_status: "ready" } }];
+    const poll = deferred();
+    serverA.gates["/documents"] = poll.promise;
+    await clickDocumentsButton("Ingest Text");
+    expect(log.some(entry => entry.origin === ORIGIN_A && entry.path === "/documents")).toBe(true);
+
+    await switchToB();
+    const before = snapshot();
+    await release(poll);
+    await settle();
+
+    expectBUntouchedSince(before);
+    expect(toasts().some(t => /Ingest queued|Ingest failed/.test(t))).toBe(false);
+  });
+
+  test("a local-provider scan held on A does not show A's runtimes under B", async () => {
+    storeSessionKey(GOOD_KEY);
+    serverA.docs = docsA();
+    serverB.docs = docsB();
+    serverA.localProviders = [
+      { kind: "ollama", name: "Ollama on A", base_url: "http://ollama-a.test:11434", models: ["synthetic-a"], running: [] },
+    ];
+    const scan = deferred();
+    serverA.gates["/providers/local"] = scan.promise;
+    serverA.ignoreGateAbort = { "/providers/local": true };
+    await mount();
+    await openTab("Configuration");
+    expect(log.some(entry => entry.origin === ORIGIN_A && entry.path === "/providers/local")).toBe(true);
+
+    await switchToB();
+    await settle();
+    const before = snapshot();
+    await release(scan);
+    await settle();
+
+    expect(container.textContent).not.toContain("Ollama on A");
+    expect(statusLog.slice(before.status)).toEqual([]);
+    expect(toasts()).toEqual(before.toasts);
+    expect(shown("Documents")).toBe("2");
+  });
+
+  test("a same-connection delete still refreshes through A and announces the result", async () => {
+    await setup();
+    const mark = log.length;
+    await clickDocumentsButton("Delete");
+    await settle();
+
+    expect(shown("Documents")).toBe("0");
+    expect(toasts()).toContain("Document deleted: Doc A");
+    expect(statusLog).toContain("Deleted Doc A");
+    expect(statusLog[statusLog.length - 1]).toBe("API data loaded");
+    const work = since(mark).filter(entry => entry.path.startsWith("/documents"));
+    expect(work.map(entry => entry.path)).toEqual(["/documents/doc-a", "/documents"]);
+    expect(work.every(entry => entry.origin === ORIGIN_A && entry.key === GOOD_KEY)).toBe(true);
+  });
+
+  test("a same-connection ingest still waits for the document and announces it", async () => {
+    await setup();
+    serverA.docs = [...docsA(), { id: "doc-new", title: "Getting Started", text: "", metadata: { processing_status: "ready" } }];
+    await clickDocumentsButton("Ingest Text");
+    await settle();
+
+    expect(shown("Documents")).toBe("2");
+    expect(toasts()).toContain("Ingest queued: Getting Started");
+    expect(statusLog).toContain("Getting Started ready");
+  });
+
+  test("a same-URL retry keeps the operation's connection, so its delete still applies", async () => {
+    await setup();
+    const hold = deferred();
+    serverA.deleteGate = hold.promise;
+    await clickDocumentsButton("Delete");
+
+    // Retrying the applied URL and key does not replace the connection.
+    await clickConnect();
+    expect(connectButton().textContent).toBe("Connected");
+    await release(hold);
+    await settle();
+
+    expect(shown("Documents")).toBe("0");
+    expect(toasts()).toContain("Document deleted: Doc A");
+  });
+
+  // A multi-file upload is one operation: it stays on the connection it started on.
+  const uploadFiles = async (names: string[]) => {
+    const files = names.map(name => new File([`synthetic ${name}`], name, { type: "text/plain" }));
+    const element = input("Upload documents");
+    Object.defineProperty(element, "files", { configurable: true, value: files });
+    await act(async () => {
+      element.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await settle();
+  };
+  const uploadRows = () => {
+    const heading = [...container.querySelectorAll("h4")].find(node => node.textContent?.trim() === "Upload Progress");
+    if (!heading) return [];
+    return [...heading.nextElementSibling!.children].map(row => {
+      const spans = row.querySelectorAll(":scope > span");
+      return `${spans[0]?.textContent}:${spans[1]?.textContent}`;
+    });
+  };
+  const uploadRequests = (mark = 0) => since(mark).filter(entry => entry.path === "/documents/upload");
+
+  test("a multi-file upload held on its first file at A sends no remaining file to B", async () => {
+    await setup();
+    const hold = deferred();
+    serverA.uploadGates = { "one.txt": hold.promise };
+    await uploadFiles(["one.txt", "two.txt", "three.txt"]);
+    expect(uploadRequests().map(entry => [entry.origin, entry.key])).toEqual([[ORIGIN_A, GOOD_KEY]]);
+
+    await switchToB();
+    const before = snapshot();
+    await release(hold);
+    await settle();
+
+    // The started request finished on A with A's URL and key; nothing else was sent.
+    expect(serverA.uploads).toEqual(["one.txt"]);
+    expect(serverB.uploads ?? []).toEqual([]);
+    expect(uploadRequests().every(entry => entry.origin === ORIGIN_A && entry.key === GOOD_KEY)).toBe(true);
+    expectBUntouchedSince(before);
+    expect(uploadRows()).toEqual(["one.txt:cancelled", "two.txt:cancelled", "three.txt:cancelled"]);
+  });
+
+  test("a multi-file upload whose ready-poll is held on A sends no remaining file to B", async () => {
+    await setup();
+    const poll = deferred();
+    serverA.gates["/documents"] = poll.promise;
+    await uploadFiles(["one.txt", "two.txt"]);
+    expect(serverA.uploads).toEqual(["one.txt"]);
+    expect(log.some(entry => entry.origin === ORIGIN_A && entry.path === "/documents")).toBe(true);
+
+    await switchToB();
+    const before = snapshot();
+    await release(poll);
+    await settle();
+
+    expect(serverA.uploads).toEqual(["one.txt"]);
+    expect(serverB.uploads ?? []).toEqual([]);
+    expectBUntouchedSince(before);
+    expect(uploadRows()).toEqual(["one.txt:cancelled", "two.txt:cancelled"]);
+  });
+
+  test("a same-URL retry keeps a held multi-file upload on A and finishes every file", async () => {
+    await setup();
+    const hold = deferred();
+    serverA.uploadGates = { "one.txt": hold.promise };
+    await uploadFiles(["one.txt", "two.txt"]);
+
+    await clickConnect();
+    expect(connectButton().textContent).toBe("Connected");
+    await release(hold);
+    await settle();
+
+    expect(serverA.uploads).toEqual(["one.txt", "two.txt"]);
+    expect(serverB.uploads ?? []).toEqual([]);
+    expect(uploadRequests().every(entry => entry.origin === ORIGIN_A && entry.key === GOOD_KEY)).toBe(true);
+    expect(uploadRows()).toEqual(["one.txt:done", "two.txt:done"]);
+    expect(statusLog).toContain("two.txt ready");
+  });
+
+  test("overlapping upload batches each keep their own rows and connection", async () => {
+    await setup();
+    const hold = deferred();
+    serverA.uploadGates = { "a1.txt": hold.promise };
+    await uploadFiles(["a1.txt", "a2.txt"]);
+    // A second batch starts while the first is held; it runs on A to completion.
+    await uploadFiles(["b1.txt"]);
+    expect(serverA.uploads).toEqual(["b1.txt"]);
+    expect(uploadRows()).toEqual(["a1.txt:uploading", "a2.txt:pending", "b1.txt:done"]);
+
+    await switchToB();
+    const before = snapshot();
+    await release(hold);
+    await settle();
+
+    expect(serverA.uploads).toEqual(["b1.txt", "a1.txt"]);
+    expect(serverB.uploads ?? []).toEqual([]);
+    expectBUntouchedSince(before);
+    expect(uploadRows()).toEqual(["a1.txt:cancelled", "a2.txt:cancelled", "b1.txt:done"]);
   });
 });
