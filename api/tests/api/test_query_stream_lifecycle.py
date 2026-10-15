@@ -429,14 +429,17 @@ def stored_bytes(channel) -> int:
     """Bytes the channel is holding, measured from its storage, not its counters.
 
     Queued events are counted at their encoded SSE frame size; merged token
-    text that has not been queued yet is counted by length. This deliberately
+    text that has not been queued yet is counted as its encoded SSE frame. This deliberately
     does not trust ``buffered`` (a queue size) or ``buffered_bytes``.
     """
     queued = 0
     for item in list(channel._queue._queue):
         if isinstance(item, dict):
             queued += len(query_router._encode_event(item))
-    pending = sum(len(text) for text in channel._pending_tokens)
+    pending = (
+        len(query_router._encode_event({"type": "token", "data": {"text": "".join(channel._pending_tokens)}}))
+        if channel._pending_tokens else 0
+    )
     return queued + pending
 
 
@@ -639,3 +642,45 @@ async def test_cancellation_resistant_producer_is_owned_and_observed_after_grace
         assert getattr(query_router, "_DETACHED_PRODUCERS", set()) == set()
     finally:
         loop.set_exception_handler(previous_handler)
+
+
+def test_empty_tokens_never_accumulate_behind_a_stalled_consumer() -> None:
+    channel = query_router._StreamChannel(max_events=2, max_bytes=1024)
+    for number in range(2):
+        channel.emit({"type": "progress", "data": {"n": number}})
+    channel.emit({"type": "token", "data": {"text": "answer"}})
+    before = channel.buffered_bytes
+    for _ in range(20_000):
+        channel.emit({"type": "token", "data": {"text": ""}})
+    assert channel._pending_tokens == ["answer"]
+    assert channel.buffered_bytes == before
+    assert not channel.tokens_truncated
+    channel.emit({"type": "token", "data": {"text": " \n"}})
+    channel.finish({"type": "result", "data": {"answer": "answer \n"}})
+    items = drain(channel)
+    assert "".join(item["data"]["text"] for item in items if item and item["type"] == "token") == "answer \n"
+    assert items[-2] == {"type": "result", "data": {"answer": "answer \n"}}
+    assert items[-1] is None
+
+
+def test_empty_tokens_do_not_use_available_event_slots() -> None:
+    channel = query_router._StreamChannel(max_events=2, max_bytes=1024)
+    for _ in range(100):
+        channel.emit({"type": "token", "data": {"text": ""}})
+    assert channel.buffered == 0
+    assert channel._pending_tokens == []
+    assert channel.buffered_bytes == 0
+
+
+def test_unicode_and_escaped_pending_tokens_obey_the_encoded_byte_bound() -> None:
+    channel = query_router._StreamChannel(max_events=1, max_bytes=240)
+    channel.emit({"type": "progress", "data": {"n": 1}})
+    chunk = '🤖\n"\\'
+    for _ in range(100):
+        channel.emit({"type": "token", "data": {"text": chunk}})
+        queued = sum(len(query_router._encode_event(item)) for item in channel._queue._queue if item)
+        pending = len(query_router._encode_event({"type": "token", "data": {"text": "".join(channel._pending_tokens)}})) if channel._pending_tokens else 0
+        assert queued + pending <= 240
+        assert channel.buffered_bytes == queued + pending
+    assert channel.tokens_truncated
+    assert 0 < len(channel._pending_tokens) < 100

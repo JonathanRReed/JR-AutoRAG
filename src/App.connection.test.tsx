@@ -1754,6 +1754,35 @@ describe("Operation identity across a connection switch", () => {
     expect(shown("Documents")).toBe("1");
   };
 
+  test("a late save on A cannot clear B's pending save indicator", async () => {
+    await setup();
+    await openTab("Configuration");
+    const saveButton = () => [...container.querySelectorAll("button")].find(
+      node => /^(Save Configuration|Saving\.\.\.)$/.test(node.textContent?.trim() ?? ""),
+    ) as HTMLButtonElement;
+    const holdA = deferred();
+    serverA.gates["/config"] = holdA.promise;
+    serverA.ignoreGateAbort = { "/config": true };
+    await act(async () => { saveButton().click(); });
+    await settle();
+    expect(saveButton().disabled).toBe(true);
+
+    await switchToB();
+    expect(saveButton().disabled).toBe(false);
+    const holdB = deferred();
+    serverB.gates["/config"] = holdB.promise;
+    await act(async () => { saveButton().click(); });
+    await settle();
+    expect(saveButton().disabled).toBe(true);
+
+    await release(holdA);
+    expect(saveButton().textContent?.trim()).toBe("Saving...");
+    expect(saveButton().disabled).toBe(true);
+    await release(holdB);
+    expect(saveButton().textContent?.trim()).toBe("Save Configuration");
+    expect(saveButton().disabled).toBe(false);
+  });
+
   test("a delete held on A and resolved after switching to B leaves B's documents, status and toasts unchanged", async () => {
     await setup();
     const hold = deferred();

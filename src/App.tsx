@@ -1,3 +1,4 @@
+import { ScopedActivity } from "./lib/scoped-activity";
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import {
   Activity,
@@ -369,6 +370,7 @@ export function App() {
   // The applied connection as one immutable value (see ConnectionScope). Connect
   // replaces it when the URL/key change. Operations capture it at their start.
   const appliedConnection = useRef<ConnectionScope>(Object.freeze({ generation: 0, baseUrl, apiKey }));
+  const [activities] = useState(() => new ScopedActivity());
   const currentScope = () => appliedConnection.current;
   const isCurrentScope = (scope: ConnectionScope) => scope === appliedConnection.current;
   const [status, setStatusState] = useState("");
@@ -784,7 +786,7 @@ export function App() {
       return;
     }
     if (!isCurrentScope(scope)) return;
-    setIsCheckingModels(true);
+    const finishActivity = activities.begin(scope, setIsCheckingModels);
     try {
       const status = await fetchJson<ModelStatus>(scope, "/config/models/status", {
         method: "POST",
@@ -805,13 +807,13 @@ export function App() {
         reranker_message: toMessage(error),
       });
     } finally {
-      setIsCheckingModels(false);
+      finishActivity();
     }
   };
 
   const downloadInstallReport = async () => {
     const scope = currentScope();
-    setIsExportingInstallReport(true);
+    const finishActivity = activities.begin(scope, setIsExportingInstallReport);
     try {
       const report = await fetchJson<InstallReportResponse>(scope, "/install/report");
       // A report for a replaced connection is not offered under the new one.
@@ -832,7 +834,7 @@ export function App() {
       setStatus(`Install report export failed: ${toMessage(error)}`);
       toast({ title: "Install report export failed", description: toMessage(error), variant: "error" });
     } finally {
-      setIsExportingInstallReport(false);
+      finishActivity();
     }
   };
 
@@ -847,11 +849,7 @@ export function App() {
     }
     const scope = currentScope();
     const { embedding_model: embeddingModel, reranker_model: rerankerModel } = config.retrieval;
-    if (kind === "embedding") {
-      setIsDownloadingEmbedding(true);
-    } else {
-      setIsDownloadingReranker(true);
-    }
+    const finishActivity = activities.begin(scope, kind === "embedding" ? setIsDownloadingEmbedding : setIsDownloadingReranker);
     try {
       await fetchJson(scope, "/config/models/download", {
         method: "POST",
@@ -869,11 +867,7 @@ export function App() {
       setStatus(message);
       setModelActionMessage(message);
     } finally {
-      if (kind === "embedding") {
-        setIsDownloadingEmbedding(false);
-      } else {
-        setIsDownloadingReranker(false);
-      }
+      finishActivity();
     }
   };
 
@@ -1018,6 +1012,7 @@ export function App() {
         baseUrl: nextBaseUrl,
         apiKey: nextApiKey,
       });
+      activities.reset();
       discardActiveQuery();
       setConfig(null);
       setDocuments([]);
@@ -1065,7 +1060,7 @@ export function App() {
   };
 
   const persistConfigIn = async (scope: ConnectionScope, nextConfig: AppConfig, message = "Configuration saved") => {
-    setIsSavingConfig(true);
+    const finishActivity = activities.begin(scope, setIsSavingConfig);
     try {
       const updated = await fetchJson<AppConfig>(scope, "/config", {
         method: "PUT",
@@ -1083,7 +1078,7 @@ export function App() {
       toast({ title: "Save failed", description: toMessage(error), variant: "error" });
       throw error;
     } finally {
-      setIsSavingConfig(false);
+      finishActivity();
     }
   };
   const persistConfig = (nextConfig: AppConfig, message?: string) =>
@@ -1122,7 +1117,7 @@ export function App() {
 
   const handleIngest = async () => {
     const scope = currentScope();
-    setIsIngesting(true);
+    const finishActivity = activities.begin(scope, setIsIngesting);
     try {
       const payload: Record<string, unknown> = {
         title: ingestTitle,
@@ -1153,7 +1148,7 @@ export function App() {
       setStatus(`Ingest failed: ${toMessage(error)}`);
       toast({ title: "Ingest failed", description: toMessage(error), variant: "error" });
     } finally {
-      setIsIngesting(false);
+      finishActivity();
     }
   };
 
@@ -1491,7 +1486,7 @@ export function App() {
 
   const handleEvaluation = async () => {
     const scope = currentScope();
-    setIsEvaluating(true);
+    const finishActivity = activities.begin(scope, setIsEvaluating);
     try {
       const payload = {
         name: "Smoke Test",
@@ -1515,13 +1510,13 @@ export function App() {
       setStatus(message);
       toast({ title: "Evaluation failed", description: toMessage(error), variant: "error" });
     } finally {
-      setIsEvaluating(false);
+      finishActivity();
     }
   };
 
   const handleSeedDemo = async () => {
     const scope = currentScope();
-    setIsSeedingDemo(true);
+    const finishActivity = activities.begin(scope, setIsSeedingDemo);
     setStatus("Loading demo corpus...");
     try {
       const result = await fetchJson<DemoSeedResponse>(scope, "/onboarding/demo/seed", {
@@ -1542,7 +1537,7 @@ export function App() {
       setStatus(`Demo setup failed: ${toMessage(error)}`);
       toast({ title: "Demo setup failed", description: toMessage(error), variant: "error" });
     } finally {
-      setIsSeedingDemo(false);
+      finishActivity();
     }
   };
 
@@ -1562,7 +1557,7 @@ export function App() {
       return;
     }
     const scope = currentScope();
-    setIsClearingCache(true);
+    const finishActivity = activities.begin(scope, setIsClearingCache);
     try {
       const result = await fetchJson<{ status: string; message: string }>(scope, "/api/cache/clear", {
         method: "DELETE",
@@ -1576,7 +1571,7 @@ export function App() {
       setStatus(`Cache clear failed: ${toMessage(error)}`);
       toast({ title: "Cache clear failed", description: toMessage(error), variant: "error" });
     } finally {
-      setIsClearingCache(false);
+      finishActivity();
     }
   };
 
@@ -1657,7 +1652,7 @@ export function App() {
   // has been replaced, so a stale batch can never reach the new destination.
   const uploadFileIn = async (scope: ConnectionScope, file: File): Promise<IngestResponse> => {
     if (!isCurrentScope(scope)) throw new StaleConnectionError();
-    setIsUploadingFile(true);
+    const finishActivity = activities.begin(scope, setIsUploadingFile);
     setStatus(`Uploading ${file.name}...`);
     try {
       const formData = new FormData();
@@ -1695,8 +1690,8 @@ export function App() {
       toast({ title: "Upload failed", description: toMessage(error), variant: "error" });
       throw error;
     } finally {
-      setIsUploadingFile(false);
-      if (fileInputRef.current) {
+      finishActivity();
+      if (isCurrentScope(scope) && fileInputRef.current) {
         fileInputRef.current.value = "";
       }
     }

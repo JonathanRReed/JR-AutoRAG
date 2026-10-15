@@ -208,7 +208,7 @@ class _StreamChannel:
         return True
 
     def _emit_token(self, text: str) -> None:
-        if self.tokens_truncated:
+        if not text or self.tokens_truncated:
             return
         cost = _escaped_size(text)
         frame = 0 if self._pending_tokens else _TOKEN_FRAME_OVERHEAD
