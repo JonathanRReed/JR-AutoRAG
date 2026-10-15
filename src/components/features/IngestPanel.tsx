@@ -41,7 +41,8 @@ interface IngestPanelProps {
     handleDeleteAllDocuments: () => void;
     isUploadingFile: boolean;
     uploadFile: (file: File) => Promise<IngestResponse>;
-    waitForDocumentReady: (documentId: string, label?: string) => Promise<void>;
+    // Waits on the connection the upload was sent to; rejects if it was replaced.
+    waitForDocumentReady: (upload: IngestResponse, label?: string) => Promise<void>;
     fileInputRef: React.RefObject<HTMLInputElement | null>;
     formatDateTime: (value?: string) => string;
     langextractProfileOverride: string;
@@ -123,7 +124,7 @@ export function IngestPanel({
                 setUploadQueue(prev => prev.map((item, idx) =>
                     idx === i ? { ...item, status: "processing" } : item
                 ));
-                await waitForDocumentReady(result.document_id, file.name);
+                await waitForDocumentReady(result, file.name);
                 setUploadQueue(prev => prev.map((item, idx) =>
                     idx === i ? { ...item, status: "done" } : item
                 ));
