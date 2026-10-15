@@ -1,3 +1,4 @@
+import { useRequestOwner } from "@/lib/use-request-owner";
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -74,6 +75,7 @@ function StatusBadge({ status }: { status: string }) {
 
 export function EnterpriseStatusPanel({ baseUrl, apiKey = "" }: EnterpriseStatusProps) {
     const { toast } = useToast();
+    const requests = useRequestOwner(baseUrl, apiKey);
     const [artifactStatus, setArtifactStatus] = useState<ArtifactStatus>({
         graph_rag: { status: "not_built" },
         raptor: { status: "not_built" },
@@ -106,8 +108,8 @@ export function EnterpriseStatusPanel({ baseUrl, apiKey = "" }: EnterpriseStatus
     });
 
     const fetchStatus = async () => {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        const operation = requests.start();
+        const timeoutId = setTimeout(() => operation.abort(), 5000);
         const headers: Record<string, string> = {};
         const trimmedApiKey = apiKey.trim();
         if (trimmedApiKey) {
@@ -115,13 +117,12 @@ export function EnterpriseStatusPanel({ baseUrl, apiKey = "" }: EnterpriseStatus
         }
 
         try {
-            const res = await fetch(buildApiUrl(baseUrl, "/api/artifacts/status"), {
+            const res = await operation.fetch(buildApiUrl(baseUrl, "/api/artifacts/status"), {
                 headers: Object.keys(headers).length ? headers : undefined,
-                signal: controller.signal
             });
-            clearTimeout(timeoutId);
             if (res.ok) {
-                const data = await res.json() as ArtifactStatusPayload;
+                const data = await operation.json<ArtifactStatusPayload>(res);
+                if (!operation.current()) return;
                 const graph = normalizeState(
                     data.graph_rag,
                     data.graph_rag_status,
@@ -145,12 +146,15 @@ export function EnterpriseStatusPanel({ baseUrl, apiKey = "" }: EnterpriseStatus
                 }
             }
         } catch {
+            // A status read can fail while the index is being rebuilt.
+        } finally {
             clearTimeout(timeoutId);
-            // Silent fail - not critical during heavy indexing
+            operation.finish();
         }
     };
 
     const downloadTrace = async () => {
+        const operation = requests.start();
         setIsDownloading(true);
         toast({
             title: "Exporting Traces",
@@ -163,11 +167,12 @@ export function EnterpriseStatusPanel({ baseUrl, apiKey = "" }: EnterpriseStatus
             headers["X-API-Key"] = trimmedApiKey;
         }
         try {
-            const res = await fetch(buildApiUrl(baseUrl, "/api/traces/download"), {
+            const res = await operation.fetch(buildApiUrl(baseUrl, "/api/traces/download"), {
                 headers: Object.keys(headers).length ? headers : undefined,
             });
             if (res.ok) {
-                const blob = await res.blob();
+                const blob = await operation.blob(res);
+                if (!operation.current()) return;
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement("a");
                 a.href = url;
@@ -186,17 +191,20 @@ export function EnterpriseStatusPanel({ baseUrl, apiKey = "" }: EnterpriseStatus
                 throw new Error("Download failed");
             }
         } catch {
+            if (!operation.current()) return;
             toast({
                 variant: "error",
                 title: "Export Failed",
                 description: "Could not retrieve traces across network.",
             });
         } finally {
-            setIsDownloading(false);
+            if (operation.current()) setIsDownloading(false);
+            operation.finish();
         }
     };
 
     const handleBuild = async (type?: string) => {
+        const operation = requests.start();
         toast({
             title: "Build Started",
             description: `Triggering ${type || "Artifact"} generation pipeline in background...`,
@@ -209,7 +217,7 @@ export function EnterpriseStatusPanel({ baseUrl, apiKey = "" }: EnterpriseStatus
         }
         try {
             // Updated to use Query Parameter as per FastAPI spec
-            const res = await fetch(buildApiUrl(baseUrl, "/api/artifacts/build?force=true"), {
+            const res = await operation.fetch(buildApiUrl(baseUrl, "/api/artifacts/build?force=true"), {
                 method: "POST",
                 headers,
                 // Empty body since we using query param, but keeping empty object just in case middleware needs valid JSON
@@ -217,7 +225,8 @@ export function EnterpriseStatusPanel({ baseUrl, apiKey = "" }: EnterpriseStatus
             });
 
             if (res.ok) {
-                const data = await res.json();
+                const data = await operation.json<{status?: string;message?: string}>(res);
+                if (!operation.current()) return;
                 if (data.status === "error") {
                     throw new Error(data.message || "Build failed to start");
                 }
@@ -225,16 +234,19 @@ export function EnterpriseStatusPanel({ baseUrl, apiKey = "" }: EnterpriseStatus
                 // Immediate fetch to update status
                 fetchStatus();
             } else {
-                const errorData = await res.json().catch(() => ({}));
+                const errorData = await operation.json<{detail?: string}>(res).catch(() => ({ detail: undefined }));
                 throw new Error(errorData.detail || "API responded with error");
             }
         } catch (error) {
+            if (!operation.current()) return;
             console.error("Failed to trigger build:", error);
             toast({
                 variant: "error",
                 title: "Build Request Failed",
                 description: error instanceof Error ? error.message : "Could not contact orchestrator.",
             });
+        } finally {
+            operation.finish();
         }
     };
 

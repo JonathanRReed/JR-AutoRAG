@@ -1021,6 +1021,8 @@ export function App() {
       setSecurityPosture(null);
       setOnboarding(null);
       setLocalProviders([]);
+      setLocalSelections({});
+      setSelectedDocumentIds([]);
     }
     setBaseUrl(nextBaseUrl);
     setApiKey(nextApiKey);
@@ -2153,6 +2155,7 @@ export function App() {
                   {/* Provider Carousel - Ollama, LM Studio, OpenRouter */}
                   <Suspense fallback={<LoadingSpinner message="Loading providers..." />}>
                     <ProviderCarousel
+                      key={currentScope().generation}
                       config={config}
                       setConfig={setConfig}
                       isSavingConfig={isSavingConfig}
@@ -2426,6 +2429,7 @@ export function App() {
               <div className="mx-auto max-w-[1400px]">
                 <Suspense fallback={<LoadingSpinner message="Loading quality cockpit..." />}>
                   <QualityCockpit
+                    key={currentScope().generation}
                     documents={documents}
                     buildUrl={buildUrl}
                     buildHeaders={buildHeaders}
@@ -2439,7 +2443,7 @@ export function App() {
               {/* Metrics & Traces */}
               <div className="space-y-6 max-w-5xl mx-auto">
                 <Suspense fallback={<LoadingSpinner message="Loading status panel..." />}>
-                  <EnterpriseStatusPanel baseUrl={baseUrl} apiKey={apiKey} />
+                  <EnterpriseStatusPanel key={currentScope().generation} baseUrl={baseUrl} apiKey={apiKey} />
                 </Suspense>
 
                 <Suspense fallback={<LoadingSpinner message="Loading metrics..." />}>

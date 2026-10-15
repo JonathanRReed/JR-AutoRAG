@@ -77,6 +77,7 @@ type LiveStreamHandle = {
   error: (reason: unknown) => void;
 };
 let liveStreams: LiveStreamHandle[] = [];
+let providerCredentialLog: Array<{origin:string;key:string}> = [];
 const ADMIN_PATHS = ["/config", "/monitoring/traces", "/providers/local"];
 
 const postureFor = (server: Server) =>
@@ -148,6 +149,13 @@ const configFor = (provider: string) => ({
 });
 
 const protectedBody = (path: string, server: Server) => {
+  if (path === "/api/artifacts/status") return { corpus_version: server.provider, graph_rag_status: "ready", raptor_status: "ready" };
+  if (path === "/providers/openrouter/status") return { available: server.provider === "Provider A" };
+  if (path === "/providers/openrouter/models") return [];
+  if (path === "/rag/audit/health") return { available: false };
+  if (path === "/config/recommendations") return { document_count: server.provider === "Provider A" ? 99 : 2, recommendations: [], low_confidence_documents: 0 };
+  if (path === "/experiments" || path === "/evaluation/runs") return [];
+  if (path === "/evaluation/golden-sets/builtins") return {};
   if (path === "/config") return configFor(server.provider);
   if (path === "/monitoring/cache") return {};
   if (path === "/security/posture") return postureFor(server);
@@ -189,6 +197,8 @@ const fakeFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   // A URL without a scheme resolves against the page, like a browser fetch.
   const url = new URL(String(input), location.href);
   const key = new Headers(init?.headers).get("X-API-Key");
+  const providerKey = new Headers(init?.headers).get("x-openrouter-key");
+  if (providerKey) providerCredentialLog.push({origin:url.origin,key:providerKey});
   const signal = init?.signal ?? undefined;
   log.push({ origin: url.origin, path: url.pathname, key, signal });
   // The UI server answers every unmatched path with index.html (src/index.ts "/*").
@@ -433,6 +443,7 @@ beforeEach(() => {
   localStorage.clear();
   log = [];
   liveStreams = [];
+  providerCredentialLog = [];
   serverA = { health: 200, key: GOOD_KEY, readKey: null, provider: "Provider A", docs: [], gates: {} };
   serverB = { health: 200, key: GOOD_KEY, readKey: null, provider: "Provider B", docs: [], gates: {} };
   setConnectionCheckTimeoutMsForTests(null);
@@ -1753,6 +1764,91 @@ describe("Operation identity across a connection switch", () => {
     await openTab("Documents");
     expect(shown("Documents")).toBe("1");
   };
+
+  test("retrying the same applied connection preserves provider credentials", async () => {
+    await setup();
+    await openTab("Configuration");
+    await openTab("OpenRouter");
+    await type("OpenRouter API key", "synthetic-provider-key-for-a");
+    await clickConnect();
+    expect((container.querySelector("#openrouter-api-key") as HTMLInputElement).value).toBe("synthetic-provider-key-for-a");
+  });
+
+  test("provider credentials entered for A are not reused on B", async () => {
+    await setup();
+    await openTab("Configuration");
+    await openTab("OpenRouter");
+    await type("OpenRouter API key", "synthetic-provider-key-for-a");
+    await switchToB();
+    await openTab("OpenRouter");
+    expect((container.querySelector("#openrouter-api-key") as HTMLInputElement).value).toBe("");
+    expect(providerCredentialLog.filter(entry => entry.origin === ORIGIN_B)).toEqual([]);
+  });
+
+  test("a same-connection retry allows the quality run to continue on A", async () => {
+    await setup();
+    await openTab("Quality");
+    const hold = deferred();
+    serverA.gates["/evaluation/golden-sets/builtins"] = hold.promise;
+    const button = [...container.querySelectorAll("#tabpanel-quality button")].find(node => node.textContent?.trim() === "Run Client Readiness") as HTMLButtonElement;
+    await act(async () => { button.click(); });
+    await settle();
+    await clickConnect();
+    await release(hold);
+    expect(log.some(entry => entry.origin === ORIGIN_A && entry.path === "/evaluation/batch/client_readiness")).toBe(true);
+  });
+
+  test("an old quality run cannot enqueue its next write after switching to B", async () => {
+    await setup();
+    await openTab("Quality");
+    const hold = deferred();
+    serverA.gates["/evaluation/golden-sets/builtins"] = hold.promise;
+    serverA.ignoreGateAbort = { "/evaluation/golden-sets/builtins": true };
+    const button = [...container.querySelectorAll("#tabpanel-quality button")].find(node => node.textContent?.trim() === "Run Client Readiness") as HTMLButtonElement;
+    await act(async () => { button.click(); });
+    await settle();
+    await switchToB();
+    const mark = log.length;
+    await release(hold);
+    expect(since(mark).filter(entry => entry.path === "/evaluation/batch/client_readiness")).toEqual([]);
+  });
+
+  test("late quality recommendations cannot restore A's corpus count under B", async () => {
+    const hold = deferred();
+    serverA.gates["/config/recommendations"] = hold.promise;
+    serverA.ignoreGateAbort = { "/config/recommendations": true };
+    await setup();
+    await openTab("Quality");
+    await switchToB();
+    await release(hold);
+    expect(container.querySelector("#tabpanel-quality")?.textContent).not.toContain("99");
+  });
+
+  test("a late artifact status cannot replace B's corpus version", async () => {
+    const hold = deferred();
+    serverA.gates["/api/artifacts/status"] = hold.promise;
+    serverA.ignoreGateAbort = { "/api/artifacts/status": true };
+    await setup();
+    await openTab("Metrics");
+    await switchToB();
+    await settle();
+    expect(container.querySelector("#tabpanel-metrics")?.textContent).toContain("vProvider B");
+    await release(hold);
+    expect(container.querySelector("#tabpanel-metrics")?.textContent).toContain("vProvider B");
+    expect(container.querySelector("#tabpanel-metrics")?.textContent).not.toContain("vProvider A");
+  });
+
+  test("an old provider status cannot start more requests after switching to B", async () => {
+    const hold = deferred();
+    serverA.gates["/providers/openrouter/status"] = hold.promise;
+    serverA.ignoreGateAbort = { "/providers/openrouter/status": true };
+    await setup();
+    await openTab("Configuration");
+    await switchToB();
+    const mark = log.length;
+    await release(hold);
+    expect(since(mark).filter(entry => entry.origin === ORIGIN_A && entry.path === "/providers/openrouter/models")).toEqual([]);
+  });
 
   test("a late save on A cannot clear B's pending save indicator", async () => {
     await setup();

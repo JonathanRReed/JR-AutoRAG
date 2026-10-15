@@ -1,3 +1,4 @@
+import { useRequestOwner } from "@/lib/use-request-owner";
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -42,6 +43,7 @@ export function ProviderCarousel({
   apiKey = "",
   isConnected = false,
 }: ProviderCarouselProps) {
+  const requests = useRequestOwner(apiBaseUrl, apiKey);
   const [activeTab, setActiveTab] = useState<ProviderTab>("ollama");
   
   // OpenRouter state
@@ -111,9 +113,10 @@ export function ProviderCarousel({
       fetchOpenRouterStatus();
       fetchRagfuzzStatus();
     }
-  }, [apiBaseUrl, isConnected]);
+  }, [apiBaseUrl, apiKey, isConnected]);
 
   const fetchOpenRouterStatus = async () => {
+    const operation = requests.start("fetchOpenRouterStatus");
     const authHeaders: Record<string, string> = {};
     const trimmedApiKey = apiKey.trim();
     if (trimmedApiKey) {
@@ -124,11 +127,12 @@ export function ProviderCarousel({
       authHeaders.Authorization = `Bearer ${openRouterApiKey}`;
     }
     try {
-      const res = await fetch(`${apiBaseUrl}/providers/openrouter/status`, {
+      const res = await operation.fetch(`${apiBaseUrl}/providers/openrouter/status`, {
         headers: Object.keys(authHeaders).length ? authHeaders : undefined,
       });
       if (res.ok) {
-        const data = await res.json();
+        const data = await operation.json<OpenRouterStatus>(res);
+        if (!operation.current()) return;
         setOpenRouterStatus(data);
         if (data.available) {
           fetchOpenRouterModels();
@@ -136,11 +140,14 @@ export function ProviderCarousel({
       }
       // Silently ignore 429 rate limit errors - will retry on next render
     } catch {
-      // Network errors are expected during API startup
+      // Status may be unavailable while the API starts.
+    } finally {
+      operation.finish();
     }
   };
 
   const fetchOpenRouterModels = async () => {
+    const operation = requests.start("fetchOpenRouterModels");
     setOpenRouterLoading(true);
     const authHeaders: Record<string, string> = {};
     const trimmedApiKey = apiKey.trim();
@@ -152,36 +159,43 @@ export function ProviderCarousel({
       authHeaders.Authorization = `Bearer ${openRouterApiKey}`;
     }
     try {
-      const res = await fetch(`${apiBaseUrl}/providers/openrouter/models`, {
+      const res = await operation.fetch(`${apiBaseUrl}/providers/openrouter/models`, {
         headers: Object.keys(authHeaders).length ? authHeaders : undefined,
       });
       if (res.ok) {
-        const data = await res.json();
+        const data = await operation.json<OpenRouterModel[]>(res);
+        if (!operation.current()) return;
         setOpenRouterModels(data);
       }
     } catch (err) {
+      if (!operation.current()) return;
       console.error("Failed to fetch OpenRouter models", err);
     } finally {
-      setOpenRouterLoading(false);
+      if (operation.current()) setOpenRouterLoading(false);
+      operation.finish();
     }
   };
 
   const fetchRagfuzzStatus = async () => {
+    const operation = requests.start("fetchRagfuzzStatus");
     const authHeaders: Record<string, string> = {};
     const trimmedApiKey = apiKey.trim();
     if (trimmedApiKey) {
       authHeaders["X-API-Key"] = trimmedApiKey;
     }
     try {
-      const res = await fetch(`${apiBaseUrl}/rag/audit/health`, {
+      const res = await operation.fetch(`${apiBaseUrl}/rag/audit/health`, {
         headers: Object.keys(authHeaders).length ? authHeaders : undefined,
       });
       if (res.ok) {
-        const data = await res.json();
+        const data = await operation.json<RAGFuzzStatus>(res);
+        if (!operation.current()) return;
         setRagfuzzStatus(data);
       }
     } catch {
-      setRagfuzzStatus(null);
+      if (operation.current()) setRagfuzzStatus(null);
+    } finally {
+      operation.finish();
     }
   };
 
@@ -211,6 +225,7 @@ export function ProviderCarousel({
       setOllamaCloudError("Please enter your Ollama API key first");
       return;
     }
+    const operation = requests.start();
     setOllamaCloudLoading(true);
     setOllamaCloudError(null);
     try {
@@ -222,24 +237,28 @@ export function ProviderCarousel({
       if (trimmedApiKey) {
         authHeaders["X-API-Key"] = trimmedApiKey;
       }
-      const res = await fetch(`${apiBaseUrl}/providers/ollama-cloud/models`, {
+      const res = await operation.fetch(`${apiBaseUrl}/providers/ollama-cloud/models`, {
         headers: authHeaders,
       });
       if (res.ok) {
-        const data = await res.json();
+        const data = await operation.json<string[]>(res);
+        if (!operation.current()) return;
         setOllamaCloudModels(data);
         if (data.length === 0) {
           setOllamaCloudError("No models available. Check your API key.");
         }
       } else {
-        const errorData = await res.json().catch(() => ({ detail: res.statusText }));
+        const errorData = await operation.json<{detail?: string}>(res).catch(() => ({ detail: res.statusText }));
+        if (!operation.current()) return;
         setOllamaCloudError(errorData.detail || `Error: ${res.status}`);
       }
     } catch (err) {
+      if (!operation.current()) return;
       console.error("Failed to fetch Ollama Cloud models", err);
       setOllamaCloudError("Failed to connect to Ollama Cloud. Check your network.");
     } finally {
-      setOllamaCloudLoading(false);
+      if (operation.current()) setOllamaCloudLoading(false);
+      operation.finish();
     }
   };
 
