@@ -48,6 +48,7 @@ import type {
   ProviderConfig as ProviderConfigType,
   ProviderProfile,
   QueryResponse,
+  UploadBatch,
   RetrievalDefaults,
   RoleSelection,
   SecurityPostureResponse,
@@ -640,15 +641,6 @@ export function App() {
       setDocuments(lastDocs);
     }
     throw new Error("Document processing timed out");
-  };
-
-  // Uploads remember the scope they were sent on, so the panel's follow-up poll
-  // stays bound to it without the panel knowing about connections.
-  const uploadScopes = useRef(new WeakMap<IngestResponse, ConnectionScope>());
-  const waitForUploadReady = async (upload: IngestResponse, label?: string) => {
-    const scope = uploadScopes.current.get(upload);
-    if (!scope) throw new StaleConnectionError();
-    await waitForDocumentReady(scope, upload.document_id, label);
   };
 
   const handleDeleteDocument = async (id: string, title: string) => {
@@ -1661,8 +1653,10 @@ export function App() {
     }
   };
 
-  const uploadFile = async (file: File): Promise<IngestResponse> => {
-    const scope = currentScope();
+  // Sends one file on the batch's scope. Refuses to send once that connection
+  // has been replaced, so a stale batch can never reach the new destination.
+  const uploadFileIn = async (scope: ConnectionScope, file: File): Promise<IngestResponse> => {
+    if (!isCurrentScope(scope)) throw new StaleConnectionError();
     setIsUploadingFile(true);
     setStatus(`Uploading ${file.name}...`);
     try {
@@ -1690,7 +1684,6 @@ export function App() {
         throw new Error(err.detail || "Upload failed");
       }
       const result: IngestResponse = await resp.json();
-      uploadScopes.current.set(result, scope);
       if (!isCurrentScope(scope)) throw new StaleConnectionError();
       setStatus(`Processing ${file.name}...`);
       setIngestTitle("");
@@ -1707,6 +1700,16 @@ export function App() {
         fileInputRef.current.value = "";
       }
     }
+  };
+
+  const startUploadBatch = (): UploadBatch => {
+    const scope = currentScope();
+    return Object.freeze({
+      isCurrent: () => isCurrentScope(scope),
+      upload: (file: File) => uploadFileIn(scope, file),
+      waitUntilReady: (upload: IngestResponse, label?: string) =>
+        waitForDocumentReady(scope, upload.document_id, label),
+    });
   };
 
   const updateRetrieval = (field: keyof RetrievalDefaults, value: string | number | boolean) => {
@@ -2299,13 +2302,12 @@ export function App() {
                       isIngesting={isIngesting}
                       ingestSync={ingestSync}
                       setIngestSync={setIngestSync}
-                      uploadFile={uploadFile}
+                      startUploadBatch={startUploadBatch}
                       isUploadingFile={isUploadingFile}
                       fileInputRef={fileInputRef}
                       documents={documents}
                       handleDeleteDocument={handleDeleteDocument}
                       handleDeleteAllDocuments={handleDeleteAllDocuments}
-                      waitForDocumentReady={waitForUploadReady}
                       formatDateTime={formatDateTime}
                       langextractProfileOverride={langextractProfileOverride}
                       setLangextractProfileOverride={setLangextractProfileOverride}

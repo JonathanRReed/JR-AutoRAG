@@ -377,6 +377,16 @@ export type IngestResponse = {
     chunk_count: number;
 };
 
+// One user-initiated multi-file upload. It captures the applied connection once,
+// when the user picks the files. Every upload request and ready-poll in the batch
+// uses that scope, nothing is sent once it has been replaced, and `isCurrent`
+// lets the caller stop the rest of the batch without inspecting errors.
+export type UploadBatch = Readonly<{
+    isCurrent: () => boolean;
+    upload: (file: File) => Promise<IngestResponse>;
+    waitUntilReady: (upload: IngestResponse, label?: string) => Promise<void>;
+}>;
+
 export type ChunkOut = {
     id: string;
     title: string;
