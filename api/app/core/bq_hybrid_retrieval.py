@@ -6,6 +6,8 @@ that uses the in-process Milvus-compatible store for memory-efficient search.
 
 from __future__ import annotations
 
+from ..embedding_profiles import encode_query, embedding_fingerprint
+
 import asyncio
 import contextvars
 import time
@@ -125,7 +127,7 @@ class BQHybridRetrievalEngine(HybridRetrievalEngine):
                 embedding_dim=embedding_dim,
                 bq_config=self._bq_config.bq_config,
             )
-            self._bq_store.set_embedding_version(self._bq_config.embedding_model)
+            self._bq_store.set_embedding_version(embedding_fingerprint(self._bq_config.embedding_model))
             self._bq_initialized = False
             self._bq_ready = False
 
@@ -367,7 +369,7 @@ class BQHybridRetrievalEngine(HybridRetrievalEngine):
                 timings=RetrievalTimings(),
                 fallback_triggered=True,
                 fallback_reason=self._last_bq_error or "Binary index unavailable",
-                embedding_version=self._bq_config.embedding_model,
+                embedding_version=embedding_fingerprint(self._bq_config.embedding_model),
                 quantization_version=self._bq_config.bq_config.version,
             ))
             return await super().query(
@@ -421,7 +423,7 @@ class BQHybridRetrievalEngine(HybridRetrievalEngine):
         if cached is not None:
             self._last_cache = {"embedding_cache": "hit"}
             return list(cached)
-        embedding = embedder.encode([query], convert_to_numpy=True)[0]
+        embedding = encode_query(embedder, [query], convert_to_numpy=True)[0]
         self._cache_manager.embeddings.set(cache_key, embedding.tolist())
         self._last_cache = {"embedding_cache": "miss"}
         return embedding.tolist()
@@ -538,7 +540,7 @@ class BQHybridRetrievalEngine(HybridRetrievalEngine):
             timings=timings,
             distances=[r.distance for r in results],
             chunk_ids=[r.chunk_id for r in results],
-            embedding_version=self._bq_config.embedding_model,
+            embedding_version=embedding_fingerprint(self._bq_config.embedding_model),
             quantization_version=self._bq_config.bq_config.version or BQ_VERSION,
         )
 
@@ -653,6 +655,6 @@ class BQHybridRetrievalEngine(HybridRetrievalEngine):
             timings=timings,
             fallback_triggered=True,
             fallback_reason=reason,
-            embedding_version=self._bq_config.embedding_model,
+            embedding_version=embedding_fingerprint(self._bq_config.embedding_model),
             quantization_version=self._bq_config.bq_config.version or BQ_VERSION,
         )

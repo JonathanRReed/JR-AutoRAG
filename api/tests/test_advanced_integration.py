@@ -493,7 +493,7 @@ class TestEmbeddingModelPresets:
         config = HybridConfig()
 
         # Should use default
-        assert config.embedding_model == "BAAI/bge-base-en-v1.5"
+        assert config.embedding_model == "google/embeddinggemma-2"
 
 
 # ============================================================================

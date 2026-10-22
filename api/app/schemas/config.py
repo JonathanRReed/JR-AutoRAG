@@ -6,6 +6,8 @@ import socket
 from typing import Literal
 from urllib.parse import urlparse
 
+from ..embedding_profiles import DEFAULT_EMBEDDING_MODEL
+
 from pydantic import AnyHttpUrl, BaseModel, Field, field_validator, model_validator
 
 
@@ -372,7 +374,7 @@ class RetrievalDefaults(BaseModel):
     coverage_target: float = 0.7
     max_context_tokens: int = 4096
     chunking_strategy: str = "semantic"
-    embedding_model: str = "BAAI/bge-base-en-v1.5"
+    embedding_model: str = DEFAULT_EMBEDDING_MODEL
     reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     use_reranking: bool = True
     use_colbert: bool = False

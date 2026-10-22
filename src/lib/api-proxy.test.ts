@@ -12,6 +12,27 @@ afterEach(() => {
 });
 
 describe("API proxy management-route guard", () => {
+  test("propagates client cancellation without buffering the upstream body", async () => {
+    const originalFetch = globalThis.fetch;
+    const controller = new AbortController();
+    let upstreamSignal: AbortSignal | null | undefined;
+    const body = new ReadableStream({ start(stream) { stream.enqueue(new TextEncoder().encode("first chunk")); } });
+    globalThis.fetch = (async (_url, options) => {
+      upstreamSignal = options?.signal;
+      return new Response(body);
+    }) as typeof fetch;
+    try {
+      const response = await proxyApiRequest(new Request("http://ui.example/api/artifacts/status", { signal: controller.signal }), "");
+      expect(response.body).toBe(body);
+      expect(upstreamSignal?.aborted).toBe(false);
+      controller.abort();
+      expect(upstreamSignal?.aborted).toBe(true);
+      await response.body?.cancel();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("normalizes /__api requests before applying management API checks", () => {
     expect(getBackendPath("/__api/api/cache/clear", "/__api")).toBe("/api/cache/clear");
     expect(getBackendPath("/api/cache/clear", "")).toBe("/api/cache/clear");

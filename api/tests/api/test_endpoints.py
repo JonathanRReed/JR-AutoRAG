@@ -101,12 +101,12 @@ def test_model_download_allows_configured_model(
 
     resp = client.post(
         "/config/models/download",
-        json={"kind": "embedding", "model": "BAAI/bge-base-en-v1.5"},
+        json={"kind": "embedding", "model": "google/embeddinggemma-2"},
     )
 
     assert resp.status_code == 200
-    assert resp.json() == {"status": "ok", "model": "BAAI/bge-base-en-v1.5"}
-    assert downloaded == ["BAAI/bge-base-en-v1.5"]
+    assert resp.json() == {"status": "ok", "model": "google/embeddinggemma-2"}
+    assert downloaded == ["google/embeddinggemma-2"]
 
 
 def test_config_rejects_cloud_provider_in_local_only_mode(client: TestClient) -> None:

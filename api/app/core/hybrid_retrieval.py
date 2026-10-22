@@ -33,6 +33,8 @@ except ImportError:
     torch = None
     F = None
 
+from ..embedding_profiles import (DEFAULT_EMBEDDING_MODEL, EMBEDDING_PROFILES,
+                                 embedding_fingerprint, encode_query, load_profiled_embedder)
 from .cache import get_cache_manager
 from .chunking import Chunk, ChunkingStrategy, get_chunker
 from .documents import Document, DocumentStore
@@ -150,15 +152,18 @@ class RetrievalResult:
     end_char: int = 0  # End offset in original document text
 
 
+class _ReconfigurationRejected(ValueError):
+    """Validation failed before changing any index data."""
+
+
 class _IndexChangedDuringQuery(RuntimeError):
     """Abort ordinal ranking when its source index has changed."""
 
 
 class EmbeddingModelPreset:
-    """2025 MTEB-validated embedding model presets.
+    """Legacy presets plus current versioned profiles for local retrieval.
 
-    These models are selected based on MTEB leaderboard performance
-    as of late 2025, balancing accuracy, speed, and resource usage.
+    Model metadata is not a corpus-specific quality guarantee.
     """
 
     # Solid baseline - good balance of speed and accuracy
@@ -191,6 +196,9 @@ class EmbeddingModelPreset:
     @classmethod
     def get_info(cls, model: str) -> dict:
         """Get model metadata for configuration."""
+        if model in EMBEDDING_PROFILES:
+            profile = EMBEDDING_PROFILES[model]
+            return {"dimensions": profile.dimensions, "max_tokens": profile.max_tokens, "requires_api": False}
         return cls.MODEL_INFO.get(
             model, {"dimensions": 768, "max_tokens": 512, "requires_api": False}
         )
@@ -288,8 +296,8 @@ class AutoHybridWeights:
 class HybridConfig:
     """Configuration for hybrid retrieval."""
 
-    # Model configuration - use preset for easy 2025 model selection
-    embedding_model: str = "BAAI/bge-base-en-v1.5"
+    # Model configuration; preserve explicitly configured legacy models
+    embedding_model: str = DEFAULT_EMBEDDING_MODEL
     model_preset: str | None = (
         None  # Set to EmbeddingModelPreset value to auto-configure
     )
@@ -388,6 +396,8 @@ class HybridRetrievalEngine:
         self._index_lock = threading.RLock()
         self._index_write_lock = threading.RLock()
         self._index_generation = 0
+        self._embedding_norms_key: tuple[int, int] | None = None
+        self._embedding_norms: np.ndarray | None = None
         self._index_building = False
         self._index_mutation_depth = 0
 
@@ -440,21 +450,16 @@ class HybridRetrievalEngine:
                         print(
                             f"Loading embedding model: {self._config.embedding_model} ({location})..."
                         )
-                        try:
-                            # Force non-meta device loading for CPU stability
-                            self._embedder = SentenceTransformer(
-                                self._config.embedding_model,
-                                device="cpu",
-                                model_kwargs={
-                                    "low_cpu_mem_usage": False,
-                                    "device_map": None,
-                                },
-                            )
-                        except (TypeError, Exception):
-                            # Fallback for older versions or unexpected errors
-                            self._embedder = SentenceTransformer(
-                                self._config.embedding_model, device="cpu"
-                            )
+                        if self._config.embedding_model in EMBEDDING_PROFILES:
+                            self._embedder = load_profiled_embedder(
+                                SentenceTransformer, self._config.embedding_model)
+                        else:
+                            try:
+                                self._embedder = SentenceTransformer(
+                                    self._config.embedding_model, device="cpu",
+                                    model_kwargs={"low_cpu_mem_usage": False, "device_map": None})
+                            except TypeError:
+                                self._embedder = SentenceTransformer(self._config.embedding_model, device="cpu")
                         print(f"Embedding model loaded successfully from {location}.")
                     except Exception as e:
                         print(f"Error: Could not load embedding model: {e}")
@@ -517,10 +522,16 @@ class HybridRetrievalEngine:
         """
         with self._index_lock:
             previous = self._config
+            previous_models = {name: getattr(self, name) for name in (
+                "_embedder", "_embedder_failed", "_reranker", "_reranker_failed",
+                "_colbert_model", "_colbert_tokenizer", "_colbert_failed", "_colbert_device",
+            )}
             rebuild_needed = self._requires_rebuild(config)
             graph_enabled = config.graph and not previous.graph
             raptor_enabled = config.raptor and not previous.raptor
 
+            if rebuild_needed and rebuild is False and self._chunks:
+                raise _ReconfigurationRejected("Index-affecting changes require rebuilding the index")
             self._config = config
 
             if previous.embedding_model != config.embedding_model:
@@ -541,6 +552,16 @@ class HybridRetrievalEngine:
                 self._colbert_failed = False
 
         self._init_models()
+        if (previous.embedding_model != config.embedding_model
+                and config.embedding_model in EMBEDDING_PROFILES
+                and self._embedder is None and self._chunks):
+            # Do not discard a working collection when an optional model/runtime
+            # is unavailable. The caller can install it and retry explicitly.
+            with self._index_lock:
+                self._config = previous
+                for name, value in previous_models.items():
+                    setattr(self, name, value)
+            raise _ReconfigurationRejected("Selected embedding model could not load; previous model restored and source documents retained. Install the ML extra and selected model first.")
 
         if rebuild is True or (rebuild is None and rebuild_needed):
             if not self.load_index():
@@ -1309,16 +1330,23 @@ class HybridRetrievalEngine:
                 self.save_index()
             return
 
-        # Dense embeddings (append-only)
+        # Recover the complete dense index after a prior embedding failure.
+        # Encoding only new texts would map their rows onto old chunk ordinals.
+        with self._index_lock:
+            replace_dense = self._embeddings is None or len(self._embeddings) != len(self._chunks)
+            dense_texts = ([chunk.text for _, chunk in self._chunks] + new_texts
+                           if replace_dense else new_texts)
         if self._embedder:
             try:
                 batch_embeddings = self._embedder.encode(
-                    new_texts,
+                    dense_texts,
                     convert_to_numpy=True,
                     show_progress_bar=False,
                 )
                 with self._index_lock:
-                    if self._embeddings is None or len(self._embeddings) == 0:
+                    if len(batch_embeddings) != len(dense_texts):
+                        raise ValueError("Embedding rows do not match indexed chunks")
+                    if replace_dense:
                         self._embeddings = np.array(batch_embeddings)
                     else:
                         self._embeddings = np.vstack(
@@ -1429,7 +1457,7 @@ class HybridRetrievalEngine:
 
         # Config hash from retrieval config
         config_dict = {
-            "embedding_model": self._config.embedding_model,
+            "embedding_model": embedding_fingerprint(self._config.embedding_model),
             "chunk_size": self._config.chunk_size,
             "chunk_overlap": self._config.chunk_overlap,
             "chunking_strategy": str(self._config.chunking_strategy),
@@ -1744,6 +1772,13 @@ class HybridRetrievalEngine:
                         and self._indexed_source_hashes != self._source_hashes(self._docs.list())
                     ):
                         self._reset_index_data()
+            except _ReconfigurationRejected:
+                # Preflight failures did not change chunks or vectors. Preserve
+                # the working index only if its source snapshot is still valid.
+                with self._index_lock:
+                    if self._indexed_source_hashes != self._source_hashes(self._docs.list()):
+                        self._reset_index_data()
+                raise
             except BaseException:
                 # A failed writer may have replaced chunks before rebuilding
                 # sparse/dense state. Do not make that partial index queryable.
@@ -1762,6 +1797,8 @@ class HybridRetrievalEngine:
         """Reset every ordinal-dependent structure while holding _index_lock."""
         self._chunks = []
         self._embeddings = None
+        self._embedding_norms = None
+        self._embedding_norms_key = None
         self._bm25 = None
         self._tokenized_corpus = []
         self._trees = {}
@@ -1791,6 +1828,8 @@ class HybridRetrievalEngine:
             embedder = self._embedder
             embeddings = self._embeddings
             cache_key = self._embedding_cache_key(query)
+            norms_key = (self._index_generation, id(embeddings))
+            document_norms = self._embedding_norms if self._embedding_norms_key == norms_key else None
         if embedder is None or embeddings is None:
             self._last_cache = {"embedding_cache": "skipped"}
             return []
@@ -1799,16 +1838,26 @@ class HybridRetrievalEngine:
             query_embedding = np.array(cached)
             self._last_cache = {"embedding_cache": "hit"}
         else:
-            query_embedding = embedder.encode([query], convert_to_numpy=True)[0]
+            query_embedding = encode_query(embedder, [query], convert_to_numpy=True)[0]
             self._cache_manager.embeddings.set(cache_key, query_embedding.tolist())
             self._last_cache = {"embedding_cache": "miss"}
 
-        # Cosine similarity
-        similarities = np.dot(embeddings, query_embedding) / (
-            np.linalg.norm(embeddings, axis=1) * np.linalg.norm(query_embedding)
-        )
-
+        query_norm = np.linalg.norm(query_embedding)
+        if not np.isfinite(query_norm) or query_norm <= 0:
+            return []
+        if document_norms is None:
+            document_norms = np.linalg.norm(embeddings, axis=1)
+            with self._index_lock:
+                if not self._index_building and (self._index_generation, id(self._embeddings)) == norms_key:
+                    self._embedding_norms_key = norms_key
+                    self._embedding_norms = document_norms
+        # Cache only the O(N) norms, never another reference to the O(ND)
+        # corpus matrix. Mutation generations prevent stale norm reuse.
+        denominator = document_norms * query_norm
+        similarities = np.divide(np.dot(embeddings, query_embedding), denominator,
+                                 out=np.full(len(embeddings), -np.inf), where=denominator > 0)
         indices = np.arange(len(similarities)) if allowed_indices is None else np.array(sorted(allowed_indices), dtype=int)
+        indices = indices[np.isfinite(similarities[indices])]
         top_indices = indices[np.argsort(-similarities[indices], kind="stable")[:top_k]]
         return [(int(idx), float(similarities[idx])) for idx in top_indices]
 
@@ -1816,7 +1865,7 @@ class HybridRetrievalEngine:
         """Keep shared float/binary query vectors within one model identity."""
         import json
 
-        identity = [self._config.embedding_model, self._config.deployment_profile,
+        identity = [embedding_fingerprint(self._config.embedding_model), self._config.deployment_profile,
                     self._config.backend_map.get("embedding", "")]
         return json.dumps([identity, query], separators=(",", ":"))
 

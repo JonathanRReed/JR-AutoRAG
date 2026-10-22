@@ -209,7 +209,7 @@ export function ProviderConfig({
                   list="modelOptions"
                   value={configProvider?.planner_model ?? ""}
                   onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateProvider("planner_model", e.target.value)}
-                  placeholder="llama3-8b"
+                  placeholder="qwen3.5:4b"
                 />
               </div>
               <div className="space-y-2">
@@ -219,7 +219,7 @@ export function ProviderConfig({
                   list="modelOptions"
                   value={configProvider?.generator_model ?? ""}
                   onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateProvider("generator_model", e.target.value)}
-                  placeholder="llama3-8b"
+                  placeholder="qwen3.5:4b"
                 />
               </div>
               <div className="space-y-2">
@@ -229,7 +229,7 @@ export function ProviderConfig({
                   list="modelOptions"
                   value={configProvider?.gatherer_model ?? ""}
                   onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateProvider("gatherer_model", e.target.value)}
-                  placeholder="llama3-8b"
+                  placeholder="qwen3.5:9b"
                 />
               </div>
             </div>

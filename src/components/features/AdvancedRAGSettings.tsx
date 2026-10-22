@@ -78,6 +78,9 @@ export function AdvancedRAGSettings({
     const langExtractMaxChars = [4000, 8000, 12000, 16000, 24000];
     const langExtractMaxFacts = [50, 100, 150, 200, 300, 500];
     const embeddingModels = [
+        "google/embeddinggemma-2",
+        "microsoft/harrier-oss-v1-0.6b",
+        "Qwen/Qwen3-Embedding-4B",
         "BAAI/bge-base-en-v1.5",
         "BAAI/bge-large-en-v1.5",
         "BAAI/bge-small-en-v1.5",
@@ -260,7 +263,7 @@ export function AdvancedRAGSettings({
                                 <div className="space-y-2">
                                     <Label htmlFor="embeddingModel" className="text-xs">Dense Embedding Model</Label>
                                     <Select
-                                        value={retrieval?.embedding_model ?? "BAAI/bge-base-en-v1.5"}
+                                        value={retrieval?.embedding_model ?? "google/embeddinggemma-2"}
                                         onValueChange={(value) => updateRetrieval("embedding_model", value)}
                                     >
                                         <SelectTrigger id="embeddingModel" className="h-9 font-mono text-xs">
@@ -269,12 +272,12 @@ export function AdvancedRAGSettings({
                                         <SelectContent>
                                             {embeddingModels.map(model => (
                                                 <SelectItem key={model} value={model} className="font-mono text-xs">
-                                                    {model}
+                                                    {model === "microsoft/harrier-oss-v1-0.6b" ? "Harrier 0.6B — Quality alternative" : model === "google/embeddinggemma-2" ? "EmbeddingGemma 2 — Recommended" : model === "Qwen/Qwen3-Embedding-4B" ? "Qwen3 Embedding 4B — High memory" : model}
                                                 </SelectItem>
                                             ))}
                                         </SelectContent>
                                     </Select>
-                                    <p className="text-[10px] text-muted-foreground uppercase tracking-tight">Hugging Face identifier</p>
+                                    <p className="text-[10px] text-muted-foreground uppercase tracking-tight">Local text embeddings require the ML extra and model download. Switching models rebuilds the index. Qwen3 4B needs substantially more RAM.</p>
                                 </div>
                                 <div className="space-y-2">
                                     <Label htmlFor="rerankerModel" className="text-xs">Cross-Encoder Reranker</Label>
@@ -738,7 +741,8 @@ export function AdvancedRAGSettings({
                                     </Select>
                                 </div>
                                 <div className="space-y-2">
-                                    <Label htmlFor="milvusIndexType" className="text-xs">Milvus Index Type</Label>
+                                    <Label htmlFor="milvusIndexType" className="text-xs">Local Binary Index Type</Label>
+                                    <p className="text-xs text-muted-foreground">This version uses in-process NumPy Hamming search, not an external Milvus server. Legacy connection fields are retained for compatibility only.</p>
                                     <Select
                                         value={retrieval?.milvus_index_type ?? "BIN_FLAT"}
                                         onValueChange={(value) => updateRetrieval("milvus_index_type", value)}
@@ -748,12 +752,11 @@ export function AdvancedRAGSettings({
                                         </SelectTrigger>
                                         <SelectContent>
                                             <SelectItem value="BIN_FLAT">BIN_FLAT</SelectItem>
-                                            <SelectItem value="BIN_IVF_FLAT">BIN_IVF_FLAT</SelectItem>
                                         </SelectContent>
                                     </Select>
                                 </div>
                                 <div className="space-y-2">
-                                    <Label htmlFor="milvusMetric" className="text-xs">Milvus Metric</Label>
+                                    <Label htmlFor="milvusMetric" className="text-xs">Local Distance Metric</Label>
                                     <Select
                                         value={retrieval?.milvus_metric ?? "HAMMING"}
                                         onValueChange={(value) => updateRetrieval("milvus_metric", value)}
@@ -769,9 +772,10 @@ export function AdvancedRAGSettings({
                             </div>
                             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                                 <div className="space-y-2">
-                                    <Label htmlFor="milvusHost" className="text-xs">Milvus Host</Label>
+                                    <Label htmlFor="milvusHost" className="text-xs">Legacy Host (inactive)</Label>
                                     <Input
                                         id="milvusHost"
+                                        disabled
                                         value={retrieval?.milvus_host ?? "localhost"}
                                         onChange={(e) => updateRetrieval("milvus_host", e.target.value)}
                                         placeholder="localhost"
@@ -779,9 +783,10 @@ export function AdvancedRAGSettings({
                                     />
                                 </div>
                                 <div className="space-y-2">
-                                    <Label htmlFor="milvusPort" className="text-xs">Milvus Port</Label>
+                                    <Label htmlFor="milvusPort" className="text-xs">Legacy Port (inactive)</Label>
                                     <Input
                                         id="milvusPort"
+                                        disabled
                                         type="number"
                                         value={String(retrieval?.milvus_port ?? 19530)}
                                         onChange={(e) => updateRetrieval("milvus_port", Number(e.target.value))}
@@ -802,9 +807,10 @@ export function AdvancedRAGSettings({
                             </div>
                             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-2">
                                 <div className="space-y-2">
-                                    <Label htmlFor="milvusNlist" className="text-xs">Milvus nlist</Label>
+                                    <Label htmlFor="milvusNlist" className="text-xs">Legacy nlist (inactive)</Label>
                                     <Input
                                         id="milvusNlist"
+                                        disabled
                                         type="number"
                                         value={String(retrieval?.milvus_nlist ?? 128)}
                                         onChange={(e) => updateRetrieval("milvus_nlist", Number(e.target.value))}
@@ -813,9 +819,10 @@ export function AdvancedRAGSettings({
                                     />
                                 </div>
                                 <div className="space-y-2">
-                                    <Label htmlFor="milvusNprobe" className="text-xs">Milvus nprobe</Label>
+                                    <Label htmlFor="milvusNprobe" className="text-xs">Legacy nprobe (inactive)</Label>
                                     <Input
                                         id="milvusNprobe"
+                                        disabled
                                         type="number"
                                         value={String(retrieval?.milvus_nprobe ?? 16)}
                                         onChange={(e) => updateRetrieval("milvus_nprobe", Number(e.target.value))}

@@ -1,3 +1,4 @@
+import { isLikelyChatModel } from "@/lib/local-models";
 import { useRequestOwner } from "@/lib/use-request-owner";
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
@@ -293,7 +294,7 @@ export function ProviderCarousel({
     if (!provider) return null;
     const selection = localSelections[provider.base_url];
     const value = field === "all" ? (selection?.planner || "") : (selection?.[field] ?? "");
-    const models = filterModels(provider.models, filterTerm);
+    const models = filterModels(provider.models.filter(isLikelyChatModel), filterTerm);
 
     return (
       <div className="space-y-1.5">
@@ -400,7 +401,7 @@ export function ProviderCarousel({
 
         <div className="flex items-center justify-between">
           <div className="text-xs text-muted-foreground font-mono">{provider.base_url}</div>
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">{filterModels(provider.models, filterTerm).length} shown</div>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">{filterModels(provider.models.filter(isLikelyChatModel), filterTerm).length} shown</div>
         </div>
 
         {renderModelSelect(provider, "all", "Use for all roles", filterTerm)}

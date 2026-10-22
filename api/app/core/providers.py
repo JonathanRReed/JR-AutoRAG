@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -188,6 +189,30 @@ class _HTTPProvider(LLMProvider):
             raise ProviderError(f"Provider request failed ({type(exc).__name__}): {exc}") from exc
 
 
+def _ollama_generation_controls(kwargs: dict[str, Any]) -> dict[str, Any]:
+    # Pass only documented Ollama generation controls, never arbitrary kwargs.
+    controls = {}
+    options = {key: kwargs[key] for key in (
+        "temperature", "top_p", "top_k", "num_ctx", "num_predict", "seed", "repeat_penalty"
+    ) if kwargs.get(key) is not None}
+    if options:
+        controls["options"] = options
+    for key in ("format", "think", "keep_alive"):
+        if key in kwargs and kwargs[key] is not None:
+            controls[key] = kwargs[key]
+    return controls
+
+
+def _select_local_chat_model(models: list[str]) -> str | None:
+    # Discovery frequently returns embedders first. They cannot generate text.
+    candidates = [model for model in models if not re.search(
+        r"embed|rerank|(?:^|/)(?:bge-|all-minilm|gte-|e5-)", model, re.I)]
+    for preferred in ("qwen3.5:4b", "qwen3.5:9b", "gemma4:e4b", "gemma4:e2b"):
+        if preferred in candidates:
+            return preferred
+    return candidates[0] if candidates else None
+
+
 class OllamaProvider(_HTTPProvider):
     """Provider for local Ollama instances."""
 
@@ -219,21 +244,23 @@ class OllamaProvider(_HTTPProvider):
             raise ProviderError(f"Ollama request failed ({type(exc).__name__}): {exc}") from exc
 
     async def chat(self, messages: Iterable[dict[str, Any]], **kwargs: Any) -> str:
-        model = kwargs.get("model") or self.default_model or "llama3"
+        model = kwargs.get("model") or self.default_model or "qwen3.5:4b"
         payload = {
             "model": model,
             "messages": list(messages),
             "stream": False,
+            **_ollama_generation_controls(kwargs),
         }
         data = await self._post("/api/chat", payload)
         return data.get("message", {}).get("content", "")
 
     async def chat_stream(self, messages: Iterable[dict[str, Any]], **kwargs: Any):
-        model = kwargs.get("model") or self.default_model or "llama3"
+        model = kwargs.get("model") or self.default_model or "qwen3.5:4b"
         payload = {
             "model": model,
             "messages": list(messages),
             "stream": True,
+            **_ollama_generation_controls(kwargs),
         }
         url = f"{self.base_url}/api/chat"
         headers = self._get_headers()
@@ -262,8 +289,9 @@ class OllamaProvider(_HTTPProvider):
             raise ProviderError(f"Provider request failed ({type(exc).__name__}): {exc}") from exc
 
     async def complete(self, prompt: str, **kwargs: Any) -> str:
-        model = kwargs.get("model") or self.default_model or "llama3"
-        payload = {"model": model, "prompt": prompt, "stream": False}
+        model = kwargs.get("model") or self.default_model or "qwen3.5:4b"
+        payload = {"model": model, "prompt": prompt, "stream": False,
+                   **_ollama_generation_controls(kwargs)}
         data = await self._post("/api/generate", payload)
         return data.get("response", "")
 
@@ -517,8 +545,9 @@ class ProviderFactory:
                 resp.raise_for_status()
                 data = resp.json()
                 models = [m.get("name") for m in data.get("models", []) if m.get("name")]
-                if models:
-                    return OllamaProvider(ollama_url, models[0])
+                selected = _select_local_chat_model(models)
+                if selected:
+                    return OllamaProvider(ollama_url, selected)
         except (httpx.HTTPError, httpx.RequestError):
             pass
 
@@ -530,8 +559,9 @@ class ProviderFactory:
                 resp.raise_for_status()
                 data = resp.json()
                 models = [m.get("id") for m in data.get("data", []) if m.get("id")]
-                if models:
-                    return LMStudioProvider(lmstudio_url, models[0])
+                selected = _select_local_chat_model(models)
+                if selected:
+                    return LMStudioProvider(lmstudio_url, selected)
         except (httpx.HTTPError, httpx.RequestError):
             pass
 

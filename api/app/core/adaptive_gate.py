@@ -50,11 +50,9 @@ class AdaptiveGate:
 
     # Patterns that suggest no retrieval needed
     NO_RETRIEVAL_PATTERNS = [
-        r'^(hi|hello|hey|thanks|thank you|bye|goodbye)\b',
-        r'^(what can you do|who are you|help me)\b',
-        r'\b(calculate|compute|math|arithmetic)\b.*\b(\d+)\b',
-        r'^(what is|what\'s)\s+\d+\s*[\+\-\*\/]\s*\d+',
-        r'\b(today|current date|current time|what time)\b',
+        r"(?:hi|hello|hey|thanks|thank you|bye|goodbye)[!.?]*",
+        r"(?:what can you do|who are you)[!.?]*",
+        r"(?:(?:what is|what's|calculate|compute)\s+)?[+-]?\d+(?:\.\d+)?\s*[+*/-]\s*[+-]?\d+(?:\.\d+)?[?.!]*",
     ]
 
     # Patterns suggesting simple single retrieval
@@ -135,7 +133,7 @@ CLARIFICATION: [question to ask user, only if CLARIFY, else "none"]"""
     def gate_heuristic(self, query: str) -> GateResult:
         """Make gating decision using heuristics (no LLM)."""
         # Check no-retrieval patterns first
-        if any(p.match(query) for p in self._no_retrieval_re):
+        if any(p.fullmatch(query.strip()) for p in self._no_retrieval_re):
             return GateResult(
                 decision=GateDecision.NO_RETRIEVAL,
                 confidence=0.9,
@@ -183,7 +181,14 @@ CLARIFICATION: [question to ask user, only if CLARIFY, else "none"]"""
                 {"role": "system", "content": "You are a query analyzer that determines optimal retrieval strategy."},
                 {"role": "user", "content": prompt},
             ])
-            return self._parse_llm_response(response)
+            result = self._parse_llm_response(response)
+            if (result.decision == GateDecision.NO_RETRIEVAL
+                    and not any(p.fullmatch(query.strip()) for p in self._no_retrieval_re)):
+                return GateResult(
+                    decision=GateDecision.SINGLE_RETRIEVAL, confidence=0.8,
+                    reasoning="Factual document questions require retrieval regardless of model self-confidence",
+                )
+            return result
         except Exception:
             # Fallback to heuristic
             return self.gate_heuristic(query)

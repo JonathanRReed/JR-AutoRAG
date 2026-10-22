@@ -1,8 +1,24 @@
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
-import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
+
+// Full DOM lifecycle scenarios can exceed Bun's 5s unit-test default on CPU
+// runners. Keep application deadlines short and asserted inside each test.
+setDefaultTimeout(15_000);
 
 const UI_ORIGIN = "http://localhost:3000";
 GlobalRegistrator.register({ url: `${UI_ORIGIN}/` });
+// These tests exercise transport ownership, not animation choreography. Honor
+// the real reduced-motion accessibility path so recurring typing animations
+// cannot keep React act() work alive across unrelated network-race assertions.
+const realMatchMedia = window.matchMedia.bind(window);
+window.matchMedia = (query: string) => {
+  const media = realMatchMedia(query);
+  if (query.includes("prefers-reduced-motion")) {
+    Object.defineProperty(media, "matches", { configurable: true, value: !query.includes("no-preference") });
+  }
+  return media;
+};
+
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const { act, createElement } = await import("react");
@@ -15,7 +31,7 @@ const setConnectionCheckTimeoutMsForTests =
 const observeStatusForTests =
   (appModule as { observeStatusForTests?: (observer: ((status: string) => void) | null) => void })
     .observeStatusForTests ?? ((_: ((status: string) => void) | null) => {});
-const { ToastProvider } = await import("@/components/ui/toast");
+const { ToastProvider, useToast } = await import("@/components/ui/toast");
 
 // Synthetic values only. No real key or provider is ever contacted: every
 // request goes to the fake fetch below and unknown origins fail like a dead host.
@@ -466,6 +482,8 @@ afterEach(async () => {
   window.confirm = realConfirm;
   globalThis.fetch = realFetch;
   globalThis.setInterval = realSetInterval;
+  // Release detached DOM graphs between the large ownership scenarios.
+  Bun.gc(true);
 });
 
 afterAll(async () => {
@@ -2110,4 +2128,50 @@ describe("Operation identity across a connection switch", () => {
     expectBUntouchedSince(before);
     expect(uploadRows()).toEqual(["a1.txt:cancelled", "a2.txt:cancelled", "b1.txt:done"]);
   });
+});
+
+
+test("toast dismissal timers are released when the provider unmounts", async () => {
+  const originalTimeout = globalThis.setTimeout;
+  const originalClear = globalThis.clearTimeout;
+  const created: unknown[] = [];
+  const cleared: unknown[] = [];
+  globalThis.setTimeout = ((handler: TimerHandler, ms?: number, ...args: unknown[]) => {
+    const timer = originalTimeout(handler, ms, ...args);
+    if (ms === 4000) created.push(timer);
+    return timer;
+  }) as typeof setTimeout;
+  globalThis.clearTimeout = ((timer: ReturnType<typeof setTimeout>) => {
+    cleared.push(timer);
+    originalClear(timer);
+  }) as typeof clearTimeout;
+  try {
+    function Trigger() {
+      const { toast } = useToast();
+      return createElement("button", { onClick: () => toast({ title: "Lifecycle test" }) }, "Notify");
+    }
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => root!.render(createElement(ToastProvider, null, createElement(Trigger))));
+    await act(async () => (container.querySelector("button") as HTMLButtonElement).click());
+    expect(created.length).toBe(1);
+    await act(async () => root!.unmount());
+    root = null;
+    expect(cleared).toContain(created[0]);
+  } finally {
+    for (const timer of created) originalClear(timer as ReturnType<typeof setTimeout>);
+    globalThis.setTimeout = originalTimeout;
+    globalThis.clearTimeout = originalClear;
+  }
+});
+
+test("main navigation tabs label their corresponding panels", async () => {
+  await mount();
+  const navigation = container.querySelector('[aria-label="Main navigation"]')!;
+  for (const tab of navigation.querySelectorAll('[role="tab"]')) {
+    expect(tab.id).toBe(`tab-${tab.getAttribute("data-tab-id")}`);
+    const panel = container.querySelector(`#${tab.getAttribute("aria-controls")}`)!;
+    expect(panel.getAttribute("aria-labelledby")).toBe(tab.id);
+  }
 });

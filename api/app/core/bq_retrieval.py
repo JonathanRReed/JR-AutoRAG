@@ -10,6 +10,8 @@ This module provides:
 
 from __future__ import annotations
 
+from ..embedding_profiles import encode_query, embedding_fingerprint
+
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -288,7 +290,7 @@ class BQRetrievalService:
                 embedding_dim=self._config.embedding_dim,
                 bq_config=self._config.bq_config,
             )
-            self._milvus_store.set_embedding_version(self._config.embedding_model)
+            self._milvus_store.set_embedding_version(embedding_fingerprint(self._config.embedding_model))
 
         if not self._milvus_initialized:
             self._milvus_store.connect()
@@ -310,7 +312,7 @@ class BQRetrievalService:
         elif self._float32_engine and hasattr(self._float32_engine, '_embedder'):
             embedder = self._float32_engine._embedder
             if embedder:
-                embedding = embedder.encode(query).tolist()
+                embedding = encode_query(embedder, query).tolist()
             else:
                 raise RuntimeError("No embedding model available")
         else:
@@ -451,7 +453,7 @@ class BQRetrievalService:
             timings=timings,
             distances=[r.distance for r in results],
             chunk_ids=[r.chunk_id for r in results],
-            embedding_version=self._config.embedding_model,
+            embedding_version=embedding_fingerprint(self._config.embedding_model),
             quantization_version=self._config.bq_config.version,
         )
 
@@ -501,7 +503,7 @@ class BQRetrievalService:
             timings=timings,
             distances=[],
             chunk_ids=[c.chunk_id for c in chunks],
-            embedding_version=self._config.embedding_model,
+            embedding_version=embedding_fingerprint(self._config.embedding_model),
         )
 
         return chunks, debug
