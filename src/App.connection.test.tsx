@@ -22,7 +22,19 @@ window.matchMedia = (query: string) => {
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const { act, createElement } = await import("react");
-const { createRoot } = await import("react-dom/client");
+// React enables optional component profiling when console.timeStamp exists.
+// In Bun it serializes tens of thousands of native performance entries per
+// scenario, unrelated to transport behavior. Import the renderer without that
+// capability, then restore the console immediately. State/effects/act stay real.
+const { createRoot } = await (async () => {
+  const timeStamp = console.timeStamp;
+  try {
+    console.timeStamp = undefined as unknown as typeof console.timeStamp;
+    return await import("react-dom/client");
+  } finally {
+    console.timeStamp = timeStamp;
+  }
+})();
 const appModule = await import("./App");
 const { App } = appModule;
 const setConnectionCheckTimeoutMsForTests =
@@ -471,6 +483,14 @@ beforeEach(() => {
   }) as typeof setInterval;
 });
 
+// React development builds record a measure for each component render/effect.
+// Bun retains this native timeline outside its JS heap, so gc() alone cannot
+// release it. Bound it to one scenario, just like the DOM root and fake fetch.
+const clearRenderTimings = () => {
+  performance.clearMarks();
+  performance.clearMeasures();
+};
+
 afterEach(async () => {
   if (root) {
     await act(async () => root!.unmount());
@@ -482,6 +502,7 @@ afterEach(async () => {
   window.confirm = realConfirm;
   globalThis.fetch = realFetch;
   globalThis.setInterval = realSetInterval;
+  clearRenderTimings();
   // Release detached DOM graphs between the large ownership scenarios.
   Bun.gc(true);
 });
@@ -2130,6 +2151,18 @@ describe("Operation identity across a connection switch", () => {
   });
 });
 
+
+test("transport scenarios avoid optional component profiling and release timing entries", async () => {
+  await mount();
+  expect(performance.getEntriesByType("measure")).toEqual([]);
+  performance.mark("connection-scenario");
+  performance.measure("connection-render", { start: 0, end: performance.now() });
+
+  clearRenderTimings();
+
+  expect(performance.getEntriesByType("mark")).toEqual([]);
+  expect(performance.getEntriesByType("measure")).toEqual([]);
+});
 
 test("toast dismissal timers are released when the provider unmounts", async () => {
   const originalTimeout = globalThis.setTimeout;
