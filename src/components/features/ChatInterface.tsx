@@ -41,7 +41,6 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/
 import { Progress as ProgressIndicator } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { TypingAnimation } from "@/components/ui/typing-animation";
 import { useToast } from "@/components/ui/toast";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -1436,70 +1435,43 @@ export function ChatInterface({
                                     )}
                                 </div>
 
-                                {/* Enterprise Controls Removed */}
                             </div>
 
                             {/* Welcome / Empty State */}
                             {!hasAnswer && history.length === 0 && !isQuerying && (
-                                <div className="flex flex-col items-center justify-center min-h-[50vh] text-center space-y-8 animate-in fade-in zoom-in duration-500">
+                                <div className="mx-auto flex w-full max-w-3xl flex-col justify-center min-h-[45vh] space-y-8 py-8">
 
-                                    {/* System Quick Stats - Moved to Top */}
-                                    <div className="flex items-center gap-6 mb-4 w-full max-w-2xl justify-center">
-                                        <div className="flex flex-col items-center">
-                                            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Documents</span>
-                                            <span className="text-xl font-bold font-mono text-foreground/80">{selectedDocumentIds.length || documents.length}</span>
-                                        </div>
-                                        <div className="w-px h-8 bg-border/40" />
-                                        <div className="flex flex-col items-center max-w-[200px]">
-                                            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Models</span>
-                                            <div className="flex flex-col items-center text-xs font-semibold text-primary/80">
-                                                <span className="truncate max-w-[180px]">{providerConfig?.planner_model || "Not set"}</span>
-                                            </div>
-                                        </div>
-                                        <div className="w-px h-8 bg-border/40" />
-                                        <div className="flex flex-col items-center">
-                                            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Provider</span>
-                                            <span className="text-sm font-bold text-foreground/80 uppercase">
-                                                {providerConfig?.base_url?.includes("11434") ? "Ollama" :
-                                                    providerConfig?.base_url?.includes("1234") ? "LM Studio" :
-                                                        "Custom"}
-                                            </span>
-                                        </div>
-                                    </div>
-
-                                    <div className="space-y-4">
-                                        <div className="h-20 w-20 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto mb-6 shadow-lg">
-                                            <Sparkles className="h-10 w-10 text-primary animate-pulse" />
-                                        </div>
-                                        <h2 className="text-3xl font-bold tracking-tight bg-gradient-to-br from-foreground to-foreground/60 bg-clip-text text-transparent italic">
-                                            How can I help you today?
+                                    <div className="space-y-3">
+                                        <p className="text-sm text-muted-foreground">
+                                            {selectedDocumentIds.length || documents.length} documents in scope
+                                        </p>
+                                        <h2 className="text-3xl font-semibold tracking-tight text-foreground">
+                                            Ask your documents.
                                         </h2>
-                                        <p className="text-muted-foreground max-w-lg mx-auto text-lg leading-relaxed font-light">
-                                            <TypingAnimation duration={12} startOnView={false}>
-                                                Ask anything about your documents. I will search, synthesize, and cite sources for every factual claim.
-                                            </TypingAnimation>
+                                        <p className="max-w-xl text-base leading-7 text-muted-foreground">
+                                            Search your sources, compare details, and inspect the evidence behind an answer.
                                         </p>
                                     </div>
 
-                                    <div className="grid sm:grid-cols-2 gap-4 max-w-2xl w-full px-4">
+                                    <div className="grid w-full gap-2 sm:grid-cols-2">
                                         {[
                                             {
-                                                title: "Technical Summary",
+                                                title: "Summarize a topic",
                                                 desc: "Summarize the key architectural components of this system.",
                                                 icon: Box
                                             },
                                             {
-                                                title: "Identify Risks",
+                                                title: "Find risks",
                                                 desc: "Search for potential single points of failure mentioned in documents.",
                                                 icon: AlertTriangle
                                             },
                                             {
-                                                title: "Data Analysis",
+                                                title: "Find dates and deadlines",
                                                 desc: "Provide a breakdown of all dates and timelines found in the corpus.",
                                                 icon: Activity
                                             },
                                             {
-                                                title: "Onboarding Memo",
+                                                title: "Draft a briefing",
                                                 desc: "Give me a brief informed memo in the style of a formal email.",
                                                 icon: HelpCircle
                                             }
@@ -1507,7 +1479,7 @@ export function ChatInterface({
                                             <button
                                                 key={i}
                                                 onClick={() => setQuestion(suggestion.desc)}
-                                                className="group relative flex flex-col items-start gap-2 rounded-xl border border-border/40 bg-card/50 p-4 text-left transition-all hover:bg-muted/50 hover:border-border/80 hover:shadow-sm"
+                                                className="group flex flex-col items-start gap-2 rounded-lg bg-muted/40 p-4 text-left transition-colors hover:bg-muted"
                                             >
                                                 <div className="flex w-full items-center justify-between">
                                                     <div className="flex items-center gap-2 text-sm font-semibold text-foreground">

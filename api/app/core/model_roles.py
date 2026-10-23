@@ -42,9 +42,9 @@ class ModelRecommendation:
 # Recommended model defaults per role and provider
 RECOMMENDED_MODELS: dict[str, dict[Role, str]] = {
     "ollama": {
-        Role.PLANNER: "llama3.2:3b",      # Fast instruction follower
-        Role.GATHERER: "qwen2.5:3b",       # Fast summarizer
-        Role.GENERATOR: "llama3.1:8b",     # Quality output
+        Role.PLANNER: "qwen3.5:4b",      # Fast instruction follower
+        Role.GATHERER: "qwen3.5:4b",       # Fast summarizer
+        Role.GENERATOR: "qwen3.5:9b",     # Quality output
     },
     "lmstudio": {
         Role.PLANNER: "lmstudio-community/Llama-3.2-3B-Instruct-GGUF",

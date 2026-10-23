@@ -51,15 +51,14 @@
 }
 
 :root {
-  --radius: 0.75rem;
-  --background: #ffffff;
-  --foreground: #000000;
+  --radius: 0.625rem;
+  --background: #f7f7f8;
+  --foreground: #202126;
   --card: #ffffff;
   --card-foreground: #000000;
   --popover: #ffffff;
   --popover-foreground: #000000;
-  /* Darkened from #ff5d73 to #d92647 for WCAG AA 4.5:1 contrast on white */
-  --primary: #d92647;
+  --primary: #b42341;
   --primary-foreground: #ffffff;
   --secondary: #494949;
   --secondary-foreground: #ffffff;
@@ -71,7 +70,7 @@
   --destructive: #dc2626;
   --border: color-mix(in srgb, #7c7a7a 36%, #ffffff);
   --input: color-mix(in srgb, #7c7a7a 30%, #ffffff);
-  --ring: #d92647;
+  --ring: #b42341;
   --chart-1: #d92647;
   --chart-2: #000000;
   --chart-3: #494949;
@@ -94,15 +93,14 @@
 }
 
 .dark {
-  --background: #000000;
-  --foreground: #ffffff;
-  --card: color-mix(in srgb, #494949 22%, #000000);
+  --background: #151619;
+  --foreground: #f4f4f5;
+  --card: #1d1e22;
   --card-foreground: #ffffff;
   --popover: color-mix(in srgb, #494949 30%, #000000);
   --popover-foreground: #ffffff;
-  /* Keep brand pink in dark mode (passes WCAG on dark background) */
-  --primary: #ff5d73;
-  --primary-foreground: #ffffff;
+  --primary: #fda4af;
+  --primary-foreground: #251016;
   --secondary: #494949;
   --secondary-foreground: #ffffff;
   --muted: color-mix(in srgb, #494949 56%, #000000);
@@ -122,8 +120,8 @@
   --chart-5: #000000;
   --sidebar: #000000;
   --sidebar-foreground: #ffffff;
-  --sidebar-primary: #ff5d73;
-  --sidebar-primary-foreground: #ffffff;
+  --sidebar-primary: #fda4af;
+  --sidebar-primary-foreground: #251016;
   --sidebar-accent: color-mix(in srgb, #ff5d73 18%, #000000);
   --sidebar-accent-foreground: #ffffff;
   --sidebar-border: color-mix(in srgb, #494949 72%, #000000);

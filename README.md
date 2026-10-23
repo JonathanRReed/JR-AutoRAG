@@ -53,6 +53,31 @@ The [iterative score contract](docs/iterative-score-contract.md) defines
 score-independent novelty stopping and aggregation by returned rank, while
 preserving query-local retrieval scores for diagnostics.
 
+## Local embedding models
+
+Embeddings power semantic retrieval: the encoder turns source chunks and queries
+into comparable vectors. They are separate from the chat/generation model and
+run locally through the optional ML runtime installed by `bun run api:sync`.
+
+New configurations use the pinned EmbeddingGemma 2 text profile. Configuration also offers
+Harrier 0.6B as an alternative and Qwen3 Embedding 4B for higher-memory
+machines. These are curated options, not a guarantee of best quality on every
+corpus. Existing saved model selections, including legacy BGE, are preserved.
+Switching models requires rebuilding vectors; source documents are retained.
+The three profiles pin revisions, query/document prompts, dimensions, and
+normalization so incompatible vectors cannot share an index or cache.
+
+Built-in profiles use FP32 and automatic device selection. Set
+`AUTORAG_EMBEDDING_DEVICE=cpu` to force CPU. Qwen4B needs substantial memory
+(roughly 16 GB for FP32 weights alone, plus runtime/index overhead) and has not
+been inference-tested on this development machine. EmbeddingGemma 2 is text-only
+here, not multimodal ingestion. The ML extra includes its required processor
+dependencies. Model downloads require access to the model host; inference uses
+local weights. Installing a preset does not configure a hosted embedding API.
+
+See the [modernization research and measured limitations](docs/modernization-research-2026-10-21.md)
+for sources, local diagnostics, and the checks still required before release.
+
 ## Disposable demo
 
 ```bash

@@ -1,3 +1,4 @@
+import { selectLocalChatModel } from "./lib/local-models";
 import { ScopedActivity } from "./lib/scoped-activity";
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -920,7 +921,7 @@ export function App() {
       const next = { ...prev };
       localProviders.forEach(provider => {
         if (!next[provider.base_url]) {
-          const fallback = provider.running[0] ?? provider.models[0] ?? "";
+          const fallback = selectLocalChatModel(provider.models, provider.running);
           next[provider.base_url] = {
             planner: fallback,
             gatherer: fallback,
@@ -1616,14 +1617,14 @@ export function App() {
     if (!activeConfig) {
       return;
     }
-    if (!provider.models.length) {
+    const firstRunning = selectLocalChatModel(provider.models, provider.running);
+    if (!firstRunning) {
       setStatus(`No models available for ${provider.name}. Install or run one first.`);
       toast({ title: "No models available", description: provider.name, variant: "error" });
       return;
     }
 
     // Smart fallback: try to find a running model if no selection made
-    const firstRunning = provider.running.length > 0 ? provider.running[0] : provider.models[0];
     const planner = selection.planner || firstRunning;
     const generator = selection.generator || firstRunning;
     const gatherer = selection.gatherer || firstRunning;
@@ -1800,7 +1801,7 @@ export function App() {
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-background transition-colors duration-300">
       <header className="flex-none relative z-50 border-b border-border/60 bg-background/95">
-        <div className="mx-auto grid max-w-[1600px] grid-cols-[minmax(0,148px)_minmax(0,1fr)_auto] items-center gap-2 px-3 py-2 sm:grid-cols-[minmax(0,176px)_minmax(0,1fr)_auto] sm:gap-3 sm:px-4">
+        <div className="mx-auto grid max-w-[1600px] grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-4 py-3 lg:grid-cols-[176px_minmax(0,1fr)_auto] lg:gap-3">
           <div className="flex min-w-0 items-center gap-2">
             <div className="flex min-w-0 items-center gap-2.5">
               <img
@@ -1810,14 +1811,14 @@ export function App() {
               />
               <div className="min-w-0">
                 <h1 className="truncate text-lg font-bold leading-tight text-foreground sm:text-xl">JR AutoRAG</h1>
-                <p className="hidden truncate text-xs text-muted-foreground sm:block">Local RAG Command Center</p>
+                <p className="hidden truncate text-xs text-muted-foreground sm:block">Document workspace</p>
               </div>
             </div>
           </div>
 
           {/* Top Navigation — ARIA tablist with roving tabindex + arrow keys */}
           <nav
-            className="no-scrollbar flex min-w-0 items-center gap-1 overflow-x-auto rounded-lg bg-muted/30 p-1"
+            className="col-span-2 row-start-2 flex min-w-0 items-center gap-1 overflow-x-auto lg:col-span-1 lg:col-start-2 lg:row-start-1"
             role="tablist"
             aria-label="Main navigation"
             onKeyDown={(e) => {
@@ -1844,6 +1845,7 @@ export function App() {
               return (
                 <button
                   key={tab.id}
+                  id={`tab-${tab.id}`}
                   data-tab-id={tab.id}
                   onClick={() => setActiveTab(tab.id)}
                   role="tab"
@@ -1852,20 +1854,19 @@ export function App() {
                   aria-label={tab.label}
                   title={tab.label}
                   tabIndex={isActive ? 0 : -1}
-                  className={`flex shrink-0 items-center gap-2 rounded-md px-2.5 py-1.5 text-sm font-medium transition-all ${isActive
-                    ? "bg-primary text-primary-foreground shadow-sm"
+                  className={`flex min-h-11 shrink-0 items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors ${isActive
+                    ? "bg-accent text-accent-foreground"
                     : "text-muted-foreground hover:bg-muted hover:text-foreground"
                     }`}
                 >
                   <Icon className="size-4 shrink-0" />
-                  <span className="hidden sm:inline">{tab.label}</span>
+                  <span className="inline">{tab.label}</span>
                 </button>
               );
             })}
           </nav>
 
-          <div className="flex min-w-0 items-center justify-end gap-2">
-            {/* API URL — visible on all screens, compact on smaller */}
+          <div className="col-start-2 row-start-1 flex min-w-0 items-center justify-end gap-2 lg:col-start-3">
             <form
               className="hidden lg:flex items-center gap-2"
               onSubmit={(event) => {
@@ -1899,7 +1900,6 @@ export function App() {
               </Button>
             </form>
 
-            {/* Checklist items indicator */}
             <div
               className="hidden items-center gap-1.5 rounded-full bg-muted/30 px-2.5 py-1.5 text-xs text-muted-foreground/80 xl:flex"
               aria-label={`Readiness: API ${apiReady ? "ready" : "needs attention"}, models ${modelsReady ? "ready" : "needs attention"}, knowledge ${docsReady ? "ready" : "needs attention"}, security ${securityReady ? "ready" : "needs attention"}`}
@@ -1912,7 +1912,6 @@ export function App() {
               ))}
             </div>
 
-            {/* Theme Toggle */}
             <Button
               variant="ghost"
               size="icon"
@@ -1926,32 +1925,31 @@ export function App() {
         </div>
       </header>
 
-      {/* Main Content */}
       <main className="flex-1 min-h-0 mx-auto w-full max-w-[1600px]">
         <div className="flex h-full flex-col">
-          <div className={`flex-1 bg-background ${activeTab === "query" ? "overflow-hidden p-0" : "overflow-auto p-6"}`}>
-            <div id="tabpanel-home" role="tabpanel" aria-labelledby="tab-home" tabIndex={0} className={`h-full animate-in fade-in slide-in-from-bottom-2 duration-300 ${activeTab !== "home" ? "hidden" : ""}`}>
+          <div className={`flex-1 bg-background ${activeTab === "query" ? "overflow-hidden p-0" : "overflow-auto p-4 sm:p-6"}`}>
+            <div id="tabpanel-home" role="tabpanel" aria-labelledby="tab-home" tabIndex={0} className={`h-full ${activeTab !== "home" ? "hidden" : ""}`}>
               <div className="mx-auto flex max-w-[1500px] flex-col gap-6">
                 <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
-                  <div className="rounded-lg border border-border/60 bg-card p-6 shadow-sm">
+                  <div className="rounded-xl bg-card p-6 sm:p-8">
                     <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
                       <div className="max-w-3xl">
                         <div className="mb-3 flex items-center gap-2 text-sm font-medium text-primary">
                           <ShieldCheck className="size-4" />
-                          Local-first enterprise install
+                          Local-first workspace
                         </div>
                         <h2 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
-                          Install private AutoRAG for real client knowledge bases.
+                          Your documents. Clearer answers.
                         </h2>
                         <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">
-                          Connect the local API, choose private model routes, ingest client documents, inspect retrieval evidence, and export the receipts needed for a B2B handoff.
+                          Connect a model, add documents, and ask questions. Inspect the source passages behind each answer.
                         </p>
                       </div>
 
                       <div className="grid min-w-[260px] gap-2 rounded-lg border border-border/60 bg-muted/10 p-4">
                         <div className="flex items-center justify-between gap-3">
-                          <span className="text-sm font-medium text-muted-foreground">Install readiness</span>
-                          <span className="font-mono text-2xl font-semibold text-foreground">{readyPercent}%</span>
+                          <span className="text-sm font-medium text-muted-foreground">Workspace setup</span>
+                          <span className="tabular-nums text-2xl font-semibold text-foreground">{readyPercent}%</span>
                         </div>
                         <div className="h-2 overflow-hidden rounded-full bg-muted">
                           <div className="h-full rounded-full bg-primary transition-all duration-300" style={{ width: `${readyPercent}%` }} />
@@ -1963,18 +1961,18 @@ export function App() {
                     </div>
                   </div>
 
-                  <div className="rounded-lg border border-border/60 bg-card p-5 shadow-sm">
+                  <div className="rounded-xl bg-card p-5">
                     <div className="mb-4 flex items-center justify-between gap-3">
                       <div>
-                        <div className="text-sm font-semibold text-foreground">Install Path</div>
-                        <div className="text-xs text-muted-foreground">Bring a client workspace online.</div>
+                        <div className="text-sm font-semibold text-foreground">Get started</div>
+                        <div className="text-xs text-muted-foreground">Build a searchable document collection.</div>
                       </div>
                       <PackageCheck className="size-5 text-primary" />
                     </div>
                     <div className="grid gap-2">
                       <Button onClick={() => setActiveTab("documents")}>
                         <FileText className="size-4" data-icon="inline-start" />
-                        Ingest Client Documents
+                        Add documents
                       </Button>
                       <div className="grid grid-cols-2 gap-2">
                         <Button variant="outline" onClick={() => setActiveTab("config")}>
@@ -1988,7 +1986,7 @@ export function App() {
                       </div>
                       <Button variant="secondary" onClick={() => setActiveTab("quality")}>
                         <FileCheck2 className="size-4" data-icon="inline-start" />
-                        Prove Readiness
+                        Review quality
                       </Button>
                     </div>
                   </div>
@@ -1996,10 +1994,10 @@ export function App() {
 
                 <section className="grid gap-4 lg:grid-cols-4">
                   {readyChecks.map(check => (
-                    <div key={check.label} className="rounded-lg border border-border/60 bg-card p-5 shadow-sm">
+                    <div key={check.label} className="rounded-xl bg-card p-5">
                       <div className="flex items-start justify-between gap-3">
                         <div>
-                          <div className="text-xs font-semibold uppercase text-muted-foreground">{check.label}</div>
+                          <div className="text-sm font-medium text-muted-foreground">{check.label}</div>
                           <div className="mt-2 text-lg font-semibold text-foreground">{check.ready ? "Ready" : "Needs attention"}</div>
                           <div className="mt-1 text-sm leading-6 text-muted-foreground">{check.detail}</div>
                         </div>
@@ -2028,11 +2026,11 @@ export function App() {
                   </Suspense>
 
                   <div className="grid content-start gap-4">
-                    <div className="rounded-lg border border-border/60 bg-card p-5 shadow-sm">
+                    <div className="rounded-xl bg-card p-5">
                       <div className="mb-4 flex items-center justify-between gap-3">
                         <div>
-                          <div className="text-sm font-semibold text-foreground">Delivery Evidence</div>
-                          <div className="text-xs text-muted-foreground">Artifacts an installer can hand to a client.</div>
+                          <div className="text-sm font-semibold text-foreground">Validation reports</div>
+                          <div className="text-xs text-muted-foreground">Check the setup before sharing a workspace.</div>
                         </div>
                         <FileCheck2 className="size-5 text-primary" />
                       </div>
@@ -2054,7 +2052,7 @@ export function App() {
                           </Button>
                         </div>
                         <div className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-muted/10 px-3 py-2">
-                          <span className="text-muted-foreground">Quality receipts</span>
+                          <span className="text-muted-foreground">Quality checks</span>
                           <Button variant="ghost" size="sm" onClick={() => setActiveTab("quality")}>
                             Open
                             <ArrowRight className="size-4" data-icon="inline-end" />
@@ -2070,7 +2068,7 @@ export function App() {
                       </div>
                     </div>
 
-                    <div className="rounded-lg border border-border/60 bg-card p-5 shadow-sm">
+                    <div className="rounded-xl bg-card p-5">
                       <div className="mb-4 flex items-center justify-between gap-3">
                         <div>
                           <div className="text-sm font-semibold text-foreground">Security Posture</div>
@@ -2096,7 +2094,7 @@ export function App() {
                       </div>
                     </div>
 
-                    <div className="rounded-lg border border-border/60 bg-card p-5 shadow-sm">
+                    <div className="rounded-xl bg-card p-5">
                       <div className="mb-4 flex items-center gap-2">
                         <TerminalSquare className="size-5 text-primary" />
                         <div>
@@ -2128,7 +2126,7 @@ export function App() {
               </div>
             </div>
 
-            <div id="tabpanel-config" role="tabpanel" aria-labelledby="tab-config" tabIndex={0} className={`h-full animate-in fade-in slide-in-from-bottom-2 duration-300 ${activeTab !== "config" ? "hidden" : ""}`}>
+            <div id="tabpanel-config" role="tabpanel" aria-labelledby="tab-config" tabIndex={0} className={`h-full ${activeTab !== "config" ? "hidden" : ""}`}>
               {/* Configuration Panel */}
               <div className="space-y-6 max-w-[1600px] mx-auto">
                 <div>
@@ -2281,7 +2279,7 @@ export function App() {
               </div>
             </div>
 
-            <div id="tabpanel-documents" role="tabpanel" aria-labelledby="tab-documents" tabIndex={0} className={`h-full animate-in fade-in slide-in-from-bottom-2 duration-300 ${activeTab !== "documents" ? "hidden" : ""}`}>
+            <div id="tabpanel-documents" role="tabpanel" aria-labelledby="tab-documents" tabIndex={0} className={`h-full ${activeTab !== "documents" ? "hidden" : ""}`}>
               {/* Documents Panel */}
               <div className="space-y-6 max-w-[1600px] mx-auto flex flex-col">
                 <div>
@@ -2380,7 +2378,7 @@ export function App() {
               </div>
             </div>
 
-            <div id="tabpanel-query" role="tabpanel" aria-labelledby="tab-query" tabIndex={0} className={`h-full animate-in fade-in slide-in-from-bottom-2 duration-300 ${activeTab !== "query" ? "hidden" : ""}`}>
+            <div id="tabpanel-query" role="tabpanel" aria-labelledby="tab-query" tabIndex={0} className={`h-full ${activeTab !== "query" ? "hidden" : ""}`}>
               {/* Query Interface */}
               <Suspense fallback={<LoadingSpinner message="Loading chat interface..." />}>
                 <ChatInterface
@@ -2425,7 +2423,7 @@ export function App() {
               </Suspense>
             </div>
 
-            <div id="tabpanel-quality" role="tabpanel" aria-labelledby="tab-quality" tabIndex={0} className={`h-full animate-in fade-in slide-in-from-bottom-2 duration-300 ${activeTab !== "quality" ? "hidden" : ""}`}>
+            <div id="tabpanel-quality" role="tabpanel" aria-labelledby="tab-quality" tabIndex={0} className={`h-full ${activeTab !== "quality" ? "hidden" : ""}`}>
               <div className="mx-auto max-w-[1400px]">
                 <Suspense fallback={<LoadingSpinner message="Loading quality cockpit..." />}>
                   <QualityCockpit
@@ -2439,7 +2437,7 @@ export function App() {
               </div>
             </div>
 
-            <div id="tabpanel-metrics" role="tabpanel" aria-labelledby="tab-metrics" tabIndex={0} className={`h-full animate-in fade-in slide-in-from-bottom-2 duration-300 ${activeTab !== "metrics" ? "hidden" : ""}`}>
+            <div id="tabpanel-metrics" role="tabpanel" aria-labelledby="tab-metrics" tabIndex={0} className={`h-full ${activeTab !== "metrics" ? "hidden" : ""}`}>
               {/* Metrics & Traces */}
               <div className="space-y-6 max-w-5xl mx-auto">
                 <Suspense fallback={<LoadingSpinner message="Loading status panel..." />}>

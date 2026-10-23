@@ -1,7 +1,7 @@
-"""Evidence-first generation contract enforcement.
+"""Heuristic evidence screening for generation.
 
 Requires model to extract/quote spans before composing answers.
-Rejects claims without supporting evidence.
+Rejects claims without matching evidence; lexical screening is not semantic entailment.
 
 This module implements the "evidence-first contract" from SOTA RAG research:
 - Answers are constrained to claims supported by retrieved passages
@@ -11,6 +11,7 @@ This module implements the "evidence-first contract" from SOTA RAG research:
 from __future__ import annotations
 
 import re
+from .citation_verifier import CitationVerifier
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -101,10 +102,10 @@ class EvidenceContract:
         for sentence in sentences:
             sentence = sentence.strip()
             # Skip short sentences
-            if len(sentence.split()) < 5:
+            if len(sentence.split()) < 3:
                 continue
             # Skip citations/references sections
-            if sentence.lower().startswith(('sources:', 'references:', '[', '##')):
+            if sentence.lower().startswith(('sources:', 'references:', '##')):
                 continue
             # Check for claim patterns
             for pattern in self._patterns:
@@ -112,7 +113,7 @@ class EvidenceContract:
                     claims.append(sentence)
                     break
 
-        return list(set(claims))
+        return list(dict.fromkeys(claims))
 
     def find_supporting_span(
         self,
@@ -128,10 +129,18 @@ class EvidenceContract:
         Returns:
             Tuple of (supporting_span, chunk_id, confidence)
         """
-        claim_terms = self._tokenize(claim)
+        clean_claim = claim
+        for _, marker in CitationVerifier().extract_citations(claim):
+            clean_claim = clean_claim.replace(marker, "")
+        claim_terms = self._tokenize(clean_claim)
         if not claim_terms:
             return (None, None, 0.0)
 
+        def numbers(text):
+            return set(re.findall(r"(?<!\w)[+-]?\d+(?:[,.]\d+)*(?:%)?", text))
+        negation = r"\b(?:not|no|never|without|cannot|can't|won't|isn't|aren't|doesn't|didn't)\b"
+        claim_numbers = numbers(clean_claim)
+        claim_negated = bool(re.search(negation, clean_claim, re.I))
         best_match = (None, None, 0.0)
 
         for chunk in chunks:
@@ -143,7 +152,13 @@ class EvidenceContract:
                 if not sent_terms:
                     continue
 
-                # Calculate Jaccard-like overlap
+                # Lexical overlap alone cannot establish entailment. Reject
+                # obvious numerical and polarity mismatches conservatively.
+                if not claim_numbers.issubset(numbers(sentence)):
+                    continue
+                if claim_negated != bool(re.search(negation, sentence, re.I)):
+                    continue
+                # This score is a lexical heuristic, not a probability of truth.
                 overlap = len(claim_terms & sent_terms) / len(claim_terms | sent_terms)
 
                 if overlap > best_match[2] and overlap > self.min_overlap:
@@ -170,19 +185,22 @@ class EvidenceContract:
         unsupported: list[str] = []
 
         for claim in claims:
-            span, chunk_id, confidence = self.find_supporting_span(claim, chunks)
-
-            # Check if claim already has citation
-            has_citation = bool(re.search(r'\[\d+\]|\(Doc:|ChunkID:', claim))
-
-            is_supported = (span is not None and confidence > 0.35) or has_citation
+            verifier = CitationVerifier()
+            citations = verifier.extract_citations(claim)
+            valid_ids = verifier.get_valid_chunk_ids(chunks)
+            valid_citations = all(value in valid_ids for value, _ in citations)
+            cited_ids = {valid_ids[value] for value, _ in citations if value in valid_ids}
+            candidate_chunks = ([chunk for chunk in chunks if chunk.id in cited_ids]
+                                if citations else chunks)
+            span, chunk_id, confidence = self.find_supporting_span(claim, candidate_chunks)
+            is_supported = valid_citations and span is not None and confidence > 0.35
 
             verification = ClaimVerification(
                 claim=claim,
                 supported=is_supported,
                 supporting_span=span,
                 chunk_id=chunk_id,
-                confidence=confidence if not has_citation else 1.0,
+                confidence=confidence if valid_citations else 0.0,
             )
             verified.append(verification)
 

@@ -455,3 +455,10 @@ button[class*="bg-primary"]:hover:not(:disabled) {
 .stagger-in>*:nth-child(5) {
   animation-delay: 200ms;
 }
+
+@media (pointer: coarse) {
+  [data-slot="button"] {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}

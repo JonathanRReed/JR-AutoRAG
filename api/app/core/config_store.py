@@ -30,6 +30,12 @@ class ConfigStore:
     def read(self) -> AppConfig:
         with self._lock:
             data = json.loads(self._path.read_text(encoding="utf-8"))
+            # Saved partial configs predate the modern default. Preserve their
+            # legacy space rather than silently rebuilding an existing corpus.
+            if isinstance(data, dict):
+                legacy_retrieval = data.setdefault("retrieval", {})
+                if isinstance(legacy_retrieval, dict):
+                    legacy_retrieval.setdefault("embedding_model", "BAAI/bge-base-en-v1.5")
             repaired = False
             retrieval = data.get("retrieval") if isinstance(data, dict) else None
             if isinstance(retrieval, dict) and retrieval.get("dense_k") == 0:

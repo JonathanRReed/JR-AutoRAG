@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from ..core.auth import get_auth
 from ..core.document_acl import get_acl_enforcer, resolve_acl_defaults
+from ..embedding_profiles import EMBEDDING_PROFILES
 from ..core.providers import ProviderError, discover_models
 from ..schemas.config import (
     RETRIEVAL_PRESETS,
@@ -19,15 +20,22 @@ from ..services import ServiceContainer, get_container
 router = APIRouter()
 
 
+def _model_revision(model_id: str) -> dict[str, str]:
+    profile = EMBEDDING_PROFILES.get(model_id)
+    return {"revision": profile.revision} if profile else {}
+
+
 def _check_model_cached(model_id: str) -> tuple[str, str | None]:
     try:
         from huggingface_hub import scan_cache_dir, snapshot_download
     except Exception as exc:
         return "unknown", f"Cache check unavailable: {exc}"
     try:
-        snapshot_download(repo_id=model_id, local_files_only=True)
+        snapshot_download(repo_id=model_id, local_files_only=True, **_model_revision(model_id))
         return "installed", None
     except Exception as exc:
+        if model_id in EMBEDDING_PROFILES:
+            return "missing", str(exc)
         try:
             cache_info = scan_cache_dir()
             if any(repo.repo_id == model_id for repo in cache_info.repos):
@@ -43,7 +51,7 @@ def _download_model(model_id: str) -> None:
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Download unavailable: {exc}") from exc
     try:
-        snapshot_download(repo_id=model_id, local_files_only=False)
+        snapshot_download(repo_id=model_id, local_files_only=False, **_model_revision(model_id))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Download failed: {exc}") from exc
 

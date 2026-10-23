@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useMemo, useState, useEffect, useRef, type ReactNode } from "react";
 
 export type ToastVariant = "default" | "success" | "error" | "info";
 
@@ -19,15 +19,23 @@ const ToastContext = createContext<ToastContextValue | null>(null);
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  useEffect(() => () => {
+    for (const timer of timers.current.values()) clearTimeout(timer);
+    timers.current.clear();
+  }, []);
 
   const dismiss = useCallback((id: string) => {
+    const timer = timers.current.get(id);
+    if (timer !== undefined) clearTimeout(timer);
+    timers.current.delete(id);
     setToasts(prev => prev.filter(t => t.id !== id));
   }, []);
 
   const toast = useCallback((item: Omit<ToastItem, "id">) => {
     const id = crypto.randomUUID();
     setToasts(prev => [...prev, { ...item, id }]);
-    setTimeout(() => dismiss(id), 4000);
+    timers.current.set(id, setTimeout(() => dismiss(id), 4000));
   }, [dismiss]);
 
   const value = useMemo(() => ({ toasts, toast, dismiss }), [toasts, toast, dismiss]);

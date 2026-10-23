@@ -31,7 +31,8 @@ Issues = "https://github.com/JonathanRReed/JR-AutoRAG/issues"
 [project.optional-dependencies]
 ml = [
   "docling>=2.48.0",
-  "sentence-transformers>=2.2.0",
+  "sentence-transformers[image]>=6.1.0,<7",
+  "transformers>=5.18.0,<6",
 ]
 
 [dependency-groups]

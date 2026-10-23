@@ -1,0 +1,186 @@
+{
+  "model": "microsoft/harrier-oss-v1-0.6b",
+  "fingerprint": "5a4705d0b0a6b991d00a12964af4c4ff337f1bb3e34d34559c88d1246536afeb",
+  "fixture_sha256": "6643d805172dbda5cc1a3d62487220f34a59c65f2b0c90c1c7ffb1bb0e734ec6",
+  "kind": "small_synthetic_real_model_diagnostic_not_sota",
+  "device": "cpu",
+  "load_seconds": 6.1162237109965645,
+  "index_seconds": 2.7268017060123384,
+  "peak_rss_platform_units": 3967264,
+  "summary": {
+    "recall_at_5": 1.0,
+    "mrr": 1.0,
+    "ndcg_at_5": 1.0,
+    "latency_ms": 423.551946922089
+  },
+  "queries": [
+    {
+      "id": "paraphrase_returns",
+      "top5": [
+        "returns",
+        "refund",
+        "shipment",
+        "backup",
+        "vacation"
+      ],
+      "recall_at_5": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 378.7908569793217
+    },
+    {
+      "id": "charging",
+      "top5": [
+        "battery",
+        "refund",
+        "shipment",
+        "invoice",
+        "security"
+      ],
+      "recall_at_5": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 400.6679730373435
+    },
+    {
+      "id": "time_off",
+      "top5": [
+        "vacation",
+        "refund",
+        "security",
+        "shipment",
+        "returns"
+      ],
+      "recall_at_5": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 352.4505859822966
+    },
+    {
+      "id": "auth",
+      "top5": [
+        "security",
+        "backup",
+        "invoice",
+        "shipment",
+        "refund"
+      ],
+      "recall_at_5": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 355.824857018888
+    },
+    {
+      "id": "recovery",
+      "top5": [
+        "backup",
+        "security",
+        "shipment",
+        "returns",
+        "deletion"
+      ],
+      "recall_at_5": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 467.7599800052121
+    },
+    {
+      "id": "dispatch",
+      "top5": [
+        "shipment",
+        "returns",
+        "refund",
+        "invoice",
+        "backup"
+      ],
+      "recall_at_5": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 416.06554901227355
+    },
+    {
+      "id": "money_back",
+      "top5": [
+        "refund",
+        "returns",
+        "shipment",
+        "invoice",
+        "vacation"
+      ],
+      "recall_at_5": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 453.40232900343835
+    },
+    {
+      "id": "cross_lingual",
+      "top5": [
+        "spanish",
+        "backup",
+        "shipment",
+        "returns",
+        "vacation"
+      ],
+      "recall_at_5": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 392.9487870191224
+    },
+    {
+      "id": "german_query",
+      "top5": [
+        "german",
+        "shipment",
+        "spanish",
+        "security",
+        "returns"
+      ],
+      "recall_at_5": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 407.53225900698453
+    },
+    {
+      "id": "cancel_network",
+      "top5": [
+        "code",
+        "security",
+        "shipment",
+        "deletion",
+        "invoice"
+      ],
+      "recall_at_5": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 595.6032010144554
+    },
+    {
+      "id": "identifier",
+      "top5": [
+        "invoice",
+        "security",
+        "vacation",
+        "shipment",
+        "returns"
+      ],
+      "recall_at_5": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 464.13384401239455
+    },
+    {
+      "id": "preservation",
+      "top5": [
+        "deletion",
+        "returns",
+        "backup",
+        "security",
+        "refund"
+      ],
+      "recall_at_5": 1.0,
+      "mrr": 1.0,
+      "ndcg_at_5": 1.0,
+      "latency_ms": 397.443140973337
+    }
+  ]
+}

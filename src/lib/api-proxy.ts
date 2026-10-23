@@ -70,6 +70,8 @@ export const proxyApiRequest = async (req: Request, prefix: string): Promise<Res
       method: req.method,
       headers: req.headers,
       body: req.body,
+      // Preserve streaming and stop upstream work when the client disconnects.
+      signal: req.signal,
     });
   } catch {
     return new Response("Backend execution failed", { status: 502 });

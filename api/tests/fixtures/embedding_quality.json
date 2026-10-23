@@ -1,0 +1,31 @@
+{
+  "description": "Small synthetic diagnostic set, not a representative benchmark or SOTA evaluation.",
+  "documents": [
+    {"id":"returns", "text":"Unopened items may be returned within thirty days of delivery. Opened items cannot be returned."},
+    {"id":"battery", "text":"The portable speaker contains a rechargeable lithium battery and charges over USB-C."},
+    {"id":"vacation", "text":"Employees receive twenty days of paid vacation each calendar year, separate from public holidays."},
+    {"id":"security", "text":"Administrators must use two-factor authentication. Password-only access is prohibited for administrator accounts."},
+    {"id":"backup", "text":"Database snapshots are created every six hours and retained for fourteen days."},
+    {"id":"shipment", "text":"Orders ship from the warehouse within two business days. Delivery times depend on the destination."},
+    {"id":"refund", "text":"Approved refunds are credited to the original payment method within five business days."},
+    {"id":"spanish", "text":"La biblioteca abre los domingos de diez de la mañana a cuatro de la tarde."},
+    {"id":"german", "text":"Fahrräder dürfen im Keller abgestellt werden. Im Treppenhaus sind Fahrräder verboten."},
+    {"id":"code", "text":"Use AbortController to cancel fetch requests. Pass controller.signal to fetch and call controller.abort() when the operation is cancelled."},
+    {"id":"invoice", "text":"Invoice INV-2048 totals 175 dollars. Invoice INV-2049 totals 950 dollars."},
+    {"id":"deletion", "text":"Deleting a collection removes its search index. The original source documents are preserved for rebuilding."}
+  ],
+  "queries": [
+    {"id":"paraphrase_returns", "text":"Can I send back an unused purchase after three weeks?", "relevant":["returns"]},
+    {"id":"charging", "text":"How do I recharge the speaker?", "relevant":["battery"]},
+    {"id":"time_off", "text":"How much annual leave do workers get?", "relevant":["vacation"]},
+    {"id":"auth", "text":"Is a password alone sufficient for an admin to sign in?", "relevant":["security"]},
+    {"id":"recovery", "text":"How often are copies of the database saved, and how long do we keep them?", "relevant":["backup"]},
+    {"id":"dispatch", "text":"When will the seller send my package?", "relevant":["shipment"]},
+    {"id":"money_back", "text":"Where and when will I receive my money after an approved return?", "relevant":["refund"]},
+    {"id":"cross_lingual", "text":"What are the library opening hours on Sunday?", "relevant":["spanish"]},
+    {"id":"german_query", "text":"Wo kann ich mein Fahrrad parken?", "relevant":["german"]},
+    {"id":"cancel_network", "text":"How can JavaScript stop an in-progress HTTP request?", "relevant":["code"]},
+    {"id":"identifier", "text":"What is the total for INV-2048?", "relevant":["invoice"]},
+    {"id":"preservation", "text":"Will deleting a collection destroy the original files?", "relevant":["deletion"]}
+  ]
+}
