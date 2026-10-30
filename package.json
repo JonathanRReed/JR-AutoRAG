@@ -35,7 +35,7 @@
     "audit:shadscan:prompt": "bunx @shadscan/cli@0.17.0 --prompt --no-interactive --no-roast",
     "verify": "bash ./scripts/verify.sh",
     "build": "bash ./scripts/build.sh",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "bun check",
     "test": "bun test",
     "ci": "bash ./scripts/verify.sh"
   },
